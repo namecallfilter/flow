@@ -1,4 +1,4 @@
-import "package:flow/app/flow_tabs_screen.dart";
+import "package:flow/app/tabs_screen.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/shared/external_url_opener.dart";
 import "package:flutter/foundation.dart";
