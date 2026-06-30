@@ -11,6 +11,7 @@ import "package:flow/features/following/twitch_login_screen.dart";
 import "package:flow/shared/widgets/app_bottom_nav.dart";
 import "package:flow/shared/widgets/avatar_ring.dart";
 import "package:flow/shared/widgets/page_header_title.dart";
+import "package:flow/shared/widgets/pull_to_refresh.dart";
 import "package:flow/shared/widgets/section_header.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
@@ -50,9 +51,6 @@ class _FollowingScreenState extends State<FollowingScreen> {
   final ScrollController _scrollController = ScrollController();
   bool? _offlineExpandedOverride;
   bool _isLoadingFollowing = false;
-  bool _topRefreshPullStarted = false;
-  bool _topRefreshPullOverscrolled = false;
-  bool _topRefreshPointerPulledDown = false;
   String? _followingError;
   TwitchAuthConnection? _connection;
 
@@ -141,58 +139,6 @@ class _FollowingScreenState extends State<FollowingScreen> {
     });
   }
 
-  bool _handleScrollNotification(ScrollNotification notification) {
-    if (notification is ScrollStartNotification) {
-      _topRefreshPullStarted = notification.metrics.pixels <= 0;
-      _topRefreshPullOverscrolled = false;
-    } else if (notification is OverscrollNotification && _topRefreshPullStarted) {
-      final dragDelta = notification.dragDetails?.delta.dy ?? 0;
-      if (dragDelta > 0 || notification.overscroll < 0) {
-        _topRefreshPullOverscrolled = true;
-      }
-    } else if (notification is ScrollUpdateNotification && _topRefreshPullStarted) {
-      final dragDelta = notification.dragDetails?.delta.dy ?? 0;
-      if (dragDelta > 0 && notification.metrics.pixels <= 0) {
-        _topRefreshPullOverscrolled = true;
-      } else if ((_topRefreshPullOverscrolled || _topRefreshPointerPulledDown) &&
-          dragDelta < 0 &&
-          notification.metrics.pixels > 0 &&
-          _scrollController.hasClients) {
-        _resetTopRefreshTracking();
-        _scrollController.jumpTo(0);
-        return true;
-      }
-    } else if (notification is ScrollEndNotification) {
-      final shouldSnapBack =
-          _topRefreshPullStarted &&
-          (_topRefreshPullOverscrolled || _topRefreshPointerPulledDown) &&
-          notification.metrics.pixels > 0 &&
-          _scrollController.hasClients;
-      _resetTopRefreshTracking();
-      if (shouldSnapBack) {
-        _scrollController.jumpTo(0);
-      }
-    }
-
-    return false;
-  }
-
-  void _resetTopRefreshTracking() {
-    _topRefreshPullStarted = false;
-    _topRefreshPullOverscrolled = false;
-    _topRefreshPointerPulledDown = false;
-  }
-
-  void _handlePointerMove(PointerMoveEvent event) {
-    if (!_scrollController.hasClients) {
-      return;
-    }
-
-    if (_scrollController.position.pixels <= 0 && event.delta.dy > 0) {
-      _topRefreshPointerPulledDown = true;
-    }
-  }
-
   @override
   void dispose() {
     _scrollController.dispose();
@@ -224,73 +170,65 @@ class _FollowingScreenState extends State<FollowingScreen> {
           widget.bottomNavigationBar ?? const AppBottomNav(currentRoute: FlowRoutes.following),
       body: SafeArea(
         bottom: false,
-        child: Listener(
-          onPointerDown: (_) {
-            _topRefreshPointerPulledDown = false;
-          },
-          onPointerMove: _handlePointerMove,
-          onPointerCancel: (_) {
-            _topRefreshPointerPulledDown = false;
-          },
-          child: NotificationListener<ScrollNotification>(
-            onNotification: _handleScrollNotification,
-            child: RefreshIndicator(
-              color: theme.colorScheme.primary,
+        child: Stack(
+          children: [
+            FlowPullToRefresh(
+              scrollController: _scrollController,
               onRefresh: _loadSavedConnection,
-              child: Stack(
+              indicatorStartTop: topScrollPadding - 28,
+              indicatorMaxTravel: 52,
+              child: ListView(
+                controller: _scrollController,
+                physics: const AlwaysScrollableScrollPhysics(
+                  parent: ClampingScrollPhysics(),
+                ),
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  topScrollPadding,
+                  AppSpacing.lg,
+                  0,
+                ).copyWith(bottom: bottomScrollPadding),
                 children: [
-                  ListView(
-                    controller: _scrollController,
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    padding: const EdgeInsets.fromLTRB(
-                      AppSpacing.lg,
-                      topScrollPadding,
-                      AppSpacing.lg,
-                      0,
-                    ).copyWith(bottom: bottomScrollPadding),
-                    children: [
-                      if (_isLoadingFollowing) ...[
-                        const LinearProgressIndicator(minHeight: 3),
-                        const SizedBox(height: AppSpacing.lg),
-                      ],
-                      if (_followingError != null) ...[
-                        _StatusBanner(message: _followingError!),
-                        const SizedBox(height: AppSpacing.lg),
-                      ],
-                      if (showLiveEmptyState)
-                        const _EmptyState(
-                          message: "No followed channels are live now.",
-                        )
-                      else
-                        for (final channel in liveChannels) StreamCard(channel: channel),
-                      const SizedBox(height: AppSpacing.sm),
-                      _OfflineCard(
-                        channels: offlineChannels,
-                        expanded: offlineExpanded,
-                        onToggle: () {
-                          setState(() {
-                            _offlineExpandedOverride = !offlineExpanded;
-                          });
-                        },
-                      ),
-                    ],
-                  ),
-                  Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    child: _FrostedTopBar(
-                      onProfilePressed: _startTwitchAuth,
-                      profileInitials: _initialsForName(
-                        profileUser?.displayName ?? "Me",
-                      ),
-                      profileImageUrl: profileUser?.profileImageUrl,
-                    ),
+                  if (_isLoadingFollowing) ...[
+                    const LinearProgressIndicator(minHeight: 3),
+                    const SizedBox(height: AppSpacing.lg),
+                  ],
+                  if (_followingError != null) ...[
+                    _StatusBanner(message: _followingError!),
+                    const SizedBox(height: AppSpacing.lg),
+                  ],
+                  if (showLiveEmptyState)
+                    const _EmptyState(
+                      message: "No followed channels are live now.",
+                    )
+                  else
+                    for (final channel in liveChannels) StreamCard(channel: channel),
+                  const SizedBox(height: AppSpacing.sm),
+                  _OfflineCard(
+                    channels: offlineChannels,
+                    expanded: offlineExpanded,
+                    onToggle: () {
+                      setState(() {
+                        _offlineExpandedOverride = !offlineExpanded;
+                      });
+                    },
                   ),
                 ],
               ),
             ),
-          ),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: _FrostedTopBar(
+                onProfilePressed: _startTwitchAuth,
+                profileInitials: _initialsForName(
+                  profileUser?.displayName ?? "Me",
+                ),
+                profileImageUrl: profileUser?.profileImageUrl,
+              ),
+            ),
+          ],
         ),
       ),
     );

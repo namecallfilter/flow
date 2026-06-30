@@ -10,6 +10,7 @@ import "package:flow/features/following/following_screen.dart";
 import "package:flow/shared/widgets/app_bottom_nav.dart";
 import "package:flow/shared/widgets/avatar_ring.dart";
 import "package:flow/shared/widgets/page_header_title.dart";
+import "package:flow/shared/widgets/pull_to_refresh.dart";
 import "package:flutter/cupertino.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
@@ -331,15 +332,16 @@ class _BrowseScreenState extends State<BrowseScreen> {
         bottom: false,
         child: Stack(
           children: [
-            RefreshIndicator(
-              color: theme.colorScheme.primary,
-              edgeOffset: topScrollPadding,
-              displacement: topScrollPadding + 28,
-              triggerMode: RefreshIndicatorTriggerMode.anywhere,
+            FlowPullToRefresh(
+              scrollController: _scrollController,
               onRefresh: _refreshActiveSection,
+              indicatorStartTop: topScrollPadding + 16,
+              indicatorMaxTravel: 72,
               child: ListView(
                 controller: _scrollController,
-                physics: const AlwaysScrollableScrollPhysics(),
+                physics: const AlwaysScrollableScrollPhysics(
+                  parent: ClampingScrollPhysics(),
+                ),
                 padding: const EdgeInsets.fromLTRB(
                   AppSpacing.lg,
                   topScrollPadding,
