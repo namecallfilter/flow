@@ -1,12 +1,20 @@
+import "dart:async";
 import "dart:ui";
 
 import "package:flow/app/radius.dart";
-import "package:flutter/cupertino.dart";
+import "package:flow/app/routes.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 
 class AppBottomNav extends StatelessWidget {
-  const AppBottomNav({super.key});
+  const AppBottomNav({
+    required this.currentRoute,
+    super.key,
+    this.onRouteSelected,
+  });
+
+  final String currentRoute;
+  final ValueChanged<String>? onRouteSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -36,7 +44,7 @@ class AppBottomNav extends StatelessWidget {
               ),
             ),
           ),
-          child: const SafeArea(
+          child: SafeArea(
             top: false,
             child: SizedBox(
               height: 60,
@@ -44,19 +52,22 @@ class AppBottomNav extends StatelessWidget {
                 children: [
                   _BottomNavItem(
                     label: "Following",
-                    icon: CupertinoIcons.heart,
-                    activeIcon: CupertinoIcons.heart_fill,
-                    isActive: true,
+                    icon: Icons.favorite_border,
+                    activeIcon: Icons.favorite,
+                    isActive: currentRoute == FlowRoutes.following,
+                    onTap: () => _openRoute(context, FlowRoutes.following),
                   ),
-                  _BottomNavItem(
+                  const _BottomNavItem(
                     label: "Browse",
-                    icon: CupertinoIcons.compass,
-                    activeIcon: CupertinoIcons.compass_fill,
+                    icon: Icons.explore_outlined,
+                    activeIcon: Icons.explore,
                   ),
                   _BottomNavItem(
                     label: "Settings",
-                    icon: CupertinoIcons.gear,
-                    activeIcon: CupertinoIcons.gear_solid,
+                    icon: Icons.settings_outlined,
+                    activeIcon: Icons.settings,
+                    isActive: currentRoute == FlowRoutes.settings,
+                    onTap: () => _openRoute(context, FlowRoutes.settings),
                   ),
                 ],
               ),
@@ -64,6 +75,29 @@ class AppBottomNav extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  void _openRoute(BuildContext context, String routeName) {
+    if (routeName == currentRoute) {
+      return;
+    }
+
+    final routeSelected = onRouteSelected;
+    if (routeSelected != null) {
+      routeSelected(routeName);
+      return;
+    }
+
+    unawaited(Navigator.of(context).pushReplacementNamed(routeName));
+  }
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(StringProperty("currentRoute", currentRoute));
+    properties.add(
+      ObjectFlagProperty<ValueChanged<String>?>.has("onRouteSelected", onRouteSelected),
     );
   }
 }
@@ -74,12 +108,14 @@ class _BottomNavItem extends StatelessWidget {
     required this.icon,
     required this.activeIcon,
     this.isActive = false,
+    this.onTap,
   });
 
   final String label;
   final IconData icon;
   final IconData activeIcon;
   final bool isActive;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -93,7 +129,7 @@ class _BottomNavItem extends StatelessWidget {
         button: true,
         child: InkWell(
           borderRadius: BorderRadius.circular(AppRadius.md),
-          onTap: () {},
+          onTap: onTap,
           child: Column(
             key: ValueKey("bottom_nav_item_$label"),
             children: [
@@ -124,5 +160,6 @@ class _BottomNavItem extends StatelessWidget {
     properties.add(DiagnosticsProperty<IconData>("icon", icon));
     properties.add(DiagnosticsProperty<IconData>("activeIcon", activeIcon));
     properties.add(DiagnosticsProperty<bool>("isActive", isActive));
+    properties.add(ObjectFlagProperty<VoidCallback?>.has("onTap", onTap));
   }
 }

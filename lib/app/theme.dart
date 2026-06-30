@@ -53,6 +53,11 @@ ThemeData buildFlowTheme(Brightness brightness) {
         side: BorderSide(color: borderColor),
       ),
     ),
+    pageTransitionsTheme: const PageTransitionsTheme(
+      builders: {
+        TargetPlatform.android: _InstantPredictiveBackPageTransitionsBuilder(),
+      },
+    ),
     inputDecorationTheme: InputDecorationTheme(
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       filled: true,
@@ -193,5 +198,35 @@ ThemeData buildFlowTheme(Brightness brightness) {
           bodyColor: colorScheme.onSurface,
           displayColor: colorScheme.onSurface,
         ),
+  );
+}
+
+class _InstantPredictiveBackPageTransitionsBuilder extends PageTransitionsBuilder {
+  const _InstantPredictiveBackPageTransitionsBuilder();
+
+  static const _predictiveBackBuilder = PredictiveBackPageTransitionsBuilder();
+
+  @override
+  Duration get transitionDuration => Duration.zero;
+
+  @override
+  Duration get reverseTransitionDuration => Duration.zero;
+
+  @override
+  DelegatedTransitionBuilder? get delegatedTransition => _predictiveBackBuilder.delegatedTransition;
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) => _predictiveBackBuilder.buildTransitions(
+    route,
+    context,
+    animation,
+    secondaryAnimation,
+    child,
   );
 }

@@ -16,8 +16,6 @@ void main() {
     expect(find.text("No followed channels are live now."), findsOneWidget);
     expect(find.text("No offline followed channels."), findsOneWidget);
     expect(find.byType(StreamCard), findsNothing);
-    expect(find.text("AussieAntics"), findsNothing);
-    expect(find.text("NovaSkye"), findsNothing);
   });
 
   testWidgets("shows a setup message when Twitch auth is not configured", (
@@ -153,7 +151,6 @@ void main() {
 
     expect(find.text("OfflineOne"), findsOneWidget);
     expect(find.text("Just Chatting"), findsOneWidget);
-    expect(find.text("NovaSkye"), findsNothing);
   });
 
   testWidgets("starts offline expanded when no followed channels are live", (

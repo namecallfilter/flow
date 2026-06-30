@@ -4,13 +4,13 @@ import "dart:ui";
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_auth.dart";
 import "package:flow/app/radius.dart";
+import "package:flow/app/routes.dart";
 import "package:flow/app/spacing.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/following/twitch_login_screen.dart";
 import "package:flow/shared/widgets/app_bottom_nav.dart";
 import "package:flow/shared/widgets/avatar_ring.dart";
 import "package:flow/shared/widgets/section_header.dart";
-import "package:flutter/cupertino.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 
@@ -21,10 +21,16 @@ typedef TwitchLoginOpener =
     );
 
 class FollowingScreen extends StatefulWidget {
-  const FollowingScreen({super.key, this.authController, this.openTwitchLogin});
+  const FollowingScreen({
+    super.key,
+    this.authController,
+    this.openTwitchLogin,
+    this.bottomNavigationBar,
+  });
 
   final TwitchAuthController? authController;
   final TwitchLoginOpener? openTwitchLogin;
+  final Widget? bottomNavigationBar;
 
   @override
   State<FollowingScreen> createState() => _FollowingScreenState();
@@ -34,6 +40,7 @@ class FollowingScreen extends StatefulWidget {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<TwitchAuthController?>("authController", authController));
     properties.add(ObjectFlagProperty<TwitchLoginOpener?>.has("openTwitchLogin", openTwitchLogin));
+    properties.add(DiagnosticsProperty<Widget?>("bottomNavigationBar", bottomNavigationBar));
   }
 }
 
@@ -212,7 +219,8 @@ class _FollowingScreenState extends State<FollowingScreen> {
     return Scaffold(
       extendBody: true,
       backgroundColor: theme.scaffoldBackgroundColor,
-      bottomNavigationBar: const AppBottomNav(),
+      bottomNavigationBar:
+          widget.bottomNavigationBar ?? const AppBottomNav(currentRoute: FlowRoutes.following),
       body: SafeArea(
         bottom: false,
         child: Listener(
@@ -533,7 +541,7 @@ class StreamCard extends StatelessWidget {
                                 ),
                                 const SizedBox(width: 5),
                                 Icon(
-                                  CupertinoIcons.checkmark_seal_fill,
+                                  Icons.verified,
                                   color: theme.colorScheme.primary.withValues(
                                     alpha: isDark ? 0.72 : 0.66,
                                   ),

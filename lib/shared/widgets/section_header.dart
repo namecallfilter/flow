@@ -1,4 +1,3 @@
-import "package:flutter/cupertino.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 
@@ -46,7 +45,7 @@ class SectionHeader extends StatelessWidget {
             icon: AnimatedRotation(
               turns: expanded ? 0 : -0.25,
               duration: const Duration(milliseconds: 180),
-              child: const Icon(CupertinoIcons.chevron_down),
+              child: const Icon(Icons.expand_more),
             ),
             color: theme.colorScheme.onSurface.withValues(alpha: 0.58),
           )
@@ -55,7 +54,7 @@ class SectionHeader extends StatelessWidget {
             onPressed: onAction,
             iconAlignment: IconAlignment.end,
             label: Text(actionLabel!),
-            icon: const Icon(CupertinoIcons.chevron_right, size: 18),
+            icon: const Icon(Icons.chevron_right, size: 18),
             style: TextButton.styleFrom(
               foregroundColor: theme.colorScheme.primary,
               textStyle: const TextStyle(
