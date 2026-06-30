@@ -57,10 +57,12 @@ class AppBottomNav extends StatelessWidget {
                     isActive: currentRoute == FlowRoutes.following,
                     onTap: () => _openRoute(context, FlowRoutes.following),
                   ),
-                  const _BottomNavItem(
+                  _BottomNavItem(
                     label: "Browse",
                     icon: Icons.explore_outlined,
                     activeIcon: Icons.explore,
+                    isActive: currentRoute == FlowRoutes.browse,
+                    onTap: () => _openRoute(context, FlowRoutes.browse),
                   ),
                   _BottomNavItem(
                     label: "Settings",

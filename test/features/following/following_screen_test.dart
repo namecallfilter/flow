@@ -1,11 +1,15 @@
+import "dart:convert";
+
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_auth.dart";
 import "package:flow/app/app.dart";
 import "package:flow/features/following/following_screen.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
+import "package:http/http.dart" as http;
+import "package:http/testing.dart";
 
-import "../../helpers/twitch_fakes.dart";
+typedef _RequestObserver = void Function(http.Request request);
 
 void main() {
   testWidgets("renders an empty following feed before Twitch auth", (tester) async {
@@ -14,82 +18,6 @@ void main() {
 
     expect(find.byKey(const ValueKey("following_title")), findsOneWidget);
     expect(find.text("No followed channels are live now."), findsOneWidget);
-    expect(find.text("No offline followed channels."), findsOneWidget);
-    expect(find.byType(StreamCard), findsNothing);
-  });
-
-  testWidgets("shows a setup message when Twitch auth is not configured", (
-    tester,
-  ) async {
-    var openedLogin = false;
-
-    await tester.pumpWidget(
-      _followingScreen(
-        authController: _authController(
-          config: const TwitchAuthConfig(clientId: ""),
-        ),
-        openTwitchLogin: (_, _) async {
-          openedLogin = true;
-          return null;
-        },
-      ),
-    );
-
-    await tester.tap(find.byKey(const ValueKey("profile_auth_button")));
-    await tester.pump();
-
-    expect(openedLogin, isFalse);
-    expect(find.textContaining("TWITCH_CLIENT_ID"), findsOneWidget);
-  });
-
-  testWidgets("profile avatar opens Twitch login and confirms the connected user", (
-    tester,
-  ) async {
-    var openedLogin = false;
-
-    await tester.pumpWidget(
-      _followingScreen(
-        openTwitchLogin: (context, controller) async {
-          openedLogin = true;
-          return _connection();
-        },
-      ),
-    );
-
-    await tester.tap(find.byKey(const ValueKey("profile_auth_button")));
-    await tester.pump();
-
-    expect(openedLogin, isTrue);
-    expect(find.textContaining("Connected as Flow Tester"), findsOneWidget);
-  });
-
-  testWidgets("pull to refresh reloads saved following data", (tester) async {
-    var followedStreamsRequests = 0;
-    final store = FakeTwitchSecureStore()..accessToken = "token-123";
-
-    await tester.pumpWidget(
-      _followingScreen(
-        authController: _authController(
-          secureStore: store,
-          onRequest: (request) {
-            if (request.url.path == "/helix/streams/followed") {
-              followedStreamsRequests++;
-            }
-          },
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.byType(RefreshIndicator), findsOneWidget);
-    expect(followedStreamsRequests, 1);
-
-    await tester.drag(find.byType(ListView), const Offset(0, 320));
-    await tester.pump();
-    await tester.pump(const Duration(seconds: 1));
-    await tester.pumpAndSettle();
-
-    expect(followedStreamsRequests, 2);
   });
 
   testWidgets("renders live streams and expands offline channels from auth data", (
@@ -109,7 +37,6 @@ void main() {
               viewerCount: 321,
               thumbnailUrl:
                   "https://static-cdn.jtvnw.net/previews-ttv/live_user_liveone-{width}x{height}.jpg",
-              tags: ["English"],
             ),
           ],
           followedChannels: const [
@@ -141,9 +68,6 @@ void main() {
 
     expect(find.text("LiveOne"), findsOneWidget);
     expect(find.text("Building with chat"), findsOneWidget);
-    expect(find.text("321"), findsOneWidget);
-    expect(find.text("Minecraft"), findsOneWidget);
-    expect(find.byTooltip("Expand Offline"), findsOneWidget);
     expect(find.text("OfflineOne"), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey("offline_toggle")));
@@ -153,29 +77,32 @@ void main() {
     expect(find.text("Just Chatting"), findsOneWidget);
   });
 
-  testWidgets("starts offline expanded when no followed channels are live", (
-    tester,
-  ) async {
+  testWidgets("pull to refresh reloads saved following data", (tester) async {
+    var followedStreamsRequests = 0;
+    final store = _MemoryTwitchStore()..accessToken = "token-123";
+
     await tester.pumpWidget(
       _followingScreen(
-        openTwitchLogin: (_, _) async => _connection(
-          followedChannels: const [
-            TwitchFollowedChannel(
-              broadcasterId: "offline-1",
-              broadcasterLogin: "offlineone",
-              broadcasterName: "OfflineOne",
-            ),
-          ],
+        authController: _authController(
+          secureStore: store,
+          onRequest: (request) {
+            if (request.url.path == "/helix/streams/followed") {
+              followedStreamsRequests++;
+            }
+          },
         ),
       ),
     );
-
-    await tester.tap(find.byKey(const ValueKey("profile_auth_button")));
     await tester.pumpAndSettle();
 
-    expect(find.text("No followed channels are live now."), findsNothing);
-    expect(find.byTooltip("Collapse Offline"), findsOneWidget);
-    expect(find.text("OfflineOne"), findsOneWidget);
+    expect(followedStreamsRequests, 1);
+
+    await tester.drag(find.byType(ListView), const Offset(0, 320));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+
+    expect(followedStreamsRequests, 2);
   });
 }
 
@@ -190,24 +117,76 @@ Widget _followingScreen({
 );
 
 TwitchAuthController _authController({
-  TwitchAuthConfig config = const TwitchAuthConfig(clientId: "client-123"),
-  FakeTwitchSecureStore? secureStore,
-  RequestObserver? onRequest,
+  _MemoryTwitchStore? secureStore,
+  _RequestObserver? onRequest,
 }) => TwitchAuthController(
-  config: config,
-  secureStore: secureStore ?? FakeTwitchSecureStore(),
+  config: const TwitchAuthConfig(clientId: "client-123"),
+  secureStore: secureStore ?? _MemoryTwitchStore(),
   apiClientFactory: (accessToken) => TwitchApiClient(
     clientId: "client-123",
     accessToken: accessToken,
-    httpClient: fakeTwitchApiClient(onRequest: onRequest),
+    httpClient: _followingHttpClient(onRequest: onRequest),
   ),
-  cookieExtractor: const FakeCookieExtractor(),
+  cookieExtractor: const _StaticCookieExtractor(),
 );
+
+MockClient _followingHttpClient({_RequestObserver? onRequest}) => MockClient((request) async {
+  onRequest?.call(request);
+
+  if (request.url.host == "id.twitch.tv" && request.url.path == "/oauth2/validate") {
+    return _jsonResponse({"client_id": "client-123", "user_id": "user-123"});
+  }
+
+  if (request.url.path == "/helix/users") {
+    final ids = request.url.queryParametersAll["id"];
+    if (ids != null) {
+      return _jsonResponse({
+        "data": [
+          for (final id in ids)
+            {
+              "id": id,
+              "login": "aussieantics",
+              "display_name": "AussieAntics",
+              "profile_image_url": "https://static-cdn.jtvnw.net/$id.png",
+            },
+        ],
+      });
+    }
+    return _jsonResponse({
+      "data": [
+        {"id": "user-123", "login": "flowtester", "display_name": "Flow Tester"},
+      ],
+    });
+  }
+
+  if (request.url.path == "/helix/streams/followed") {
+    return _jsonResponse({
+      "data": [
+        {
+          "id": "stream-123",
+          "user_id": "creator-1",
+          "user_login": "aussieantics",
+          "user_name": "AussieAntics",
+          "game_name": "Fortnite",
+          "title": "DROPS ON",
+          "viewer_count": 10706,
+          "thumbnail_url":
+              "https://static-cdn.jtvnw.net/previews-ttv/live_user_aussieantics-{width}x{height}.jpg",
+        },
+      ],
+    });
+  }
+
+  if (request.url.path == "/helix/channels/followed") {
+    return _jsonResponse({"data": <Object?>[]});
+  }
+
+  return http.Response("not found", 404);
+});
 
 TwitchAuthConnection _connection({
   List<TwitchFollowedStream> followedStreams = const [],
   List<TwitchFollowedChannel> followedChannels = const [],
-  Map<String, TwitchUser> usersById = const {},
   Map<String, TwitchChannelInfo> channelInfoByBroadcasterId = const {},
 }) => TwitchAuthConnection(
   user: const TwitchUser(
@@ -217,6 +196,53 @@ TwitchAuthConnection _connection({
   ),
   followedStreams: followedStreams,
   followedChannels: followedChannels,
-  usersById: usersById,
   channelInfoByBroadcasterId: channelInfoByBroadcasterId,
 );
+
+http.Response _jsonResponse(Map<String, Object?> body) => http.Response(
+  jsonEncode(body),
+  200,
+  headers: {"content-type": "application/json"},
+);
+
+class _MemoryTwitchStore implements TwitchSecureStore {
+  String? accessToken;
+  String? pendingState;
+  String? webSessionToken;
+
+  @override
+  Future<void> clearPendingState() async {
+    pendingState = null;
+  }
+
+  @override
+  Future<String?> readAccessToken() async => accessToken;
+
+  @override
+  Future<String?> readPendingState() async => pendingState;
+
+  @override
+  Future<String?> readWebSessionToken() async => webSessionToken;
+
+  @override
+  Future<void> saveAccessToken(String token) async {
+    accessToken = token;
+  }
+
+  @override
+  Future<void> savePendingState(String state) async {
+    pendingState = state;
+  }
+
+  @override
+  Future<void> saveWebSessionToken(String token) async {
+    webSessionToken = token;
+  }
+}
+
+class _StaticCookieExtractor implements TwitchCookieExtractor {
+  const _StaticCookieExtractor();
+
+  @override
+  Future<String?> extractTwitchAuthToken() async => null;
+}

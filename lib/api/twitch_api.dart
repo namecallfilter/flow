@@ -79,6 +79,47 @@ class TwitchChannelInfo {
   final String title;
 }
 
+class TwitchCategory {
+  const TwitchCategory({
+    required this.id,
+    required this.name,
+    required this.boxArtUrl,
+  });
+
+  final String id;
+  final String name;
+  final String? boxArtUrl;
+}
+
+class TwitchSearchChannel {
+  const TwitchSearchChannel({
+    required this.id,
+    required this.broadcasterLogin,
+    required this.displayName,
+    required this.gameName,
+    required this.title,
+    required this.isLive,
+    this.thumbnailUrl,
+    this.startedAt,
+  });
+
+  final String id;
+  final String broadcasterLogin;
+  final String displayName;
+  final String gameName;
+  final String title;
+  final bool isLive;
+  final String? thumbnailUrl;
+  final DateTime? startedAt;
+}
+
+class TwitchPage<T> {
+  const TwitchPage({required this.data, required this.cursor});
+
+  final List<T> data;
+  final String? cursor;
+}
+
 class TwitchApiClient {
   TwitchApiClient({
     required this.clientId,
@@ -132,23 +173,7 @@ class TwitchApiClient {
       "user_id": userId,
     });
 
-    return [
-      for (final item in data)
-        TwitchFollowedStream(
-          id: _stringValue(item["id"]),
-          userId: _stringValue(item["user_id"]),
-          userLogin: _stringValue(item["user_login"]),
-          userName: _stringValue(item["user_name"]),
-          gameName: _stringValue(item["game_name"]),
-          title: _stringValue(item["title"]),
-          viewerCount: item["viewer_count"] is int
-              ? item["viewer_count"]! as int
-              : int.tryParse('${item['viewer_count']}') ?? 0,
-          thumbnailUrl: item["thumbnail_url"] as String?,
-          startedAt: _dateTimeValue(item["started_at"]),
-          tags: _stringList(item["tags"]),
-        ),
-    ];
+    return [for (final item in data) _streamFromItem(item)];
   }
 
   Future<List<TwitchFollowedChannel>> fetchFollowedChannels(
@@ -203,6 +228,153 @@ class TwitchApiClient {
       }
     }
     return channels;
+  }
+
+  Future<List<TwitchCategory>> fetchTopCategories({int first = 12}) async {
+    final page = await fetchTopCategoriesPage(first: first);
+    return page.data;
+  }
+
+  Future<TwitchPage<TwitchCategory>> fetchTopCategoriesPage({
+    int first = 12,
+    String? cursor,
+  }) async {
+    final queryParameters = <String, dynamic>{"first": _boundedFirst(first)};
+    if (cursor != null && cursor.isNotEmpty) {
+      queryParameters["after"] = cursor;
+    }
+
+    final payload = await _get("/helix/games/top", queryParameters);
+
+    return TwitchPage<TwitchCategory>(
+      data: [for (final item in _dataList(payload)) _categoryFromItem(item)],
+      cursor: _paginationCursor(payload),
+    );
+  }
+
+  Future<List<TwitchCategory>> searchCategories(
+    String query, {
+    int first = 20,
+  }) async {
+    final page = await searchCategoriesPage(query, first: first);
+    return page.data;
+  }
+
+  Future<TwitchPage<TwitchCategory>> searchCategoriesPage(
+    String query, {
+    int first = 20,
+    String? cursor,
+  }) async {
+    final normalizedQuery = query.trim();
+    if (normalizedQuery.isEmpty) {
+      return const TwitchPage<TwitchCategory>(data: [], cursor: null);
+    }
+
+    final queryParameters = <String, dynamic>{
+      "query": normalizedQuery,
+      "first": _boundedFirst(first),
+    };
+    if (cursor != null && cursor.isNotEmpty) {
+      queryParameters["after"] = cursor;
+    }
+
+    final payload = await _get("/helix/search/categories", queryParameters);
+
+    return TwitchPage<TwitchCategory>(
+      data: [for (final item in _dataList(payload)) _categoryFromItem(item)],
+      cursor: _paginationCursor(payload),
+    );
+  }
+
+  Future<List<TwitchFollowedStream>> fetchLiveStreams({
+    int first = 20,
+    List<String> gameIds = const [],
+    List<String> userLogins = const [],
+  }) async {
+    final page = await fetchLiveStreamsPage(
+      first: first,
+      gameIds: gameIds,
+      userLogins: userLogins,
+    );
+    return page.data;
+  }
+
+  Future<TwitchPage<TwitchFollowedStream>> fetchLiveStreamsPage({
+    int first = 20,
+    List<String> gameIds = const [],
+    List<String> userLogins = const [],
+    String? cursor,
+  }) async {
+    final queryParameters = <String, dynamic>{
+      "first": _boundedFirst(first),
+    };
+    if (cursor != null && cursor.isNotEmpty) {
+      queryParameters["after"] = cursor;
+    }
+    final normalizedGameIds = _nonEmptyValues(gameIds);
+    final normalizedUserLogins = _nonEmptyValues(userLogins);
+    if (normalizedGameIds.isNotEmpty) {
+      queryParameters["game_id"] = normalizedGameIds;
+    }
+    if (normalizedUserLogins.isNotEmpty) {
+      queryParameters["user_login"] = normalizedUserLogins;
+    }
+
+    final payload = await _get("/helix/streams", queryParameters);
+    return TwitchPage<TwitchFollowedStream>(
+      data: [for (final item in _dataList(payload)) _streamFromItem(item)],
+      cursor: _paginationCursor(payload),
+    );
+  }
+
+  Future<List<TwitchSearchChannel>> searchLiveChannels(
+    String query, {
+    int first = 20,
+  }) async {
+    final page = await searchChannelsPage(query, first: first, liveOnly: true);
+    return page.data;
+  }
+
+  Future<TwitchPage<TwitchSearchChannel>> searchChannelsPage(
+    String query, {
+    int first = 20,
+    String? cursor,
+    bool liveOnly = false,
+  }) async {
+    final normalizedQuery = query.trim();
+    if (normalizedQuery.isEmpty) {
+      return const TwitchPage<TwitchSearchChannel>(data: [], cursor: null);
+    }
+
+    final queryParameters = <String, dynamic>{
+      "query": normalizedQuery,
+      "first": _boundedFirst(first),
+    };
+    if (cursor != null && cursor.isNotEmpty) {
+      queryParameters["after"] = cursor;
+    }
+    if (liveOnly) {
+      queryParameters["live_only"] = "true";
+    }
+
+    final payload = await _get("/helix/search/channels", queryParameters);
+
+    return TwitchPage<TwitchSearchChannel>(
+      data: [
+        for (final item in _dataList(payload))
+          TwitchSearchChannel(
+            id: _stringValue(item["id"]),
+            broadcasterLogin: _stringValue(item["broadcaster_login"]),
+            displayName: _stringValue(item["display_name"]),
+            gameName: _stringValue(item["game_name"]),
+            title: _stringValue(item["title"]),
+            thumbnailUrl: item["thumbnail_url"] as String?,
+            startedAt: _dateTimeValue(item["started_at"]),
+            isLive: item["is_live"] == true || _stringValue(item["is_live"]) == "true",
+          ),
+      ],
+      cursor: _paginationCursor(payload),
+    );
   }
 
   Future<Map<String, Object?>> _get(
@@ -296,6 +468,34 @@ class TwitchApiClient {
       yield items.skip(index).take(100).toList();
     }
   }
+
+  static String _boundedFirst(int value) => value.clamp(1, 100).toString();
+
+  static TwitchCategory _categoryFromItem(Map<String, Object?> item) => TwitchCategory(
+    id: _stringValue(item["id"]),
+    name: _stringValue(item["name"]),
+    boxArtUrl: item["box_art_url"] as String?,
+  );
+
+  static List<String> _nonEmptyValues(List<String> values) => [
+    for (final value in values)
+      if (value.trim().isNotEmpty) value.trim(),
+  ];
+
+  static TwitchFollowedStream _streamFromItem(Map<String, Object?> item) => TwitchFollowedStream(
+    id: _stringValue(item["id"]),
+    userId: _stringValue(item["user_id"]),
+    userLogin: _stringValue(item["user_login"]),
+    userName: _stringValue(item["user_name"]),
+    gameName: _stringValue(item["game_name"]),
+    title: _stringValue(item["title"]),
+    viewerCount: item["viewer_count"] is int
+        ? item["viewer_count"]! as int
+        : int.tryParse('${item['viewer_count']}') ?? 0,
+    thumbnailUrl: item["thumbnail_url"] as String?,
+    startedAt: _dateTimeValue(item["started_at"]),
+    tags: _stringList(item["tags"]),
+  );
 
   static String _stringValue(Object? value) => value?.toString() ?? "";
 }

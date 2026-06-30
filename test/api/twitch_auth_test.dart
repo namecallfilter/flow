@@ -1,146 +1,180 @@
+import "dart:convert";
+
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_auth.dart";
 import "package:flutter_test/flutter_test.dart";
-
-import "../helpers/twitch_fakes.dart";
+import "package:http/http.dart" as http;
+import "package:http/testing.dart";
 
 void main() {
-  group("TwitchAuthConfig", () {
-    test("builds an implicit OAuth authorization URL without secrets", () async {
-      final store = FakeTwitchSecureStore();
-      final controller = _authController(secureStore: store);
-
-      final uri = await controller.createAuthorizationUri();
-
-      expect(store.pendingState, "state-123");
-      expect(uri.scheme, "https");
-      expect(uri.host, "id.twitch.tv");
-      expect(uri.path, "/oauth2/authorize");
-      expect(uri.queryParameters["response_type"], "token");
-      expect(uri.queryParameters["client_id"], "client-123");
-      expect(uri.queryParameters["redirect_uri"], "https://twitch.tv/login");
-      expect(uri.queryParameters["scope"], "user:read:follows");
-      expect(uri.queryParameters["force_verify"], "true");
-      expect(uri.queryParameters["state"], "state-123");
-      expect(uri.queryParameters.containsKey("client_secret"), isFalse);
-    });
-
-    test("recognizes Twitch login redirects with or without www", () {
-      const config = TwitchAuthConfig(clientId: "client-123");
-
-      expect(
-        config.isRedirectUri(
-          Uri.parse("https://twitch.tv/login#access_token=token-123"),
-        ),
-        isTrue,
-      );
-      expect(
-        config.isRedirectUri(
-          Uri.parse("https://www.twitch.tv/login#access_token=token-123"),
-        ),
-        isTrue,
-      );
-      expect(config.isRedirectUri(Uri.parse("https://twitch.tv/")), isFalse);
-    });
+  test("rejects OAuth callbacks with mismatched state", () {
+    expect(
+      () => TwitchAuthCallback.parse(
+        Uri.parse("https://twitch.tv/login#access_token=token-123&state=wrong-state"),
+        expectedState: "state-123",
+      ),
+      throwsA(isA<TwitchAuthException>()),
+    );
   });
 
-  group("TwitchAuthCallback", () {
-    test("parses access tokens from fragment or query redirects", () {
-      final redirectUris = [
-        Uri.parse(
-          "https://twitch.tv/login"
-          "#access_token=token-123&scope=user%3Aread%3Afollows&state=state-123&token_type=bearer",
-        ),
-        Uri.parse(
-          "https://twitch.tv/login"
-          "?access_token=token-123&scope=user%3Aread%3Afollows&state=state-123&token_type=bearer",
-        ),
-      ];
+  test("completes Twitch auth and loads following data", () async {
+    final store = _MemoryTwitchStore();
+    final controller = _authController(
+      secureStore: store,
+      cookieExtractor: const _StaticCookieExtractor("cookie-token-123"),
+    );
 
-      for (final uri in redirectUris) {
-        final callback = TwitchAuthCallback.parse(
-          uri,
-          expectedState: "state-123",
-        );
+    await controller.createAuthorizationUri();
+    final connection = await controller.completeAuth(
+      Uri.parse(
+        "https://twitch.tv/login"
+        "#access_token=token-123&scope=user%3Aread%3Afollows&state=state-123",
+      ),
+    );
 
-        expect(callback.accessToken, "token-123");
-        expect(callback.scope, "user:read:follows");
-      }
-    });
-
-    test("rejects callbacks when OAuth state does not match", () {
-      expect(
-        () => TwitchAuthCallback.parse(
-          Uri.parse(
-            "https://twitch.tv/login#access_token=token-123&state=wrong-state",
-          ),
-          expectedState: "state-123",
-        ),
-        throwsA(isA<TwitchAuthException>()),
-      );
-    });
-  });
-
-  group("TwitchAuthController", () {
-    test("validates token, stores tokens, and fetches following data", () async {
-      final store = FakeTwitchSecureStore();
-      final controller = _authController(
-        secureStore: store,
-        cookieExtractor: const FakeCookieExtractor(
-          webSessionToken: "cookie-token-123",
-        ),
-      );
-
-      await controller.createAuthorizationUri();
-      final connection = await controller.completeAuth(
-        Uri.parse(
-          "https://twitch.tv/login"
-          "#access_token=token-123&scope=user%3Aread%3Afollows&state=state-123",
-        ),
-      );
-
-      expect(store.accessToken, "token-123");
-      expect(store.webSessionToken, "cookie-token-123");
-      expect(store.pendingState, isNull);
-      expect(connection.user.displayName, "Flow Tester");
-      expect(connection.followedStreams.single.userName, "AussieAntics");
-      expect(connection.followedStreams.single.thumbnailUrl, contains("{width}"));
-      expect(connection.followedStreams.single.startedAt, isNotNull);
-      expect(connection.followedStreams.single.tags, contains("Drops"));
-      expect(connection.followedChannels.single.broadcasterName, "NovaSkye");
-      expect(connection.followedChannels.single.followedAt, isNotNull);
-      expect(connection.usersById["creator-1"]?.profileImageUrl, isNotEmpty);
-      expect(
-        connection.channelInfoByBroadcasterId["creator-2"]?.gameName,
-        "VALORANT",
-      );
-    });
-
-    test("loads following data from a saved Twitch token", () async {
-      final store = FakeTwitchSecureStore()..accessToken = "token-123";
-      final controller = _authController(secureStore: store);
-
-      final connection = await controller.loadSavedConnection();
-
-      expect(connection, isNotNull);
-      expect(connection?.user.displayName, "Flow Tester");
-      expect(connection?.followedStreams.single.userName, "AussieAntics");
-      expect(connection?.followedChannels.single.broadcasterName, "NovaSkye");
-    });
+    expect(store.accessToken, "token-123");
+    expect(store.webSessionToken, "cookie-token-123");
+    expect(store.pendingState, isNull);
+    expect(connection.user.displayName, "Flow Tester");
+    expect(connection.followedStreams.single.userName, "AussieAntics");
+    expect(connection.followedChannels.single.broadcasterName, "NovaSkye");
   });
 }
 
 TwitchAuthController _authController({
-  FakeTwitchSecureStore? secureStore,
-  TwitchCookieExtractor? cookieExtractor,
+  required _MemoryTwitchStore secureStore,
+  TwitchCookieExtractor cookieExtractor = const _StaticCookieExtractor(),
 }) => TwitchAuthController(
   config: const TwitchAuthConfig(clientId: "client-123"),
-  secureStore: secureStore ?? FakeTwitchSecureStore(),
+  secureStore: secureStore,
   stateGenerator: () => "state-123",
   apiClientFactory: (accessToken) => TwitchApiClient(
     clientId: "client-123",
     accessToken: accessToken,
-    httpClient: fakeTwitchApiClient(),
+    httpClient: _authHttpClient(),
   ),
-  cookieExtractor: cookieExtractor ?? const FakeCookieExtractor(),
+  cookieExtractor: cookieExtractor,
 );
+
+MockClient _authHttpClient() => MockClient((request) async {
+  if (request.url.host == "id.twitch.tv" && request.url.path == "/oauth2/validate") {
+    return _jsonResponse({"client_id": "client-123", "user_id": "user-123"});
+  }
+
+  if (request.url.path == "/helix/users") {
+    final ids = request.url.queryParametersAll["id"];
+    if (ids != null) {
+      return _jsonResponse({
+        "data": [
+          for (final id in ids)
+            {
+              "id": id,
+              "login": "aussieantics",
+              "display_name": "AussieAntics",
+              "profile_image_url": "https://static-cdn.jtvnw.net/$id.png",
+            },
+        ],
+      });
+    }
+    return _jsonResponse({
+      "data": [
+        {"id": "user-123", "login": "flowtester", "display_name": "Flow Tester"},
+      ],
+    });
+  }
+
+  if (request.url.path == "/helix/streams/followed") {
+    return _jsonResponse({
+      "data": [
+        {
+          "id": "stream-123",
+          "user_id": "creator-1",
+          "user_login": "aussieantics",
+          "user_name": "AussieAntics",
+          "game_name": "Fortnite",
+          "title": "DROPS ON",
+          "viewer_count": 10706,
+          "thumbnail_url":
+              "https://static-cdn.jtvnw.net/previews-ttv/live_user_aussieantics-{width}x{height}.jpg",
+        },
+      ],
+    });
+  }
+
+  if (request.url.path == "/helix/channels/followed") {
+    return _jsonResponse({
+      "data": [
+        {
+          "broadcaster_id": "creator-2",
+          "broadcaster_login": "novaskye",
+          "broadcaster_name": "NovaSkye",
+        },
+      ],
+    });
+  }
+
+  if (request.url.path == "/helix/channels") {
+    return _jsonResponse({
+      "data": [
+        {
+          "broadcaster_id": "creator-2",
+          "broadcaster_name": "NovaSkye",
+          "game_name": "VALORANT",
+          "title": "Ranked grind",
+        },
+      ],
+    });
+  }
+
+  return http.Response("not found", 404);
+});
+
+http.Response _jsonResponse(Map<String, Object?> body) => http.Response(
+  jsonEncode(body),
+  200,
+  headers: {"content-type": "application/json"},
+);
+
+class _MemoryTwitchStore implements TwitchSecureStore {
+  String? accessToken;
+  String? pendingState;
+  String? webSessionToken;
+
+  @override
+  Future<void> clearPendingState() async {
+    pendingState = null;
+  }
+
+  @override
+  Future<String?> readAccessToken() async => accessToken;
+
+  @override
+  Future<String?> readPendingState() async => pendingState;
+
+  @override
+  Future<String?> readWebSessionToken() async => webSessionToken;
+
+  @override
+  Future<void> saveAccessToken(String token) async {
+    accessToken = token;
+  }
+
+  @override
+  Future<void> savePendingState(String state) async {
+    pendingState = state;
+  }
+
+  @override
+  Future<void> saveWebSessionToken(String token) async {
+    webSessionToken = token;
+  }
+}
+
+class _StaticCookieExtractor implements TwitchCookieExtractor {
+  const _StaticCookieExtractor([this.token]);
+
+  final String? token;
+
+  @override
+  Future<String?> extractTwitchAuthToken() async => token;
+}

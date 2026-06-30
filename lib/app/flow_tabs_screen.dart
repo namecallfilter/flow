@@ -2,6 +2,7 @@ import "dart:async";
 
 import "package:flow/api/twitch_auth.dart";
 import "package:flow/app/routes.dart";
+import "package:flow/features/browse/browse_screen.dart";
 import "package:flow/features/following/following_screen.dart";
 import "package:flow/features/settings/settings_screen.dart";
 import "package:flow/shared/external_url_opener.dart";
@@ -62,17 +63,19 @@ class FlowTabsScreen extends StatefulWidget {
 
 class _FlowTabsScreenState extends State<FlowTabsScreen> {
   final _navigatorKey = GlobalKey<NavigatorState>();
-  bool _settingsRouteActive = false;
+  final _browseStateStore = BrowseScreenStateStore();
+  String? _activeSecondaryRoute;
   late String _currentRoute;
 
   @override
   void initState() {
     super.initState();
     _currentRoute = _normalizeRoute(widget.initialRoute);
-    if (_normalizeRoute(widget.initialRoute) == FlowRoutes.settings) {
+    if (_currentRoute != FlowRoutes.following) {
+      final initialRoute = _currentRoute;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          _openSettingsRoute();
+          _openSecondaryRoute(initialRoute);
         }
       });
     }
@@ -80,10 +83,17 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> {
 
   void _selectRoute(String routeName) {
     final nextRoute = _normalizeRoute(routeName);
-    if (nextRoute == FlowRoutes.settings) {
-      _openSettingsRoute();
-    } else if (nextRoute == FlowRoutes.following) {
+    if (nextRoute == _currentRoute) {
+      return;
+    }
+
+    if (nextRoute == FlowRoutes.following) {
       _returnToFollowingRoute();
+    } else {
+      _openSecondaryRoute(
+        nextRoute,
+        replaceCurrent: _currentRoute != FlowRoutes.following,
+      );
     }
   }
 
@@ -119,33 +129,35 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> {
     ),
   );
 
-  void _openSettingsRoute() {
-    if (_settingsRouteActive) {
+  void _openSecondaryRoute(String routeName, {bool replaceCurrent = false}) {
+    final nextRoute = _normalizeRoute(routeName);
+    if (nextRoute == FlowRoutes.following || nextRoute == _activeSecondaryRoute) {
       return;
     }
 
-    _settingsRouteActive = true;
-    _setCurrentRoute(FlowRoutes.settings);
+    final navigator = _navigatorKey.currentState;
+    if (navigator == null) {
+      return;
+    }
+
+    if (replaceCurrent) {
+      _activeSecondaryRoute = null;
+      _popToFollowingRoute(navigator);
+    }
+
+    _activeSecondaryRoute = nextRoute;
+    _setCurrentRoute(nextRoute);
+    final route = _secondaryRoute(nextRoute);
+    final routeCompletion = navigator.push<void>(route);
+
     unawaited(
-      _navigatorKey.currentState!
-          .push<void>(
-            MaterialPageRoute<void>(
-              settings: const RouteSettings(name: FlowRoutes.settings),
-              builder: (_) => SettingsScreen(
-                currentThemeMode: widget.currentThemeMode,
-                onThemeModeChanged: widget.onThemeModeChanged,
-                openExternalUrl: widget.openExternalUrl,
-                bottomNavigationBar: const SizedBox.shrink(),
-              ),
-            ),
-          )
-          .whenComplete(() {
-            if (!mounted) {
-              return;
-            }
-            _settingsRouteActive = false;
-            _setCurrentRoute(FlowRoutes.following);
-          }),
+      routeCompletion.whenComplete(() {
+        if (!mounted || _activeSecondaryRoute != nextRoute) {
+          return;
+        }
+        _activeSecondaryRoute = null;
+        _setCurrentRoute(FlowRoutes.following);
+      }),
     );
   }
 
@@ -154,9 +166,40 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> {
       return;
     }
 
+    _activeSecondaryRoute = null;
     _setCurrentRoute(FlowRoutes.following);
-    unawaited(_navigatorKey.currentState?.maybePop());
+    final navigator = _navigatorKey.currentState;
+    if (navigator != null) {
+      _popToFollowingRoute(navigator);
+    }
   }
+
+  void _popToFollowingRoute(NavigatorState navigator) {
+    navigator.popUntil(
+      (route) => route.isFirst || route.settings.name == FlowRoutes.following,
+    );
+  }
+
+  MaterialPageRoute<void> _secondaryRoute(String routeName) => switch (routeName) {
+    FlowRoutes.browse => MaterialPageRoute<void>(
+      settings: const RouteSettings(name: FlowRoutes.browse),
+      builder: (_) => BrowseScreen(
+        authController: widget.authController,
+        bottomNavigationBar: const SizedBox.shrink(),
+        stateStore: _browseStateStore,
+      ),
+    ),
+    FlowRoutes.settings => MaterialPageRoute<void>(
+      settings: const RouteSettings(name: FlowRoutes.settings),
+      builder: (_) => SettingsScreen(
+        currentThemeMode: widget.currentThemeMode,
+        onThemeModeChanged: widget.onThemeModeChanged,
+        openExternalUrl: widget.openExternalUrl,
+        bottomNavigationBar: const SizedBox.shrink(),
+      ),
+    ),
+    _ => throw StateError("Unsupported secondary route: $routeName"),
+  };
 
   void _setCurrentRoute(String routeName) {
     if (_currentRoute == routeName) {
@@ -170,6 +213,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> {
 }
 
 String _normalizeRoute(String routeName) => switch (routeName) {
+  FlowRoutes.browse => FlowRoutes.browse,
   FlowRoutes.settings => FlowRoutes.settings,
   _ => FlowRoutes.following,
 };
