@@ -386,7 +386,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    const topScrollPadding = 150.0;
+    const topScrollPadding = 140.0;
     const bottomScrollPadding = 114.0;
 
     return Scaffold(
@@ -671,7 +671,7 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final query = _searchController.text.trim();
-    const topScrollPadding = 92.0;
+    const topScrollPadding = 64.0;
 
     return Scaffold(
       key: const ValueKey("browse_search_page"),

@@ -160,7 +160,7 @@ class _FollowingScreenState extends State<FollowingScreen> {
         : connection.usersById[connection.user.id] ?? connection.user;
     final offlineExpanded = _offlineExpandedOverride ?? liveChannels.isEmpty;
     final showLiveEmptyState = liveChannels.isEmpty && offlineChannels.isEmpty;
-    const topScrollPadding = 80.0;
+    const topScrollPadding = 92.0;
     const bottomScrollPadding = 114.0;
 
     return Scaffold(
