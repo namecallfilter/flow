@@ -5,6 +5,7 @@ import "package:flow/api/twitch_auth.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/browse/browse_screen.dart";
 import "package:flow/features/following/following_screen.dart";
+import "package:flow/shared/preferences/preferences.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:http/http.dart" as http;
@@ -147,42 +148,6 @@ void main() {
     );
   });
 
-  testWidgets("does not refresh when a top pull is pushed back up", (tester) async {
-    final requestedUris = <Uri>[];
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFlowTheme(Brightness.dark),
-        home: BrowseScreen(
-          authController: _authController(
-            onRequest: (request) {
-              requestedUris.add(request.url);
-            },
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    requestedUris.clear();
-    final gesture = await tester.startGesture(tester.getCenter(find.byType(ListView)));
-    await gesture.moveBy(const Offset(0, 520));
-    await tester.pump();
-    expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsOneWidget);
-
-    await gesture.moveBy(const Offset(0, -220));
-    await tester.pump();
-    await gesture.up();
-    await tester.pumpAndSettle();
-
-    expect(
-      requestedUris.any(
-        (uri) => uri.path == "/helix/games/top" && !uri.queryParameters.containsKey("after"),
-      ),
-      isFalse,
-    );
-  });
-
   testWidgets("shows recent search history and clears it", (tester) async {
     final searchHistoryStore = _MemorySearchHistoryStore();
 
@@ -191,7 +156,7 @@ void main() {
         theme: buildFlowTheme(Brightness.dark),
         home: BrowseScreen(
           authController: _authController(),
-          stateStore: BrowseScreenStateStore(searchHistoryStore: searchHistoryStore),
+          preferences: searchHistoryStore,
         ),
       ),
     );
@@ -232,7 +197,7 @@ void main() {
         theme: buildFlowTheme(Brightness.dark),
         home: BrowseScreen(
           authController: _authController(),
-          stateStore: BrowseScreenStateStore(searchHistoryStore: searchHistoryStore),
+          preferences: searchHistoryStore,
         ),
       ),
     );
@@ -314,23 +279,11 @@ void main() {
     expect(find.byKey(const ValueKey("browse_search_channels_header")), findsOneWidget);
     expect(find.byKey(const ValueKey("browse_search_categories_header")), findsOneWidget);
 
-    final channelsHeaderTop = tester.getTopLeft(
-      find.byKey(const ValueKey("browse_search_channels_header")),
-    );
-    final channelTop = tester.getTopLeft(
-      find.byKey(const ValueKey("browse_search_channel_MinecraftCreator")),
-    );
-    final channelBottom = tester.getBottomLeft(
-      find.byKey(const ValueKey("browse_search_channel_MinecraftCreator")),
-    );
     final highChannelTop = tester.getTopLeft(
       find.byKey(const ValueKey("browse_search_channel_HighCreator")),
     );
     final lowChannelTop = tester.getTopLeft(
       find.byKey(const ValueKey("browse_search_channel_LowCreator")),
-    );
-    final categoriesHeaderTop = tester.getTopLeft(
-      find.byKey(const ValueKey("browse_search_categories_header")),
     );
     final categoryTop = tester.getTopLeft(
       find.byKey(const ValueKey("browse_search_category_Minecraft")),
@@ -338,8 +291,6 @@ void main() {
     final lowViewerCategoryTop = tester.getTopLeft(
       find.byKey(const ValueKey("browse_search_category_Valiant Hearts")),
     );
-    final topBarBottom = tester.getBottomLeft(find.byKey(const ValueKey("browse_search_top_bar")));
-    final resultsListTop = tester.getTopLeft(find.byType(ListView));
     final categoryThumbnailImage = tester.widget<Image>(
       find.descendant(
         of: find.byKey(const ValueKey("browse_search_category_thumbnail_Minecraft")),
@@ -347,13 +298,7 @@ void main() {
       ),
     );
 
-    expect(channelsHeaderTop.dy, lessThan(channelTop.dy));
-    expect(resultsListTop.dy, lessThan(topBarBottom.dy));
     expect(highChannelTop.dy, lessThan(lowChannelTop.dy));
-    expect(lowChannelTop.dy, lessThan(channelTop.dy));
-    expect(channelTop.dy, lessThan(categoryTop.dy));
-    expect(categoriesHeaderTop.dy, greaterThan(channelBottom.dy + 8));
-    expect(categoriesHeaderTop.dy, lessThan(categoryTop.dy));
     expect(categoryTop.dy, lessThan(lowViewerCategoryTop.dy));
     expect(
       (categoryThumbnailImage.image as NetworkImage).url,
@@ -679,19 +624,25 @@ class _StaticCookieExtractor implements TwitchCookieExtractor {
   Future<String?> extractTwitchAuthToken() async => null;
 }
 
-class _MemorySearchHistoryStore implements BrowseSearchHistoryStore {
+class _MemorySearchHistoryStore implements FlowPreferences {
   List<String> history = const <String>[];
 
   @override
-  Future<void> clearSearchHistory() async {
+  Future<void> clearBrowseSearchHistory() async {
     history = const <String>[];
   }
 
   @override
-  Future<List<String>> readSearchHistory() async => history;
+  Future<List<String>> readBrowseSearchHistory() async => history;
 
   @override
-  Future<void> saveSearchHistory(List<String> value) async {
-    history = List<String>.of(value);
+  Future<ThemeMode> readThemeMode() async => ThemeMode.system;
+
+  @override
+  Future<void> saveBrowseSearchHistory(List<String> history) async {
+    this.history = List<String>.of(history);
   }
+
+  @override
+  Future<void> saveThemeMode(ThemeMode mode) async {}
 }

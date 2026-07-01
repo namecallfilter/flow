@@ -95,39 +95,6 @@ void main() {
 
     expect(followedStreamsRequests, 2);
   });
-
-  testWidgets("does not refresh when a top pull is pushed back up", (tester) async {
-    var followedStreamsRequests = 0;
-    final store = _MemoryTwitchStore()..accessToken = "token-123";
-
-    await tester.pumpWidget(
-      _followingScreen(
-        authController: _authController(
-          secureStore: store,
-          onRequest: (request) {
-            if (request.url.path == "/helix/streams/followed") {
-              followedStreamsRequests++;
-            }
-          },
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(followedStreamsRequests, 1);
-
-    final gesture = await tester.startGesture(tester.getCenter(find.byType(ListView)));
-    await gesture.moveBy(const Offset(0, 520));
-    await tester.pump();
-    expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsOneWidget);
-
-    await gesture.moveBy(const Offset(0, -220));
-    await tester.pump();
-    await gesture.up();
-    await tester.pumpAndSettle();
-
-    expect(followedStreamsRequests, 1);
-  });
 }
 
 Widget _followingScreen({

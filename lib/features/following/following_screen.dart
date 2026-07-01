@@ -7,7 +7,10 @@ import "package:flow/app/radius.dart";
 import "package:flow/app/routes.dart";
 import "package:flow/app/spacing.dart";
 import "package:flow/app/theme.dart";
+import "package:flow/features/following/following_store.dart";
 import "package:flow/features/following/twitch_login_screen.dart";
+import "package:flow/shared/twitch/twitch_display_mappers.dart";
+import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flow/shared/widgets/app_bottom_nav.dart";
 import "package:flow/shared/widgets/avatar_ring.dart";
 import "package:flow/shared/widgets/page_header_title.dart";
@@ -15,6 +18,7 @@ import "package:flow/shared/widgets/pull_to_refresh.dart";
 import "package:flow/shared/widgets/section_header.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
+import "package:flutter_mobx/flutter_mobx.dart";
 
 typedef TwitchLoginOpener =
     Future<TwitchAuthConnection?> Function(
@@ -26,11 +30,13 @@ class FollowingScreen extends StatefulWidget {
   const FollowingScreen({
     super.key,
     this.authController,
+    this.followingStore,
     this.openTwitchLogin,
     this.bottomNavigationBar,
   });
 
   final TwitchAuthController? authController;
+  final FollowingStore? followingStore;
   final TwitchLoginOpener? openTwitchLogin;
   final Widget? bottomNavigationBar;
 
@@ -41,6 +47,7 @@ class FollowingScreen extends StatefulWidget {
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<TwitchAuthController?>("authController", authController));
+    properties.add(DiagnosticsProperty<FollowingStore?>("followingStore", followingStore));
     properties.add(ObjectFlagProperty<TwitchLoginOpener?>.has("openTwitchLogin", openTwitchLogin));
     properties.add(DiagnosticsProperty<Widget?>("bottomNavigationBar", bottomNavigationBar));
   }
@@ -48,17 +55,18 @@ class FollowingScreen extends StatefulWidget {
 
 class _FollowingScreenState extends State<FollowingScreen> {
   late final TwitchAuthController _authController;
+  late final FollowingStore _store;
   final ScrollController _scrollController = ScrollController();
-  bool? _offlineExpandedOverride;
-  bool _isLoadingFollowing = false;
-  String? _followingError;
-  TwitchAuthConnection? _connection;
 
   @override
   void initState() {
     super.initState();
-    _authController = widget.authController ?? _buildDefaultAuthController();
-    unawaited(_loadSavedConnection());
+    _authController =
+        widget.followingStore?.authController ??
+        widget.authController ??
+        _buildDefaultAuthController();
+    _store = widget.followingStore ?? FollowingStore(authController: _authController);
+    unawaited(_store.loadSavedConnection());
   }
 
   TwitchAuthController _buildDefaultAuthController() {
@@ -88,7 +96,7 @@ class _FollowingScreenState extends State<FollowingScreen> {
       if (!mounted || connection == null) {
         return;
       }
-      _applyConnection(connection);
+      _store.applyConnection(connection);
       messenger.showSnackBar(
         SnackBar(content: Text("Connected as ${connection.user.displayName}")),
       );
@@ -99,45 +107,7 @@ class _FollowingScreenState extends State<FollowingScreen> {
     }
   }
 
-  Future<void> _loadSavedConnection() async {
-    if (!_authController.config.isConfigured) {
-      return;
-    }
-
-    setState(() {
-      _isLoadingFollowing = true;
-      _followingError = null;
-    });
-
-    try {
-      final connection = await _authController.loadSavedConnection();
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        if (connection != null) {
-          _connection = connection;
-        }
-        _isLoadingFollowing = false;
-        _followingError = null;
-      });
-    } on Object catch (error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _isLoadingFollowing = false;
-        _followingError = error.toString();
-      });
-    }
-  }
-
-  void _applyConnection(TwitchAuthConnection connection) {
-    setState(() {
-      _connection = connection;
-      _followingError = null;
-    });
-  }
+  Future<void> _refreshFollowing() => _store.loadSavedConnection(refresh: true);
 
   @override
   void dispose() {
@@ -146,135 +116,84 @@ class _FollowingScreenState extends State<FollowingScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final connection = _connection;
-    final liveChannels = connection == null
-        ? <StreamChannel>[]
-        : _liveChannelsFromConnection(connection);
-    final offlineChannels = connection == null
-        ? <OfflineChannel>[]
-        : _offlineChannelsFromConnection(connection);
-    final profileUser = connection == null
-        ? null
-        : connection.usersById[connection.user.id] ?? connection.user;
-    final offlineExpanded = _offlineExpandedOverride ?? liveChannels.isEmpty;
-    final showLiveEmptyState = liveChannels.isEmpty && offlineChannels.isEmpty;
-    const topScrollPadding = 92.0;
-    const bottomScrollPadding = 114.0;
+  Widget build(BuildContext context) => Observer(
+    builder: (_) {
+      final theme = Theme.of(context);
+      final liveChannels = _store.liveChannels;
+      final offlineChannels = _store.offlineChannels;
+      final profileUser = _store.profileUser;
+      final offlineExpanded = _store.offlineExpanded;
+      final showLiveEmptyState = _store.showLiveEmptyState;
+      const topScrollPadding = 92.0;
+      const bottomScrollPadding = 114.0;
 
-    return Scaffold(
-      extendBody: true,
-      backgroundColor: theme.scaffoldBackgroundColor,
-      bottomNavigationBar:
-          widget.bottomNavigationBar ?? const AppBottomNav(currentRoute: FlowRoutes.following),
-      body: SafeArea(
-        bottom: false,
-        child: Stack(
-          children: [
-            FlowPullToRefresh(
-              scrollController: _scrollController,
-              onRefresh: _loadSavedConnection,
-              indicatorStartTop: topScrollPadding - 28,
-              indicatorMaxTravel: 52,
-              child: ListView(
-                controller: _scrollController,
-                physics: const AlwaysScrollableScrollPhysics(
-                  parent: ClampingScrollPhysics(),
-                ),
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.lg,
-                  topScrollPadding,
-                  AppSpacing.lg,
-                  0,
-                ).copyWith(bottom: bottomScrollPadding),
-                children: [
-                  if (_isLoadingFollowing) ...[
-                    const LinearProgressIndicator(minHeight: 3),
-                    const SizedBox(height: AppSpacing.lg),
-                  ],
-                  if (_followingError != null) ...[
-                    _StatusBanner(message: _followingError!),
-                    const SizedBox(height: AppSpacing.lg),
-                  ],
-                  if (showLiveEmptyState)
-                    const _EmptyState(
-                      message: "No followed channels are live now.",
-                    )
-                  else
-                    for (final channel in liveChannels) StreamCard(channel: channel),
-                  const SizedBox(height: AppSpacing.sm),
-                  _OfflineCard(
-                    channels: offlineChannels,
-                    expanded: offlineExpanded,
-                    onToggle: () {
-                      setState(() {
-                        _offlineExpandedOverride = !offlineExpanded;
-                      });
-                    },
+      return Scaffold(
+        extendBody: true,
+        backgroundColor: theme.scaffoldBackgroundColor,
+        bottomNavigationBar:
+            widget.bottomNavigationBar ?? const AppBottomNav(currentRoute: FlowRoutes.following),
+        body: SafeArea(
+          bottom: false,
+          child: Stack(
+            children: [
+              FlowPullToRefresh(
+                scrollController: _scrollController,
+                onRefresh: _refreshFollowing,
+                indicatorStartTop: topScrollPadding - 28,
+                indicatorMaxTravel: 52,
+                child: ListView(
+                  controller: _scrollController,
+                  physics: const AlwaysScrollableScrollPhysics(
+                    parent: ClampingScrollPhysics(),
                   ),
-                ],
-              ),
-            ),
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: _FrostedTopBar(
-                onProfilePressed: _startTwitchAuth,
-                profileInitials: _initialsForName(
-                  profileUser?.displayName ?? "Me",
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.lg,
+                    topScrollPadding,
+                    AppSpacing.lg,
+                    0,
+                  ).copyWith(bottom: bottomScrollPadding),
+                  children: [
+                    if (_store.isLoadingFollowing) ...[
+                      const LinearProgressIndicator(minHeight: 3),
+                      const SizedBox(height: AppSpacing.lg),
+                    ],
+                    if (_store.followingError != null) ...[
+                      _StatusBanner(message: _store.followingError!),
+                      const SizedBox(height: AppSpacing.lg),
+                    ],
+                    if (showLiveEmptyState)
+                      const _EmptyState(
+                        message: "No followed channels are live now.",
+                      )
+                    else
+                      for (final channel in liveChannels) StreamCard(channel: channel),
+                    const SizedBox(height: AppSpacing.sm),
+                    _OfflineCard(
+                      channels: offlineChannels,
+                      expanded: offlineExpanded,
+                      onToggle: _store.toggleOfflineExpanded,
+                    ),
+                  ],
                 ),
-                profileImageUrl: profileUser?.profileImageUrl,
               ),
-            ),
-          ],
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: _FrostedTopBar(
+                  onProfilePressed: _startTwitchAuth,
+                  profileInitials: initialsForName(
+                    profileUser?.displayName ?? "Me",
+                  ),
+                  profileImageUrl: profileUser?.profileImageUrl,
+                ),
+              ),
+            ],
+          ),
         ),
-      ),
-    );
-  }
-}
-
-class StreamChannel {
-  const StreamChannel({
-    required this.name,
-    required this.initials,
-    required this.title,
-    required this.category,
-    required this.viewers,
-    required this.avatarColors,
-    required this.thumbnailColors,
-    this.avatarImageUrl,
-    this.thumbnailUrl,
-  });
-
-  final String name;
-  final String initials;
-  final String title;
-  final String category;
-  final String viewers;
-  final List<Color> avatarColors;
-  final List<Color> thumbnailColors;
-  final String? avatarImageUrl;
-  final String? thumbnailUrl;
-}
-
-class OfflineChannel {
-  const OfflineChannel({
-    required this.name,
-    required this.initials,
-    required this.lastLive,
-    required this.category,
-    required this.avatarColors,
-    this.avatarImageUrl,
-  });
-
-  final String name;
-  final String initials;
-  final String lastLive;
-  final String category;
-  final List<Color> avatarColors;
-  final String? avatarImageUrl;
+      );
+    },
+  );
 }
 
 class _FrostedTopBar extends StatelessWidget {
@@ -931,132 +850,4 @@ class _EmptyState extends StatelessWidget {
     super.debugFillProperties(properties);
     properties.add(StringProperty("message", message));
   }
-}
-
-List<StreamChannel> _liveChannelsFromConnection(
-  TwitchAuthConnection connection,
-) => [
-  for (final stream in connection.followedStreams)
-    StreamChannel(
-      name: _displayName(stream.userName, stream.userLogin),
-      initials: _initialsForName(
-        _displayName(stream.userName, stream.userLogin),
-      ),
-      title: stream.title.isEmpty ? "Live now" : stream.title,
-      category: stream.gameName.isEmpty ? "Live" : stream.gameName,
-      viewers: _formatCompactCount(stream.viewerCount),
-      avatarColors: _colorsForText(stream.userId),
-      thumbnailColors: _colorsForText(stream.id, count: 3),
-      avatarImageUrl: connection.usersById[stream.userId]?.profileImageUrl,
-      thumbnailUrl: _twitchThumbnailUrl(stream.thumbnailUrl),
-    ),
-];
-
-List<OfflineChannel> _offlineChannelsFromConnection(
-  TwitchAuthConnection connection,
-) {
-  final liveUserIds = {
-    for (final stream in connection.followedStreams) stream.userId,
-  };
-
-  return [
-    for (final channel in connection.followedChannels)
-      if (!liveUserIds.contains(channel.broadcasterId))
-        OfflineChannel(
-          name: _displayName(channel.broadcasterName, channel.broadcasterLogin),
-          initials: _initialsForName(
-            _displayName(channel.broadcasterName, channel.broadcasterLogin),
-          ),
-          lastLive: channel.followedAt == null
-              ? "Offline"
-              : "Followed ${_relativeTime(channel.followedAt!)}",
-          category: _offlineCategory(connection, channel),
-          avatarColors: _colorsForText(channel.broadcasterId),
-          avatarImageUrl: connection.usersById[channel.broadcasterId]?.profileImageUrl,
-        ),
-  ];
-}
-
-String _offlineCategory(
-  TwitchAuthConnection connection,
-  TwitchFollowedChannel channel,
-) {
-  final info = connection.channelInfoByBroadcasterId[channel.broadcasterId];
-  if (info != null && info.gameName.isNotEmpty) {
-    return info.gameName;
-  }
-  if (info != null && info.title.isNotEmpty) {
-    return info.title;
-  }
-  return channel.broadcasterLogin.isEmpty ? "Channel" : channel.broadcasterLogin;
-}
-
-String _displayName(String primary, String fallback) {
-  if (primary.isNotEmpty) {
-    return primary;
-  }
-  return fallback.isEmpty ? "Channel" : fallback;
-}
-
-String _initialsForName(String name) {
-  final words = name.trim().split(RegExp(r"\s+"));
-  final initials = [
-    for (final word in words)
-      if (word.isNotEmpty) word.substring(0, 1).toUpperCase(),
-  ].take(2).join();
-  return initials.isEmpty ? "CH" : initials;
-}
-
-List<Color> _colorsForText(String seed, {int count = 2}) {
-  final hash = seed.codeUnits.fold<int>(0, (value, unit) => value + unit);
-  return [
-    for (var index = 0; index < count; index++)
-      HSLColor.fromAHSL(
-        1,
-        ((hash * 37) + (index * 52)) % 360,
-        0.72,
-        index.isEven ? 0.42 : 0.58,
-      ).toColor(),
-  ];
-}
-
-String _formatCompactCount(int value) {
-  if (value >= 1000000) {
-    return "${_compactDecimal(value / 1000000)}M";
-  }
-  if (value >= 1000) {
-    return "${_compactDecimal(value / 1000)}K";
-  }
-  return value.toString();
-}
-
-String _compactDecimal(double value) {
-  final text = value.toStringAsFixed(1);
-  return text.endsWith(".0") ? text.substring(0, text.length - 2) : text;
-}
-
-String _relativeTime(DateTime date) {
-  final elapsed = DateTime.now().difference(date);
-  if (elapsed.inDays <= 0) {
-    return "today";
-  }
-  if (elapsed.inDays == 1) {
-    return "1 day ago";
-  }
-  if (elapsed.inDays < 7) {
-    return "${elapsed.inDays} days ago";
-  }
-  if (elapsed.inDays < 30) {
-    final weeks = (elapsed.inDays / 7).floor();
-    return weeks == 1 ? "1 week ago" : "$weeks weeks ago";
-  }
-  final months = (elapsed.inDays / 30).floor();
-  return months == 1 ? "1 month ago" : "$months months ago";
-}
-
-String? _twitchThumbnailUrl(String? template) {
-  if (template == null || template.isEmpty) {
-    return null;
-  }
-  return template.replaceAll("{width}", "320").replaceAll("{height}", "180");
 }

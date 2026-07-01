@@ -1,15 +1,18 @@
 import "dart:async";
 import "dart:ui";
 
+import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/radius.dart";
 import "package:flow/app/routes.dart";
 import "package:flow/app/spacing.dart";
 import "package:flow/shared/external_url_opener.dart";
+import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/widgets/app_bottom_nav.dart";
 import "package:flow/shared/widgets/page_header_title.dart";
 import "package:flutter/cupertino.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
+import "package:flutter_mobx/flutter_mobx.dart";
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
@@ -18,12 +21,14 @@ class SettingsScreen extends StatefulWidget {
     this.currentThemeMode = ThemeMode.system,
     this.onThemeModeChanged,
     this.openExternalUrl,
+    this.settingsStore,
   });
 
   final Widget? bottomNavigationBar;
   final ThemeMode currentThemeMode;
   final ValueChanged<ThemeMode>? onThemeModeChanged;
   final ExternalUrlOpener? openExternalUrl;
+  final AppSettingsStore? settingsStore;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -45,35 +50,28 @@ class SettingsScreen extends StatefulWidget {
         openExternalUrl,
       ),
     );
+    properties.add(DiagnosticsProperty<AppSettingsStore?>("settingsStore", settingsStore));
   }
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  late ThemeMode _currentThemeMode;
+  late final AppSettingsStore _settingsStore;
 
   @override
   void initState() {
     super.initState();
-    _currentThemeMode = widget.currentThemeMode;
-  }
-
-  @override
-  void didUpdateWidget(covariant SettingsScreen oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.currentThemeMode != oldWidget.currentThemeMode &&
-        widget.currentThemeMode != _currentThemeMode) {
-      _currentThemeMode = widget.currentThemeMode;
+    _settingsStore =
+        widget.settingsStore ??
+        AppSettingsStore(
+          preferences: _MemoryFlowPreferences(themeMode: widget.currentThemeMode),
+        );
+    if (!_settingsStore.isLoaded) {
+      unawaited(_settingsStore.load());
     }
   }
 
-  void _changeThemeMode(ThemeMode themeMode) {
-    if (themeMode == _currentThemeMode) {
-      return;
-    }
-
-    setState(() {
-      _currentThemeMode = themeMode;
-    });
+  Future<void> _changeThemeMode(ThemeMode themeMode) async {
+    await _settingsStore.setThemeMode(themeMode);
     widget.onThemeModeChanged?.call(themeMode);
   }
 
@@ -89,63 +87,67 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    const topScrollPadding = 80.0;
-    const bottomScrollPadding = 114.0;
+  Widget build(BuildContext context) => Observer(
+    builder: (_) {
+      final theme = Theme.of(context);
+      const topScrollPadding = 80.0;
+      const bottomScrollPadding = 114.0;
 
-    return Scaffold(
-      extendBody: true,
-      backgroundColor: theme.scaffoldBackgroundColor,
-      bottomNavigationBar:
-          widget.bottomNavigationBar ?? const AppBottomNav(currentRoute: FlowRoutes.settings),
-      body: SafeArea(
-        bottom: false,
-        child: Stack(
-          children: [
-            ListView(
-              padding: const EdgeInsets.fromLTRB(
-                AppSpacing.lg,
-                topScrollPadding,
-                AppSpacing.lg,
-                0,
-              ).copyWith(bottom: bottomScrollPadding),
-              children: [
-                _SettingsGroup(
-                  children: [
-                    _ThemeModeRow(
-                      currentThemeMode: _currentThemeMode,
-                      onThemeModeChanged: _changeThemeMode,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.md),
-                _SettingsGroup(
-                  children: [
-                    _SettingsRow(
-                      icon: Icons.info_outline,
-                      title: "About Flow",
-                      subtitle: "Mobile Twitch client.",
-                      trailing: const Text("1.0.0"),
-                      onTap: () {
-                        unawaited(_openRepository(context));
-                      },
-                    ),
-                  ],
-                ),
-              ],
-            ),
-            const Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: _SettingsTopBar(),
-            ),
-          ],
+      return Scaffold(
+        extendBody: true,
+        backgroundColor: theme.scaffoldBackgroundColor,
+        bottomNavigationBar:
+            widget.bottomNavigationBar ?? const AppBottomNav(currentRoute: FlowRoutes.settings),
+        body: SafeArea(
+          bottom: false,
+          child: Stack(
+            children: [
+              ListView(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  topScrollPadding,
+                  AppSpacing.lg,
+                  0,
+                ).copyWith(bottom: bottomScrollPadding),
+                children: [
+                  _SettingsGroup(
+                    children: [
+                      _ThemeModeRow(
+                        currentThemeMode: _settingsStore.themeMode,
+                        onThemeModeChanged: (themeMode) {
+                          unawaited(_changeThemeMode(themeMode));
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  _SettingsGroup(
+                    children: [
+                      _SettingsRow(
+                        icon: Icons.info_outline,
+                        title: "About Flow",
+                        subtitle: "Mobile Twitch client.",
+                        trailing: const Text("1.0.0"),
+                        onTap: () {
+                          unawaited(_openRepository(context));
+                        },
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: _SettingsTopBar(),
+              ),
+            ],
+          ),
         ),
-      ),
-    );
-  }
+      );
+    },
+  );
 }
 
 class _SettingsTopBar extends StatelessWidget {
@@ -469,5 +471,33 @@ class _SettingsIcon extends StatelessWidget {
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<IconData>("icon", icon));
+  }
+}
+
+class _MemoryFlowPreferences implements FlowPreferences {
+  _MemoryFlowPreferences({required this.themeMode});
+
+  ThemeMode themeMode;
+  List<String> searchHistory = const <String>[];
+
+  @override
+  Future<void> clearBrowseSearchHistory() async {
+    searchHistory = const <String>[];
+  }
+
+  @override
+  Future<List<String>> readBrowseSearchHistory() async => searchHistory;
+
+  @override
+  Future<ThemeMode> readThemeMode() async => themeMode;
+
+  @override
+  Future<void> saveBrowseSearchHistory(List<String> history) async {
+    searchHistory = List<String>.of(history);
+  }
+
+  @override
+  Future<void> saveThemeMode(ThemeMode mode) async {
+    themeMode = mode;
   }
 }
