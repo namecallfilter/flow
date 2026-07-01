@@ -184,10 +184,15 @@ void main() {
   });
 
   testWidgets("shows recent search history and clears it", (tester) async {
+    final searchHistoryStore = _MemorySearchHistoryStore();
+
     await tester.pumpWidget(
       MaterialApp(
         theme: buildFlowTheme(Brightness.dark),
-        home: BrowseScreen(authController: _authController()),
+        home: BrowseScreen(
+          authController: _authController(),
+          stateStore: BrowseScreenStateStore(searchHistoryStore: searchHistoryStore),
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -195,6 +200,13 @@ void main() {
     await tester.tap(find.byKey(const ValueKey("browse_search_field")));
     await tester.pumpAndSettle();
 
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey("browse_search_top_bar")),
+        matching: find.byType(BackdropFilter),
+      ),
+      findsOneWidget,
+    );
     expect(find.text("Search channels or categories"), findsOneWidget);
     expect(find.text("Search channels"), findsNothing);
     expect(find.byKey(const ValueKey("browse_search_empty_history_icon")), findsOneWidget);
@@ -213,11 +225,29 @@ void main() {
     expect(find.byKey(const ValueKey("browse_search_history_header")), findsOneWidget);
     expect(find.byKey(const ValueKey("browse_search_history_mine")), findsOneWidget);
 
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: BrowseScreen(
+          authController: _authController(),
+          stateStore: BrowseScreenStateStore(searchHistoryStore: searchHistoryStore),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey("browse_search_field")));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey("browse_search_history_mine")), findsOneWidget);
+
     await tester.tap(find.byKey(const ValueKey("browse_search_clear_history_button")));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey("browse_search_history_mine")), findsNothing);
     expect(find.text("No recent searches"), findsOneWidget);
+    expect(searchHistoryStore.history, isEmpty);
   });
 
   testWidgets("searches channels before categories and filters unavailable channels", (
@@ -253,6 +283,14 @@ void main() {
       findsOneWidget,
     );
     expect(
+      find.byKey(const ValueKey("browse_search_channel_HighCreator")),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey("browse_search_channel_LowCreator")),
+      findsOneWidget,
+    );
+    expect(
       find.byKey(const ValueKey("browse_search_channel_BannedCreator")),
       findsNothing,
     );
@@ -262,6 +300,14 @@ void main() {
     );
     expect(
       requestedUris.any((uri) => uri.path == "/helix/search/categories"),
+      isTrue,
+    );
+    expect(
+      requestedUris.any(
+        (uri) =>
+            uri.path == "/helix/streams" &&
+            (uri.queryParametersAll["user_login"] ?? const <String>[]).contains("highcreator"),
+      ),
       isTrue,
     );
 
@@ -277,12 +323,23 @@ void main() {
     final channelBottom = tester.getBottomLeft(
       find.byKey(const ValueKey("browse_search_channel_MinecraftCreator")),
     );
+    final highChannelTop = tester.getTopLeft(
+      find.byKey(const ValueKey("browse_search_channel_HighCreator")),
+    );
+    final lowChannelTop = tester.getTopLeft(
+      find.byKey(const ValueKey("browse_search_channel_LowCreator")),
+    );
     final categoriesHeaderTop = tester.getTopLeft(
       find.byKey(const ValueKey("browse_search_categories_header")),
     );
     final categoryTop = tester.getTopLeft(
       find.byKey(const ValueKey("browse_search_category_Minecraft")),
     );
+    final lowViewerCategoryTop = tester.getTopLeft(
+      find.byKey(const ValueKey("browse_search_category_Valiant Hearts")),
+    );
+    final topBarBottom = tester.getBottomLeft(find.byKey(const ValueKey("browse_search_top_bar")));
+    final resultsListTop = tester.getTopLeft(find.byType(ListView));
     final categoryThumbnailImage = tester.widget<Image>(
       find.descendant(
         of: find.byKey(const ValueKey("browse_search_category_thumbnail_Minecraft")),
@@ -291,9 +348,13 @@ void main() {
     );
 
     expect(channelsHeaderTop.dy, lessThan(channelTop.dy));
+    expect(resultsListTop.dy, lessThan(topBarBottom.dy));
+    expect(highChannelTop.dy, lessThan(lowChannelTop.dy));
+    expect(lowChannelTop.dy, lessThan(channelTop.dy));
     expect(channelTop.dy, lessThan(categoryTop.dy));
     expect(categoriesHeaderTop.dy, greaterThan(channelBottom.dy + 8));
     expect(categoriesHeaderTop.dy, lessThan(categoryTop.dy));
+    expect(categoryTop.dy, lessThan(lowViewerCategoryTop.dy));
     expect(
       (categoryThumbnailImage.image as NetworkImage).url,
       contains("1200x1600"),
@@ -373,6 +434,15 @@ MockClient _browseHttpClient({_RequestObserver? onRequest}) => MockClient((reque
     return _jsonResponse({
       "data": [
         {
+          "id": "creator-low",
+          "broadcaster_login": "lowcreator",
+          "display_name": "LowCreator",
+          "game_name": "Minecraft",
+          "title": "Low live search result",
+          "thumbnail_url": "https://static-cdn.jtvnw.net/creator-low.png",
+          "is_live": true,
+        },
+        {
           "id": "creator-4",
           "broadcaster_login": "minecraftcreator",
           "display_name": "MinecraftCreator",
@@ -380,6 +450,15 @@ MockClient _browseHttpClient({_RequestObserver? onRequest}) => MockClient((reque
           "title": "Building from search",
           "thumbnail_url": "https://static-cdn.jtvnw.net/creator-4.png",
           "is_live": false,
+        },
+        {
+          "id": "creator-high",
+          "broadcaster_login": "highcreator",
+          "display_name": "HighCreator",
+          "game_name": "Minecraft",
+          "title": "High live search result",
+          "thumbnail_url": "https://static-cdn.jtvnw.net/creator-high.png",
+          "is_live": true,
         },
         {
           "id": "banned-1",
@@ -398,6 +477,11 @@ MockClient _browseHttpClient({_RequestObserver? onRequest}) => MockClient((reque
     return _jsonResponse({
       "data": [
         _categoryJson(
+          id: "zero-viewer",
+          name: "Valiant Hearts",
+          boxArtUrl: "https://static-cdn.jtvnw.net/ttv-boxart/zero-viewer-52x72.jpg",
+        ),
+        _categoryJson(
           id: "27471",
           name: "Minecraft",
           boxArtUrl: "https://static-cdn.jtvnw.net/ttv-boxart/27471-52x72.jpg",
@@ -408,6 +492,29 @@ MockClient _browseHttpClient({_RequestObserver? onRequest}) => MockClient((reque
 
   if (request.url.path == "/helix/streams") {
     final gameIds = request.url.queryParametersAll["game_id"] ?? const <String>[];
+    final userLogins = request.url.queryParametersAll["user_login"] ?? const <String>[];
+    if (userLogins.isNotEmpty) {
+      return _jsonResponse({
+        "data": [
+          _streamJson(
+            id: "low-search-stream",
+            userId: "creator-low",
+            userLogin: "lowcreator",
+            userName: "LowCreator",
+            gameName: "Minecraft",
+            viewerCount: 10,
+          ),
+          _streamJson(
+            id: "high-search-stream",
+            userId: "creator-high",
+            userLogin: "highcreator",
+            userName: "HighCreator",
+            gameName: "Minecraft",
+            viewerCount: 900,
+          ),
+        ],
+      });
+    }
     if (gameIds.contains("509658")) {
       return _jsonResponse({
         "data": [
@@ -426,6 +533,20 @@ MockClient _browseHttpClient({_RequestObserver? onRequest}) => MockClient((reque
             userName: "NovaSkye",
             gameName: "Just Chatting",
             viewerCount: 11000,
+          ),
+        ],
+      });
+    }
+    if (gameIds.contains("27471")) {
+      return _jsonResponse({
+        "data": [
+          _streamJson(
+            id: "minecraft-category-stream",
+            userId: "creator-4",
+            userLogin: "minecraftcreator",
+            userName: "MinecraftCreator",
+            gameName: "Minecraft",
+            viewerCount: 4200,
           ),
         ],
       });
@@ -556,4 +677,21 @@ class _StaticCookieExtractor implements TwitchCookieExtractor {
 
   @override
   Future<String?> extractTwitchAuthToken() async => null;
+}
+
+class _MemorySearchHistoryStore implements BrowseSearchHistoryStore {
+  List<String> history = const <String>[];
+
+  @override
+  Future<void> clearSearchHistory() async {
+    history = const <String>[];
+  }
+
+  @override
+  Future<List<String>> readSearchHistory() async => history;
+
+  @override
+  Future<void> saveSearchHistory(List<String> value) async {
+    history = List<String>.of(value);
+  }
 }
