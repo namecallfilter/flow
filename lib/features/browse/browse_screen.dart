@@ -1,4 +1,5 @@
 import "dart:async";
+import "dart:convert";
 import "dart:ui";
 
 import "package:flow/api/twitch_api.dart";
@@ -14,8 +15,78 @@ import "package:flow/shared/widgets/pull_to_refresh.dart";
 import "package:flutter/cupertino.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
+import "package:flutter_secure_storage/flutter_secure_storage.dart";
+
+abstract interface class BrowseSearchHistoryStore {
+  Future<List<String>> readSearchHistory();
+  Future<void> saveSearchHistory(List<String> value);
+  Future<void> clearSearchHistory();
+}
+
+class SecureBrowseSearchHistoryStore implements BrowseSearchHistoryStore {
+  const SecureBrowseSearchHistoryStore({FlutterSecureStorage? storage})
+    : _storage = storage ?? const FlutterSecureStorage();
+
+  static const _searchHistoryKey = "browse_search_history";
+
+  final FlutterSecureStorage _storage;
+
+  @override
+  Future<void> clearSearchHistory() async {
+    try {
+      await _storage.delete(key: _searchHistoryKey);
+    } on Object {
+      // Search history is non-critical; storage failures should not break browsing.
+    }
+  }
+
+  @override
+  Future<List<String>> readSearchHistory() async {
+    try {
+      final encodedHistory = await _storage.read(key: _searchHistoryKey);
+      if (encodedHistory == null || encodedHistory.isEmpty) {
+        return const <String>[];
+      }
+
+      final decodedHistory = jsonDecode(encodedHistory);
+      if (decodedHistory is! List) {
+        return const <String>[];
+      }
+
+      return _normalizedSearchHistory([
+        for (final item in decodedHistory)
+          if (item is String) item,
+      ]);
+    } on Object {
+      return const <String>[];
+    }
+  }
+
+  @override
+  Future<void> saveSearchHistory(List<String> value) async {
+    final history = _normalizedSearchHistory(value);
+    if (history.isEmpty) {
+      await clearSearchHistory();
+      return;
+    }
+
+    try {
+      await _storage.write(
+        key: _searchHistoryKey,
+        value: jsonEncode(history),
+      );
+    } on Object {
+      // Search history is non-critical; storage failures should not break browsing.
+    }
+  }
+}
 
 class BrowseScreenStateStore {
+  BrowseScreenStateStore({
+    this.searchHistoryStore = const SecureBrowseSearchHistoryStore(),
+  });
+
+  final BrowseSearchHistoryStore searchHistoryStore;
   List<_BrowseCategory> _categories = const <_BrowseCategory>[];
   List<StreamChannel> _liveChannels = const <StreamChannel>[];
   _BrowseSection _selectedSection = _BrowseSection.categories;
@@ -437,10 +508,27 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
     super.initState();
     _stateStore = widget.stateStore ?? BrowseScreenStateStore();
     _searchHistory = _stateStore._searchHistory;
+    unawaited(_loadSearchHistory());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _focusNode.requestFocus();
       }
+    });
+  }
+
+  Future<void> _loadSearchHistory() async {
+    if (_searchHistory.isNotEmpty) {
+      return;
+    }
+
+    final history = await _stateStore.searchHistoryStore.readSearchHistory();
+    if (!mounted || _searchHistory.isNotEmpty) {
+      return;
+    }
+
+    setState(() {
+      _searchHistory = history;
+      _stateStore._searchHistory = history;
     });
   }
 
@@ -482,32 +570,60 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
       final validUsersById = await apiClient.fetchUsersByIds([
         for (final channel in channelPage.data) channel.id,
       ]);
+      final liveSearchStreams = await apiClient.fetchLiveStreamsPage(
+        first: 100,
+        userLogins: [
+          for (final channel in channelPage.data)
+            if (channel.isLive && validUsersById.containsKey(channel.id)) channel.broadcasterLogin,
+        ],
+      );
+      final liveViewerCountsByLogin = {
+        for (final stream in liveSearchStreams.data)
+          stream.userLogin.toLowerCase(): stream.viewerCount,
+      };
       final channels =
           [
             for (final channel in channelPage.data)
               if (validUsersById.containsKey(channel.id)) channel,
           ]..sort((left, right) {
             if (left.isLive == right.isLive) {
+              final leftViewers = liveViewerCountsByLogin[left.broadcasterLogin.toLowerCase()] ?? 0;
+              final rightViewers =
+                  liveViewerCountsByLogin[right.broadcasterLogin.toLowerCase()] ?? 0;
+              final viewerComparison = rightViewers.compareTo(leftViewers);
+              if (viewerComparison != 0) {
+                return viewerComparison;
+              }
               return left.displayName.toLowerCase().compareTo(
                 right.displayName.toLowerCase(),
               );
             }
             return left.isLive ? -1 : 1;
           });
-      final categories = await Future.wait([
-        for (final category in categoryPage.data) _browseCategoryFromApi(apiClient, category),
-      ]);
+      final categories =
+          await Future.wait([
+              for (final category in categoryPage.data) _browseCategoryFromApi(apiClient, category),
+            ])
+            ..sort((left, right) {
+              final viewerComparison = right.viewerCount.compareTo(left.viewerCount);
+              if (viewerComparison != 0) {
+                return viewerComparison;
+              }
+              return left.name.toLowerCase().compareTo(right.name.toLowerCase());
+            });
 
       if (!mounted || _searchController.text.trim() != query) {
         return;
       }
+      final searchHistory = _updatedSearchHistory(query);
       setState(() {
         _channels = channels;
         _categories = categories;
-        _searchHistory = _updatedSearchHistory(query);
+        _searchHistory = searchHistory;
         _stateStore._searchHistory = _searchHistory;
         _isSearching = false;
       });
+      unawaited(_stateStore.searchHistoryStore.saveSearchHistory(searchHistory));
     } on Object catch (error) {
       if (!mounted || _searchController.text.trim() != query) {
         return;
@@ -525,11 +641,10 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
       return _searchHistory;
     }
 
-    return [
+    return _normalizedSearchHistory([
       normalizedQuery,
-      for (final item in _searchHistory)
-        if (item.toLowerCase() != normalizedQuery.toLowerCase()) item,
-    ].take(8).toList();
+      ..._searchHistory,
+    ]);
   }
 
   void _clearSearch() {
@@ -542,6 +657,7 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
       _searchHistory = const <String>[];
       _stateStore._searchHistory = _searchHistory;
     });
+    unawaited(_stateStore.searchHistoryStore.clearSearchHistory());
   }
 
   void _searchFromHistory(String query) {
@@ -555,25 +671,20 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final query = _searchController.text.trim();
+    const topScrollPadding = 92.0;
 
     return Scaffold(
       key: const ValueKey("browse_search_page"),
       backgroundColor: theme.scaffoldBackgroundColor,
       body: SafeArea(
         bottom: false,
-        child: Column(
+        child: Stack(
           children: [
-            _SearchPageTopBar(
-              controller: _searchController,
-              focusNode: _focusNode,
-              onChanged: _handleQueryChanged,
-              onClear: _clearSearch,
-            ),
-            if (_isSearching) const LinearProgressIndicator(minHeight: 3),
-            Expanded(
+            Positioned.fill(
               child: query.isEmpty
                   ? _SearchHistoryView(
                       history: _searchHistory,
+                      topPadding: topScrollPadding,
                       onHistorySelected: _searchFromHistory,
                       onClearHistory: _clearSearchHistory,
                     )
@@ -582,8 +693,21 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
                       categories: _categories,
                       errorMessage: _errorMessage,
                       isSearching: _isSearching,
+                      topPadding: topScrollPadding,
                       onCategorySelected: _openCategory,
                     ),
+            ),
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: _SearchPageTopBar(
+                controller: _searchController,
+                focusNode: _focusNode,
+                isSearching: _isSearching,
+                onChanged: _handleQueryChanged,
+                onClear: _clearSearch,
+              ),
             ),
           ],
         ),
@@ -609,62 +733,102 @@ class _SearchPageTopBar extends StatelessWidget {
   const _SearchPageTopBar({
     required this.controller,
     required this.focusNode,
+    required this.isSearching,
     required this.onChanged,
     required this.onClear,
   });
 
   final TextEditingController controller;
   final FocusNode focusNode;
+  final bool isSearching;
   final ValueChanged<String> onChanged;
   final VoidCallback onClear;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.fromLTRB(
-      AppSpacing.sm,
-      AppSpacing.md,
-      AppSpacing.lg,
-      AppSpacing.md,
-    ),
-    child: Row(
-      children: [
-        IconButton(
-          tooltip: "Back",
-          onPressed: Navigator.of(context).pop,
-          icon: Icon(Icons.adaptive.arrow_back),
-        ),
-        const SizedBox(width: AppSpacing.xs),
-        Expanded(
-          child: TextField(
-            key: const ValueKey("browse_search_page_field"),
-            controller: controller,
-            focusNode: focusNode,
-            autocorrect: false,
-            textInputAction: TextInputAction.search,
-            onChanged: onChanged,
-            decoration: InputDecoration(
-              hintText: "Search channels or categories",
-              prefixIcon: const Icon(Icons.search),
-              suffixIcon: controller.text.isEmpty
-                  ? null
-                  : IconButton(
-                      key: const ValueKey("browse_search_clear_button"),
-                      tooltip: "Clear search",
-                      onPressed: onClear,
-                      icon: const Icon(Icons.close),
-                    ),
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final headerSurface = theme.scaffoldBackgroundColor;
+    final topAlpha = theme.brightness == Brightness.dark ? 0.92 : 0.94;
+    final bottomAlpha = theme.brightness == Brightness.dark ? 0.30 : 0.42;
+
+    return ClipRect(
+      key: const ValueKey("browse_search_top_bar"),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                headerSurface.withValues(alpha: topAlpha),
+                headerSurface.withValues(alpha: bottomAlpha),
+              ],
+            ),
+            border: Border(
+              bottom: BorderSide(
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.22),
+                width: 0.5,
+              ),
             ),
           ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.sm,
+                  AppSpacing.md,
+                  AppSpacing.lg,
+                  AppSpacing.md,
+                ),
+                child: Row(
+                  children: [
+                    IconButton(
+                      tooltip: "Back",
+                      onPressed: Navigator.of(context).pop,
+                      icon: Icon(Icons.adaptive.arrow_back),
+                    ),
+                    const SizedBox(width: AppSpacing.xs),
+                    Expanded(
+                      child: TextField(
+                        key: const ValueKey("browse_search_page_field"),
+                        controller: controller,
+                        focusNode: focusNode,
+                        autocorrect: false,
+                        textInputAction: TextInputAction.search,
+                        onChanged: onChanged,
+                        decoration: InputDecoration(
+                          hintText: "Search channels or categories",
+                          prefixIcon: const Icon(Icons.search),
+                          suffixIcon: controller.text.isEmpty
+                              ? null
+                              : IconButton(
+                                  key: const ValueKey("browse_search_clear_button"),
+                                  tooltip: "Clear search",
+                                  onPressed: onClear,
+                                  icon: const Icon(Icons.close),
+                                ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (isSearching) const LinearProgressIndicator(minHeight: 3),
+            ],
+          ),
         ),
-      ],
-    ),
-  );
+      ),
+    );
+  }
 
   @override
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<TextEditingController>("controller", controller));
     properties.add(DiagnosticsProperty<FocusNode>("focusNode", focusNode));
+    properties.add(DiagnosticsProperty<bool>("isSearching", isSearching));
     properties.add(ObjectFlagProperty<ValueChanged<String>>.has("onChanged", onChanged));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onClear", onClear));
   }
@@ -673,11 +837,13 @@ class _SearchPageTopBar extends StatelessWidget {
 class _SearchHistoryView extends StatelessWidget {
   const _SearchHistoryView({
     required this.history,
+    required this.topPadding,
     required this.onHistorySelected,
     required this.onClearHistory,
   });
 
   final List<String> history;
+  final double topPadding;
   final ValueChanged<String> onHistorySelected;
   final VoidCallback onClearHistory;
 
@@ -710,6 +876,7 @@ class _SearchHistoryView extends StatelessWidget {
 
     return ListView(
       padding: EdgeInsets.only(
+        top: topPadding,
         left: AppSpacing.lg,
         right: AppSpacing.lg,
         bottom: 96 + MediaQuery.of(context).padding.bottom,
@@ -762,6 +929,7 @@ class _SearchHistoryView extends StatelessWidget {
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(IterableProperty<String>("history", history));
+    properties.add(DoubleProperty("topPadding", topPadding));
     properties.add(
       ObjectFlagProperty<ValueChanged<String>>.has(
         "onHistorySelected",
@@ -778,6 +946,7 @@ class _SearchResults extends StatelessWidget {
     required this.categories,
     required this.errorMessage,
     required this.isSearching,
+    required this.topPadding,
     required this.onCategorySelected,
   });
 
@@ -785,16 +954,23 @@ class _SearchResults extends StatelessWidget {
   final List<_BrowseCategory> categories;
   final String? errorMessage;
   final bool isSearching;
+  final double topPadding;
   final ValueChanged<_BrowseCategory> onCategorySelected;
 
   @override
   Widget build(BuildContext context) {
     final error = errorMessage;
     if (error != null) {
-      return _StatusMessage(message: error);
+      return Padding(
+        padding: EdgeInsets.only(top: topPadding),
+        child: _StatusMessage(message: error),
+      );
     }
     if (channels.isEmpty && categories.isEmpty && !isSearching) {
-      return const _StatusMessage(message: "No matching channels.");
+      return Padding(
+        padding: EdgeInsets.only(top: topPadding),
+        child: const _StatusMessage(message: "No matching channels."),
+      );
     }
 
     final children = <Widget>[
@@ -821,6 +997,7 @@ class _SearchResults extends StatelessWidget {
 
     return ListView(
       padding: EdgeInsets.only(
+        top: topPadding,
         left: AppSpacing.lg,
         right: AppSpacing.lg,
         bottom: 96 + MediaQuery.of(context).padding.bottom,
@@ -836,6 +1013,7 @@ class _SearchResults extends StatelessWidget {
     properties.add(IterableProperty<_BrowseCategory>("categories", categories));
     properties.add(StringProperty("errorMessage", errorMessage));
     properties.add(DiagnosticsProperty<bool>("isSearching", isSearching));
+    properties.add(DoubleProperty("topPadding", topPadding));
     properties.add(
       ObjectFlagProperty<ValueChanged<_BrowseCategory>>.has(
         "onCategorySelected",
@@ -1298,6 +1476,7 @@ Future<_BrowseCategory> _browseCategoryFromApi(
   return _BrowseCategory(
     id: category.id,
     name: category.name,
+    viewerCount: viewerCount,
     viewers: _formatCompactCount(viewerCount),
     imageUrl: _twitchBoxArtUrl(category.boxArtUrl),
     colors: _colorsForText(category.id),
@@ -1704,6 +1883,7 @@ class _BrowseCategory {
   const _BrowseCategory({
     required this.id,
     required this.name,
+    required this.viewerCount,
     required this.viewers,
     required this.imageUrl,
     required this.colors,
@@ -1711,6 +1891,7 @@ class _BrowseCategory {
 
   final String id;
   final String name;
+  final int viewerCount;
   final String viewers;
   final String? imageUrl;
   final List<Color> colors;
@@ -1816,6 +1997,22 @@ String _formatCompactCount(int value) {
 String _compactDecimal(double value) {
   final text = value.toStringAsFixed(1);
   return text.endsWith(".0") ? text.substring(0, text.length - 2) : text;
+}
+
+List<String> _normalizedSearchHistory(Iterable<String> values) {
+  final seen = <String>{};
+  final history = <String>[];
+  for (final rawValue in values) {
+    final value = rawValue.trim();
+    if (value.isEmpty || !seen.add(value.toLowerCase())) {
+      continue;
+    }
+    history.add(value);
+    if (history.length == 8) {
+      break;
+    }
+  }
+  return history;
 }
 
 String? _twitchThumbnailUrl(String? template) {
