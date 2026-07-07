@@ -19,6 +19,7 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.hls.HlsManifest
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
@@ -40,6 +41,7 @@ class FlowLowLatencyVideoView(
     private val channel = MethodChannel(messenger, "flow/low_latency_video/$viewId")
     private val mainHandler = Handler(Looper.getMainLooper())
     private var disposed = false
+    private var pendingErrorMessage: String? = null
 
     private val trackSelector = DefaultTrackSelector(appContext)
     private val player = ExoPlayer.Builder(appContext)
@@ -93,7 +95,7 @@ class FlowLowLatencyVideoView(
         }
 
         override fun onPlayerError(error: PlaybackException) {
-            channel.invokeMethod("error", error.message ?: "Video playback failed.")
+            reportError(error.message ?: "Video playback failed.")
         }
     }
 
@@ -113,7 +115,7 @@ class FlowLowLatencyVideoView(
 
         val url = params?.get("url") as? String
         if (url.isNullOrBlank()) {
-            channel.invokeMethod("error", "Video URL is missing.")
+            reportError("Video URL is missing.")
         } else {
             load(url)
         }
@@ -131,8 +133,6 @@ class FlowLowLatencyVideoView(
             .setLiveConfiguration(
                 MediaItem.LiveConfiguration.Builder()
                     .setTargetOffsetMs(TARGET_LIVE_OFFSET_MS)
-                    .setMinPlaybackSpeed(MIN_LIVE_SPEED)
-                    .setMaxPlaybackSpeed(MAX_LIVE_SPEED)
                     .build(),
             )
             .build()
@@ -144,6 +144,7 @@ class FlowLowLatencyVideoView(
 
         pendingInitialLiveSeek = true
         player.setMediaSource(mediaSource)
+        player.setPlaybackSpeed(1f)
         player.prepare()
         player.playWhenReady = true
         mainHandler.removeCallbacks(latencyTicker)
@@ -154,6 +155,11 @@ class FlowLowLatencyVideoView(
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
+            "attach" -> {
+                sendInitialEvents()
+                result.success(null)
+            }
+
             "play" -> {
                 player.play()
                 result.success(null)
@@ -165,8 +171,7 @@ class FlowLowLatencyVideoView(
             }
 
             "seekToLive" -> {
-                seekToLiveEdge()
-                sendLatency()
+                seekToLiveTarget()
                 result.success(null)
             }
 
@@ -201,28 +206,28 @@ class FlowLowLatencyVideoView(
         channel.invokeMethod("latency", currentLatencySeconds())
     }
 
-    private fun maybeSeekToLiveOnStart() {
-        if (pendingInitialLiveSeek && seekToLiveEdge()) {
-            pendingInitialLiveSeek = false
-        } else if (pendingInitialLiveSeek) {
-            mainHandler.postDelayed(
-                {
-                    if (!disposed) {
-                        maybeSeekToLiveOnStart()
-                    }
-                },
-                INITIAL_LIVE_SEEK_RETRY_DELAY_MS,
-            )
-        }
+    private fun reportError(message: String) {
+        pendingErrorMessage = message
+        channel.invokeMethod("error", message)
     }
 
-    private fun seekToLiveEdge(): Boolean {
-        val targetPositionMs = targetLivePosition()
-        val didSeekToTarget = targetPositionMs != null
+    private fun sendInitialEvents() {
+        pendingErrorMessage?.let { channel.invokeMethod("error", it) }
+        channel.invokeMethod("playing", player.isPlaying)
+        channel.invokeMethod("buffering", player.playbackState == Player.STATE_BUFFERING)
+        sendLatency()
+        sendQualitiesEvent()
+    }
 
+    private fun seekToLiveTarget() {
+        if (player.isPlayingAd) {
+            sendLatency()
+            return
+        }
+
+        val targetPositionMs = targetLivePosition()
         if (targetPositionMs != null) {
             player.seekTo(targetPositionMs)
-            startLiveEdgeCorrection()
         } else {
             player.seekToDefaultPosition()
         }
@@ -235,64 +240,33 @@ class FlowLowLatencyVideoView(
             },
             LIVE_EDGE_LATENCY_UPDATE_DELAY_MS,
         )
-        return didSeekToTarget
     }
 
-    private fun startLiveEdgeCorrection() {
-        liveEdgeCorrectionGeneration++
-        scheduleLiveEdgeCorrection(liveEdgeCorrectionGeneration, 1)
-    }
+    private fun maybeSeekToLiveOnStart() {
+        if (!pendingInitialLiveSeek || player.isPlayingAd) {
+            return
+        }
 
-    private fun scheduleLiveEdgeCorrection(generation: Int, attempt: Int) {
+        pendingInitialLiveSeek = false
+        val targetPositionMs = targetLivePosition() ?: return
+        player.seekTo(targetPositionMs)
+        player.play()
         mainHandler.postDelayed(
             {
-                if (disposed || generation != liveEdgeCorrectionGeneration) {
-                    return@postDelayed
-                }
-
-                val isDone = correctLiveEdgeIfNeeded()
-                if (!isDone && attempt < MAX_LIVE_EDGE_CORRECTION_ATTEMPTS) {
-                    scheduleLiveEdgeCorrection(generation, attempt + 1)
+                if (!disposed) {
+                    sendLatency()
                 }
             },
-            LIVE_EDGE_CORRECTION_INTERVAL_MS,
+            LIVE_EDGE_LATENCY_UPDATE_DELAY_MS,
         )
     }
 
-    private fun correctLiveEdgeIfNeeded(): Boolean {
-        if (player.playbackState != Player.STATE_READY) {
-            return false
-        }
-
-        val liveOffsetMs = player.currentLiveOffset
-        if (liveOffsetMs == C.TIME_UNSET) {
-            return false
-        }
-
-        val driftMs = liveOffsetMs - JUMP_TO_LIVE_OFFSET_MS
-        if (kotlin.math.abs(driftMs) <= LIVE_EDGE_TOLERANCE_MS) {
-            sendLatency()
-            return true
-        }
-
-        val targetPositionMs = targetLivePosition() ?: return false
-        player.seekTo(targetPositionMs)
-        player.play()
-        sendLatency()
-        return false
-    }
-
     private fun targetLivePosition(): Long? {
-        val currentLiveOffsetMs = player.currentLiveOffset
-        if (currentLiveOffsetMs != C.TIME_UNSET) {
+        val behindLiveEdgeMs = currentBehindLiveEdgeMs()
+        if (behindLiveEdgeMs != null) {
             return clampSeekPosition(
-                player.currentPosition + currentLiveOffsetMs - JUMP_TO_LIVE_OFFSET_MS,
+                player.currentPosition + behindLiveEdgeMs - JUMP_TO_LIVE_OFFSET_MS,
             )
-        }
-
-        val liveWindowEdgeMs = player.duration
-        if (liveWindowEdgeMs != C.TIME_UNSET && liveWindowEdgeMs > 0) {
-            return clampSeekPosition(liveWindowEdgeMs - JUMP_TO_LIVE_OFFSET_MS)
         }
 
         return null
@@ -307,21 +281,29 @@ class FlowLowLatencyVideoView(
     }
 
     private fun currentLatencySeconds(): Double? {
-        val liveOffsetMs = player.currentLiveOffset
-        if (liveOffsetMs != C.TIME_UNSET) {
-            return liveOffsetMs.coerceAtLeast(0) / 1000.0
+        if (player.isPlayingAd) {
+            return null
         }
 
-        val durationMs = player.duration
-        val positionMs = player.currentPosition
-        if (durationMs != C.TIME_UNSET && durationMs > 0) {
-            return (durationMs - positionMs).coerceAtLeast(0) / 1000.0
-        }
-
-        return null
+        return currentBehindLiveEdgeMs()?.div(1000.0)
     }
 
+    private fun currentBehindLiveEdgeMs(): Long? =
+        currentHlsLiveWindowDurationMs()
+            ?.minus(player.currentPosition)
+            ?.coerceAtLeast(0)
+
+    private fun currentHlsLiveWindowDurationMs(): Long? =
+        (player.currentManifest as? HlsManifest)
+            ?.mediaPlaylist
+            ?.durationUs
+            ?.div(1000L)
+            ?.takeIf { it > 0 }
+
     private fun sendQualitiesEvent(tracks: Tracks = player.currentTracks) {
+        val previousSelectedQuality = availableVideoQualities.firstOrNull {
+            it.id == selectedQualityId
+        }
         val qualityOptions = extractVideoQualities(tracks)
         availableVideoQualities = qualityOptions
 
@@ -331,13 +313,7 @@ class FlowLowLatencyVideoView(
             }
         }
 
-        val isSelectedQualityAvailable = availableVideoQualities.any { it.id == selectedQualityId }
-        val currentSelection =
-            if (!isSelectedQualityAvailable && selectedQualityId != AUTO_QUALITY_ID) {
-                AUTO_QUALITY_ID
-            } else {
-                selectedQualityId
-            }
+        val currentSelection = currentQualitySelection(previousSelectedQuality)
         selectedQualityId = currentSelection
 
         val qualitiesPayload = ArrayList<Map<String, String>>(1 + qualityOptions.size)
@@ -363,6 +339,27 @@ class FlowLowLatencyVideoView(
                 "selectedQualityId" to currentSelection,
             ),
         )
+    }
+
+    private fun currentQualitySelection(previousSelectedQuality: VideoQualityOption?): String {
+        if (selectedQualityId == AUTO_QUALITY_ID) {
+            return AUTO_QUALITY_ID
+        }
+
+        val exactOption = availableVideoQualities.firstOrNull { it.id == selectedQualityId }
+        if (exactOption != null) {
+            return selectedQualityId
+        }
+
+        val stableOption = previousSelectedQuality?.let { previous ->
+            availableVideoQualities.firstOrNull { it.hasSameRendition(previous) }
+        }
+        if (stableOption != null && applyQualitySelection(stableOption.id)) {
+            return stableOption.id
+        }
+
+        applyAutoQuality()
+        return AUTO_QUALITY_ID
     }
 
     private fun applyQualitySelection(qualityId: String): Boolean {
@@ -464,7 +461,10 @@ class FlowLowLatencyVideoView(
         val height: Int,
         val frameRate: Float,
         val override: TrackSelectionOverride,
-    )
+    ) {
+        fun hasSameRendition(other: VideoQualityOption): Boolean =
+            height == other.height && Math.round(frameRate) == Math.round(other.frameRate)
+    }
 
     override fun dispose() {
         if (disposed) {
@@ -483,23 +483,16 @@ class FlowLowLatencyVideoView(
     private var selectedQualityId = AUTO_QUALITY_ID
     private var pendingQualityId: String? = null
     private var pendingInitialLiveSeek = false
-    private var liveEdgeCorrectionGeneration = 0
     private var availableVideoQualities: List<VideoQualityOption> = emptyList()
 
     private companion object {
-        const val LOW_LATENCY_MIN_BUFFER_MS = 1000
-        const val LOW_LATENCY_MAX_BUFFER_MS = 5000
-        const val LOW_LATENCY_PLAYBACK_BUFFER_MS = 250
-        const val LOW_LATENCY_REBUFFER_MS = 500
+        const val LOW_LATENCY_MIN_BUFFER_MS = 8000
+        const val LOW_LATENCY_MAX_BUFFER_MS = 30000
+        const val LOW_LATENCY_PLAYBACK_BUFFER_MS = 1000
+        const val LOW_LATENCY_REBUFFER_MS = 1500
         const val TARGET_LIVE_OFFSET_MS = 2000L
-        const val MIN_LIVE_SPEED = 0.98f
-        const val MAX_LIVE_SPEED = 1.08f
         const val JUMP_TO_LIVE_OFFSET_MS = 2000L
-        const val LIVE_EDGE_TOLERANCE_MS = 175L
-        const val MAX_LIVE_EDGE_CORRECTION_ATTEMPTS = 6
-        const val LIVE_EDGE_CORRECTION_INTERVAL_MS = 500L
         const val LATENCY_READ_INTERVAL_MS = 1000L
-        const val INITIAL_LIVE_SEEK_RETRY_DELAY_MS = 250L
         const val LIVE_EDGE_LATENCY_UPDATE_DELAY_MS = 250L
         const val AUTO_QUALITY_ID = "auto"
         const val AUTO_QUALITY_LABEL = "Auto"

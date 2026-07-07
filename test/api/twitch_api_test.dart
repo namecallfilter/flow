@@ -87,6 +87,7 @@ void main() {
 
   test("fetches a live playback URL with expected GraphQL variables", () async {
     late http.Request capturedRequest;
+    final expiresAt = DateTime.utc(2026, 7, 7, 18);
     final client = TwitchApiClient(
       clientId: "client-123",
       accessToken: "token-123",
@@ -98,6 +99,7 @@ void main() {
             "streamPlaybackAccessToken": {
               "value": "token-value",
               "signature": "sig-value",
+              "expiresAt": expiresAt.toIso8601String(),
               "authorization": {"isForbidden": false},
             },
           },
@@ -118,6 +120,7 @@ void main() {
 
     expect(playback.playlistUri.host, "usher.ttvnw.net");
     expect(playback.playlistUri.path, "/api/v2/channel/hls/jason.m3u8");
+    expect(playback.expiresAt?.toUtc(), expiresAt);
   });
 
   test("builds a low-latency HLS URL with token and signature", () async {

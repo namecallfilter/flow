@@ -54,8 +54,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
   bool _isInitializingVideo = false;
   bool _controlsVisible = true;
   bool _isFullscreen = false;
+  bool _suppressChromeForFullscreenTransition = false;
   String? _videoErrorMessage;
   int _loadGeneration = 0;
+  int _chromeRevision = 0;
 
   String get _login {
     final login = widget.channel.login.trim();
@@ -67,6 +69,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return controller != null &&
         controller.isInitialized &&
         controller.isPlaying &&
+        !controller.isBuffering &&
         !_store.isLoading &&
         !_isInitializingVideo &&
         _videoErrorMessage == null &&
@@ -282,21 +285,60 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _toggleFullscreen() async {
     final nextFullscreen = !_isFullscreen;
+
+    _controlsHideTimer?.cancel();
+    setState(() {
+      _suppressChromeForFullscreenTransition = true;
+      _controlsVisible = false;
+    });
+
+    await _waitForTransitionFrame();
+    if (!mounted) {
+      return;
+    }
+
     setState(() {
       _isFullscreen = nextFullscreen;
+    });
+
+    await _waitForSystemChromeTransition(
+      nextFullscreen ? _enterFullscreenSystemChrome() : _restoreSystemChrome(),
+    );
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _chromeRevision++;
+      _suppressChromeForFullscreenTransition = false;
       _controlsVisible = true;
     });
 
-    if (nextFullscreen) {
-      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-      await SystemChrome.setPreferredOrientations(const [
-        DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
-      ]);
-    } else {
-      await _restoreSystemChrome();
-    }
     _scheduleControlsHide();
+  }
+
+  Future<void> _waitForSystemChromeTransition(Future<void> transition) async {
+    unawaited(transition.catchError((_) {}));
+    await Future<void>.delayed(const Duration(milliseconds: 350));
+  }
+
+  Future<void> _waitForTransitionFrame() {
+    final completer = Completer<void>();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!completer.isCompleted) {
+        completer.complete();
+      }
+    });
+    WidgetsBinding.instance.scheduleFrame();
+    return completer.future;
+  }
+
+  static Future<void> _enterFullscreenSystemChrome() async {
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    await SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
   }
 
   static Future<void> _restoreSystemChrome() async {
@@ -313,11 +355,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
       final controller = _videoController;
       final errorMessage =
           _videoErrorMessage ?? controller?.errorDescription ?? _store.errorMessage;
-      final isBusy = _store.isLoading || _isInitializingVideo;
+      final isBusy = _store.isLoading || _isInitializingVideo || (controller?.isBuffering ?? false);
       final stage = _PlayerStage(
         channel: widget.channel,
         controller: controller,
         controlsVisible: _controlsVisible,
+        chromeRevision: _chromeRevision,
+        suppressChrome: _suppressChromeForFullscreenTransition,
         errorMessage: errorMessage,
         isBusy: isBusy,
         isFullscreen: _isFullscreen,
@@ -400,6 +444,8 @@ class _PlayerStage extends StatelessWidget {
     required this.channel,
     required this.controller,
     required this.controlsVisible,
+    required this.chromeRevision,
+    required this.suppressChrome,
     required this.errorMessage,
     required this.isBusy,
     required this.isFullscreen,
@@ -416,6 +462,8 @@ class _PlayerStage extends StatelessWidget {
   final StreamChannel channel;
   final FlowVideoController? controller;
   final bool controlsVisible;
+  final int chromeRevision;
+  final bool suppressChrome;
   final String? errorMessage;
   final bool isBusy;
   final bool isFullscreen;
@@ -431,7 +479,7 @@ class _PlayerStage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final currentError = errorMessage;
-    final showChrome = controlsVisible || isBusy || currentError != null;
+    final showChrome = !suppressChrome && (controlsVisible || isBusy || currentError != null);
     final child = GestureDetector(
       key: const ValueKey("player_stage"),
       behavior: HitTestBehavior.opaque,
@@ -455,31 +503,35 @@ class _PlayerStage extends StatelessWidget {
                 child: const SizedBox.expand(),
               ),
             ),
-          AnimatedOpacity(
-            key: ValueKey(
-              isFullscreen ? "player_chrome_opacity_fullscreen" : "player_chrome_opacity_inline",
-            ),
-            opacity: showChrome ? 1 : 0,
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOut,
-            child: IgnorePointer(
-              ignoring: !showChrome,
-              child: _PlayerChrome(
-                channel: channel,
-                controller: controller,
-                isBusy: isBusy,
-                isFullscreen: isFullscreen,
-                onBack: onBack,
-                onJumpToLiveEdge: onJumpToLiveEdge,
-                onRefresh: onRefresh,
-                onShowQuality: onShowQuality,
-                onToggleControls: onToggleControls,
-                onToggleFullscreen: onToggleFullscreen,
-                onTogglePlayback: onTogglePlayback,
-                showPlaybackButton: currentError == null && !isBusy,
+          if (!suppressChrome)
+            AnimatedOpacity(
+              key: ValueKey("player_chrome_opacity_$chromeRevision"),
+              opacity: showChrome ? 1 : 0,
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              child: IgnorePointer(
+                ignoring: !showChrome,
+                child: KeyedSubtree(
+                  key: ValueKey(
+                    "player_chrome_${isFullscreen ? "fullscreen" : "inline"}_$chromeRevision",
+                  ),
+                  child: _PlayerChrome(
+                    channel: channel,
+                    controller: controller,
+                    isBusy: isBusy,
+                    isFullscreen: isFullscreen,
+                    onBack: onBack,
+                    onJumpToLiveEdge: onJumpToLiveEdge,
+                    onRefresh: onRefresh,
+                    onShowQuality: onShowQuality,
+                    onToggleControls: onToggleControls,
+                    onToggleFullscreen: onToggleFullscreen,
+                    onTogglePlayback: onTogglePlayback,
+                    showPlaybackButton: currentError == null && !isBusy,
+                  ),
+                ),
               ),
             ),
-          ),
           if (isBusy && currentError == null)
             const Center(
               child: SizedBox.square(
@@ -512,6 +564,8 @@ class _PlayerStage extends StatelessWidget {
     properties.add(DiagnosticsProperty<StreamChannel>("channel", channel));
     properties.add(DiagnosticsProperty<FlowVideoController?>("controller", controller));
     properties.add(DiagnosticsProperty<bool>("controlsVisible", controlsVisible));
+    properties.add(IntProperty("chromeRevision", chromeRevision));
+    properties.add(DiagnosticsProperty<bool>("suppressChrome", suppressChrome));
     properties.add(StringProperty("errorMessage", errorMessage));
     properties.add(DiagnosticsProperty<bool>("isBusy", isBusy));
     properties.add(DiagnosticsProperty<bool>("isFullscreen", isFullscreen));
@@ -568,19 +622,14 @@ class _PlayerChrome extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final viewPadding = MediaQuery.viewPaddingOf(context);
-    final fullscreenLeftInset = math.max(
-      viewPadding.left + AppSpacing.md,
-      AppSpacing.xxxl,
+    final fullscreenHorizontalInset = math.max(
+      math.max(viewPadding.left, viewPadding.right) + AppSpacing.md,
+      _fullscreenChromeMinHorizontalInset,
     );
-    final fullscreenRightInset = math.max(
-      viewPadding.right + AppSpacing.md,
-      AppSpacing.xxxl,
-    );
-    final leftInset = isFullscreen ? fullscreenLeftInset : AppSpacing.md;
-    final rightInset = isFullscreen ? fullscreenRightInset : AppSpacing.md;
+    final leftInset = isFullscreen ? fullscreenHorizontalInset : AppSpacing.md;
+    final rightInset = isFullscreen ? fullscreenHorizontalInset : AppSpacing.md;
 
     return Stack(
-      key: ValueKey(isFullscreen ? "player_chrome_fullscreen" : "player_chrome_inline"),
       fit: StackFit.expand,
       children: [
         Positioned.fill(
@@ -591,22 +640,20 @@ class _PlayerChrome extends StatelessWidget {
             child: const SizedBox.expand(),
           ),
         ),
-        if (!isFullscreen) ...const [
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            height: 80,
-            child: _ChromeGradient(fromTop: true),
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            bottom: 0,
-            height: 60,
-            child: _ChromeGradient(fromTop: false),
-          ),
-        ],
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          height: isFullscreen ? 112 : 80,
+          child: const _ChromeGradient(fromTop: true),
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: isFullscreen ? 88 : 60,
+          child: const _ChromeGradient(fromTop: false),
+        ),
         Positioned(
           top: AppSpacing.xs,
           left: isFullscreen ? leftInset : AppSpacing.xs,
@@ -707,13 +754,24 @@ class _ChromeGradient extends StatelessWidget {
   }
 }
 
-const _chromeTextShadows = [Shadow(blurRadius: 10)];
-const _primaryPlaybackShadows = [
+const _chromeTextShadows = [
   Shadow(
-    color: Colors.black87,
-    blurRadius: 14,
+    color: Color(0x99000000),
+    blurRadius: 4,
   ),
 ];
+const _primaryPlaybackShadows = [
+  Shadow(
+    color: Color(0x99000000),
+    blurRadius: 6,
+  ),
+];
+
+const _fullscreenChromeMinHorizontalInset = 48.0;
+const _overlayIconButtonDimension = 44.0;
+const _overlayIconSize = 30.0;
+const _rotateOverlayIconSize = 26.0;
+const _overlayActionButtonGap = AppSpacing.md;
 
 List<Shadow> _chromeShadows(bool _) => _chromeTextShadows;
 
@@ -799,16 +857,31 @@ class _PlayerTopBar extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 2),
-              Text(
-                category,
+              Row(
                 key: const ValueKey("player_stream_metadata"),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w800,
-                  shadows: shadows,
-                ),
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.category_rounded,
+                    key: const ValueKey("player_stream_category_icon"),
+                    color: Colors.white,
+                    size: 16,
+                    shadows: shadows,
+                  ),
+                  const SizedBox(width: AppSpacing.xs),
+                  Flexible(
+                    child: Text(
+                      category,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        shadows: shadows,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -818,6 +891,7 @@ class _PlayerTopBar extends StatelessWidget {
           key: const ValueKey("player_quality_button"),
           tooltip: "Quality",
           icon: Icons.settings_rounded,
+          shadows: shadows,
           onPressed: onShowQuality,
         ),
       ],
@@ -900,106 +974,127 @@ class _PlayerBottomBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final shadows = _chromeShadows(isFullscreen);
+    Widget buildStats() => Wrap(
+      spacing: AppSpacing.md,
+      runSpacing: AppSpacing.xs,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const _LiveDot(),
+            const SizedBox(width: AppSpacing.xs),
+            _StreamElapsedTime(
+              startedAt: channel.startedAt,
+              isFullscreen: isFullscreen,
+            ),
+          ],
+        ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.visibility_rounded,
+              color: Colors.white.withValues(alpha: 0.9),
+              size: 18,
+              shadows: shadows,
+            ),
+            const SizedBox(width: AppSpacing.xs),
+            Text(
+              channel.viewers.isEmpty ? "--" : channel.viewers,
+              key: const ValueKey("player_viewer_count"),
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                shadows: shadows,
+              ),
+            ),
+          ],
+        ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.speed_rounded,
+              color: Colors.white.withValues(alpha: 0.9),
+              size: 18,
+              shadows: shadows,
+            ),
+            const SizedBox(width: AppSpacing.xs),
+            Text(
+              _latencyText(controller?.latencySeconds),
+              key: const ValueKey("player_latency"),
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontFeatures: const [FontFeature.tabularFigures()],
+                shadows: shadows,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+
+    Widget buildActions() => Row(
+      key: const ValueKey("player_action_buttons"),
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _OverlayIconButton(
+          key: const ValueKey("player_jump_live_button"),
+          tooltip: "Jump to live edge",
+          icon: Icons.fast_forward_rounded,
+          shadows: shadows,
+          onPressed: isBusy ? null : onJumpToLiveEdge,
+        ),
+        const SizedBox(width: _overlayActionButtonGap),
+        _OverlayIconButton(
+          key: const ValueKey("player_refresh_button"),
+          tooltip: "Refresh player",
+          icon: Icons.refresh_rounded,
+          shadows: shadows,
+          onPressed: isBusy ? null : onRefresh,
+        ),
+        const SizedBox(width: _overlayActionButtonGap),
+        _OverlayIconButton(
+          key: const ValueKey("player_fullscreen_button"),
+          tooltip: isFullscreen ? "Exit landscape" : "Enter landscape",
+          icon: Icons.screen_rotation_rounded,
+          iconSize: _rotateOverlayIconSize,
+          shadows: shadows,
+          onPressed: onToggleFullscreen,
+        ),
+      ],
+    );
 
     return SizedBox(
       height: 44,
-      child: Row(
-        children: [
-          Expanded(
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Wrap(
-                spacing: AppSpacing.md,
-                runSpacing: AppSpacing.xs,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const _LiveDot(),
-                      const SizedBox(width: AppSpacing.xs),
-                      _StreamElapsedTime(
-                        startedAt: channel.startedAt,
-                        isFullscreen: isFullscreen,
-                      ),
-                    ],
+      child: isFullscreen
+          ? Stack(
+              fit: StackFit.expand,
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: buildStats(),
+                ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: buildActions(),
+                ),
+              ],
+            )
+          : Row(
+              children: [
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: buildStats(),
                   ),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.visibility_rounded,
-                        color: Colors.white.withValues(alpha: 0.9),
-                        size: 18,
-                        shadows: shadows,
-                      ),
-                      const SizedBox(width: AppSpacing.xs),
-                      Text(
-                        channel.viewers.isEmpty ? "--" : channel.viewers,
-                        key: const ValueKey("player_viewer_count"),
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                          shadows: shadows,
-                        ),
-                      ),
-                    ],
-                  ),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.speed_rounded,
-                        color: Colors.white.withValues(alpha: 0.9),
-                        size: 18,
-                        shadows: shadows,
-                      ),
-                      const SizedBox(width: AppSpacing.xs),
-                      Text(
-                        _latencyText(controller?.latencySeconds),
-                        key: const ValueKey("player_latency"),
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                          shadows: shadows,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                buildActions(),
+              ],
             ),
-          ),
-          const SizedBox(width: AppSpacing.sm),
-          Row(
-            key: const ValueKey("player_action_buttons"),
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _OverlayIconButton(
-                key: const ValueKey("player_jump_live_button"),
-                tooltip: "Jump to live edge",
-                icon: Icons.keyboard_double_arrow_right_rounded,
-                onPressed: isBusy ? null : onJumpToLiveEdge,
-              ),
-              const SizedBox(width: AppSpacing.xs),
-              _OverlayIconButton(
-                key: const ValueKey("player_refresh_button"),
-                tooltip: "Refresh player",
-                icon: Icons.refresh_rounded,
-                onPressed: isBusy ? null : onRefresh,
-              ),
-              const SizedBox(width: AppSpacing.xs),
-              _OverlayIconButton(
-                key: const ValueKey("player_fullscreen_button"),
-                tooltip: isFullscreen ? "Exit fullscreen" : "Fullscreen",
-                icon: isFullscreen ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded,
-                onPressed: onToggleFullscreen,
-              ),
-            ],
-          ),
-        ],
-      ),
     );
   }
 
@@ -1027,23 +1122,28 @@ class _OverlayIconButton extends StatelessWidget {
     required this.tooltip,
     required this.icon,
     required this.onPressed,
+    this.iconSize = _overlayIconSize,
+    this.shadows,
   });
 
   final String tooltip;
   final IconData icon;
   final VoidCallback? onPressed;
+  final double iconSize;
+  final List<Shadow>? shadows;
 
   @override
   Widget build(BuildContext context) => SizedBox.square(
-    dimension: 44,
+    dimension: _overlayIconButtonDimension,
     child: IconButton(
       tooltip: tooltip,
       onPressed: onPressed,
+      padding: EdgeInsets.zero,
       icon: Icon(
         icon,
         color: onPressed == null ? Colors.white38 : Colors.white,
-        size: 30,
-        shadows: _chromeTextShadows,
+        size: iconSize,
+        shadows: shadows,
       ),
     ),
   );
@@ -1054,6 +1154,8 @@ class _OverlayIconButton extends StatelessWidget {
     properties.add(StringProperty("tooltip", tooltip));
     properties.add(DiagnosticsProperty<IconData>("icon", icon));
     properties.add(ObjectFlagProperty<VoidCallback?>.has("onPressed", onPressed));
+    properties.add(DoubleProperty("iconSize", iconSize));
+    properties.add(IterableProperty<Shadow>("shadows", shadows));
   }
 }
 
@@ -1324,7 +1426,7 @@ class _ChatReservedArea extends StatelessWidget {
               ),
               const SizedBox(width: AppSpacing.md),
               Icon(
-                Icons.settings_rounded,
+                Icons.more_vert_rounded,
                 key: const ValueKey("player_chat_settings_icon"),
                 color: Colors.white.withValues(alpha: 0.8),
                 size: 32,

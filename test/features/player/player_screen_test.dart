@@ -44,6 +44,7 @@ void main() {
     expect(find.byKey(const ValueKey("player_chat_reserved_area")), findsOneWidget);
     expect(find.text("Live with chat"), findsOneWidget);
     expect(find.text("Just Chatting"), findsOneWidget);
+    expect(find.byKey(const ValueKey("player_stream_category_icon")), findsOneWidget);
     expect(find.text("Just Chatting with 26.3K viewers"), findsNothing);
     expect(find.byKey(const ValueKey("player_chat_settings_icon")), findsOneWidget);
 
@@ -107,16 +108,29 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey("player_chat_reserved_area")), findsOneWidget);
-    expect(find.byIcon(Icons.fullscreen_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.screen_rotation_rounded), findsOneWidget);
+    expect(find.byTooltip("Enter landscape"), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey("player_fullscreen_button")));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey("player_chat_reserved_area")), findsNothing);
-    expect(find.byIcon(Icons.fullscreen_exit_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.screen_rotation_rounded), findsOneWidget);
+    expect(find.byTooltip("Exit landscape"), findsOneWidget);
+    final rotateIcon = tester.widget<Icon>(
+      find.descendant(
+        of: find.byKey(const ValueKey("player_fullscreen_button")),
+        matching: find.byIcon(Icons.screen_rotation_rounded),
+      ),
+    );
+    expect(rotateIcon.size, 26);
 
     await tester.tap(find.byKey(const ValueKey("player_fullscreen_button")));
     await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey("player_chat_reserved_area")), findsOneWidget);
   });
@@ -227,6 +241,35 @@ void main() {
 
     expect(find.byKey(const ValueKey("player_video_tap_target")), findsNothing);
     expect(find.byKey(const ValueKey("player_quality_button")), findsOneWidget);
+  });
+
+  testWidgets("shows loading instead of playback button while buffering", (tester) async {
+    late FakeFlowVideoController controller;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: PlayerScreen(
+          apiCache: _playbackApiCache(),
+          channel: _channel(),
+          videoControllerFactory: (playlistUri) {
+            controller = FakeFlowVideoController(playlistUri);
+            return controller;
+          },
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey("player_play_pause_button")), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+
+    controller.setBuffering(isBuffering: true);
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey("player_play_pause_button")), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
   });
 
   testWidgets("opens quality settings and selects a quality", (tester) async {

@@ -131,7 +131,11 @@ class TwitchApiCache {
     required bool refresh,
   }) async {
     if (!refresh && _values.containsKey(key)) {
-      return _values[key]! as T;
+      final cachedValue = _values[key];
+      if (_isCacheValueFresh(cachedValue)) {
+        return cachedValue! as T;
+      }
+      _values.remove(key);
     }
 
     if (!refresh) {
@@ -147,7 +151,7 @@ class TwitchApiCache {
 
     try {
       final value = await future;
-      if (revision == _revision) {
+      if (revision == _revision && identical(_inFlight[key], future)) {
         _values[key] = value;
       }
       return value as T;
@@ -166,6 +170,19 @@ class TwitchApiCache {
     return value;
   }
 }
+
+bool _isCacheValueFresh(Object? value) {
+  if (value is TwitchLivePlayback) {
+    final expiresAt = value.expiresAt;
+    if (expiresAt == null) {
+      return true;
+    }
+    return DateTime.now().add(_livePlaybackExpiryBuffer).isBefore(expiresAt);
+  }
+  return true;
+}
+
+const _livePlaybackExpiryBuffer = Duration(seconds: 30);
 
 String _cacheKey(String namespace, Map<String, Object?> values) {
   final entries = values.entries.toList()..sort((left, right) => left.key.compareTo(right.key));

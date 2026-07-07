@@ -41,6 +41,8 @@ abstract class FlowVideoController extends ChangeNotifier {
 
   bool get isPlaying;
 
+  bool get isBuffering;
+
   double get aspectRatio;
 
   double? get latencySeconds;
@@ -78,9 +80,11 @@ class _AndroidLowLatencyFlowVideoController extends FlowVideoController {
   _AndroidLowLatencyFlowVideoController(this.playlistUri);
 
   final Uri playlistUri;
+  final _initializeCompleter = Completer<void>();
   MethodChannel? _channel;
   bool _isInitialized = false;
   bool _isPlaying = true;
+  bool _isBuffering = false;
   double? _latencySeconds;
   List<FlowVideoQuality> _qualities = const [FlowVideoQuality.auto];
   String _selectedQualityId = FlowVideoQuality.auto.id;
@@ -91,6 +95,9 @@ class _AndroidLowLatencyFlowVideoController extends FlowVideoController {
 
   @override
   bool get isPlaying => _isPlaying;
+
+  @override
+  bool get isBuffering => _isBuffering;
 
   @override
   double get aspectRatio => 16 / 9;
@@ -108,10 +115,7 @@ class _AndroidLowLatencyFlowVideoController extends FlowVideoController {
   String? get errorDescription => _errorDescription;
 
   @override
-  Future<void> initialize() async {
-    _isInitialized = true;
-    notifyListeners();
-  }
+  Future<void> initialize() => _initializeCompleter.future;
 
   @override
   Future<void> play() async {
@@ -153,6 +157,12 @@ class _AndroidLowLatencyFlowVideoController extends FlowVideoController {
     final channel = MethodChannel("flow/low_latency_video/$viewId");
     _channel = channel;
     channel.setMethodCallHandler(_handleMethodCall);
+    _isInitialized = true;
+    if (!_initializeCompleter.isCompleted) {
+      _initializeCompleter.complete();
+    }
+    notifyListeners();
+    unawaited(channel.invokeMethod<void>("attach"));
     if (_isPlaying) {
       unawaited(channel.invokeMethod<void>("play"));
     } else {
@@ -176,7 +186,7 @@ class _AndroidLowLatencyFlowVideoController extends FlowVideoController {
       case "error":
         _errorDescription = call.arguments?.toString() ?? "Video playback failed.";
       case "buffering":
-        break;
+        _isBuffering = call.arguments == true;
     }
     notifyListeners();
   }
@@ -187,6 +197,9 @@ class _AndroidLowLatencyFlowVideoController extends FlowVideoController {
     if (channel != null) {
       channel.setMethodCallHandler(null);
       unawaited(channel.invokeMethod<void>("dispose"));
+    }
+    if (!_initializeCompleter.isCompleted) {
+      _initializeCompleter.complete();
     }
     super.dispose();
   }
@@ -231,6 +244,9 @@ class _NativeFlowVideoController extends FlowVideoController {
 
   @override
   bool get isPlaying => _controller.value.isPlaying;
+
+  @override
+  bool get isBuffering => _controller.value.isBuffering;
 
   @override
   double get aspectRatio {

@@ -117,6 +117,70 @@ void main() {
     expect(refreshed.playlistUri.queryParameters["sig"], "sig-2");
     expect(requests, 2);
   });
+
+  test("older in-flight responses do not overwrite newer cached values", () async {
+    var requests = 0;
+    final firstResponse = Completer<http.Response>();
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      httpClient: MockClient((_) {
+        requests++;
+        if (requests == 1) {
+          return firstResponse.future;
+        }
+        return Future.value(
+          _channelDetailsResponse(
+            login: "jason",
+            displayName: "Jason 2",
+          ),
+        );
+      }),
+    );
+    final cache = TwitchApiCache(clientLoader: () async => client);
+
+    final first = cache.fetchChannelDetails("jason", refresh: true);
+    await Future<void>.delayed(Duration.zero);
+
+    final second = await cache.fetchChannelDetails("jason", refresh: true);
+    firstResponse.complete(
+      _channelDetailsResponse(login: "jason", displayName: "Jason 1"),
+    );
+
+    expect(second.displayName, "Jason 2");
+    expect((await first).displayName, "Jason 1");
+    expect((await cache.fetchChannelDetails("jason")).displayName, "Jason 2");
+    expect(requests, 2);
+  });
+
+  test("evicts live playback before the token expires", () async {
+    var requests = 0;
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      gqlAccessToken: "gql-token-123",
+      httpClient: MockClient((_) async {
+        requests++;
+        return _livePlaybackResponse(
+          token: "token-$requests",
+          signature: "sig-$requests",
+          expiresAt: requests == 1
+              ? DateTime.now().toUtc().add(const Duration(seconds: 10))
+              : DateTime.now().toUtc().add(const Duration(minutes: 10)),
+        );
+      }),
+    );
+    final cache = TwitchApiCache(clientLoader: () async => client);
+
+    final first = await cache.fetchLivePlayback("jason");
+    final second = await cache.fetchLivePlayback("jason");
+    final third = await cache.fetchLivePlayback("jason");
+
+    expect(first.playlistUri.queryParameters["sig"], "sig-1");
+    expect(second.playlistUri.queryParameters["sig"], "sig-2");
+    expect(third.playlistUri.queryParameters["sig"], "sig-2");
+    expect(requests, 2);
+  });
 }
 
 http.Response _jsonResponse(Map<String, Object?> body) => http.Response(
@@ -170,11 +234,13 @@ http.Response _channelDetailsResponse({
 http.Response _livePlaybackResponse({
   required String token,
   required String signature,
+  DateTime? expiresAt,
 }) => _jsonResponse({
   "data": {
     "streamPlaybackAccessToken": {
       "value": token,
       "signature": signature,
+      "expiresAt": expiresAt?.toIso8601String(),
       "authorization": {"isForbidden": false},
     },
   },

@@ -214,9 +214,11 @@ class TwitchPage<T> {
 class TwitchLivePlayback {
   const TwitchLivePlayback({
     required this.playlistUri,
+    this.expiresAt,
   });
 
   final Uri playlistUri;
+  final DateTime? expiresAt;
 }
 
 class TwitchApiClient {
@@ -653,6 +655,7 @@ class TwitchApiClient {
         signature: signature,
         token: token,
       ),
+      expiresAt: _dateTimeValue(tokenData["expiresAt"]),
     );
   }
 

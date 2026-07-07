@@ -16,6 +16,7 @@ class FakeFlowVideoController extends FlowVideoController {
   final Uri playlistUri;
   bool _isInitialized = false;
   bool _isPlaying = false;
+  bool _isBuffering = false;
   List<FlowVideoQuality> _qualities;
   String _selectedQualityId = FlowVideoQuality.auto.id;
   int seekToLiveCallCount = 0;
@@ -25,6 +26,9 @@ class FakeFlowVideoController extends FlowVideoController {
 
   @override
   bool get isPlaying => _isPlaying;
+
+  @override
+  bool get isBuffering => _isBuffering;
 
   @override
   double get aspectRatio => 16 / 9;
@@ -68,6 +72,11 @@ class FakeFlowVideoController extends FlowVideoController {
 
   void setQualities(List<FlowVideoQuality> qualities) {
     _qualities = qualities;
+    notifyListeners();
+  }
+
+  void setBuffering({required bool isBuffering}) {
+    _isBuffering = isBuffering;
     notifyListeners();
   }
 
