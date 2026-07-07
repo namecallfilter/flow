@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.View
 import androidx.annotation.OptIn
 import androidx.media3.common.C
@@ -12,6 +13,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Timeline
 import androidx.media3.common.Tracks
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.util.UnstableApi
@@ -21,6 +23,7 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsManifest
 import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.hls.playlist.HlsMediaPlaylist
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -42,6 +45,9 @@ class FlowLowLatencyVideoView(
     private val mainHandler = Handler(Looper.getMainLooper())
     private var disposed = false
     private var pendingErrorMessage: String? = null
+    private var liveEdgeSnapshotKey: String? = null
+    private var liveEdgeSnapshotDurationMs = C.TIME_UNSET
+    private var liveEdgeSnapshotRealtimeMs = 0L
 
     private val trackSelector = DefaultTrackSelector(appContext)
     private val player = ExoPlayer.Builder(appContext)
@@ -76,6 +82,11 @@ class FlowLowLatencyVideoView(
                 return
             }
             sendQualitiesEvent(tracks)
+        }
+
+        override fun onTimelineChanged(timeline: Timeline, reason: Int) {
+            refreshLiveEdgeSnapshot()
+            sendLatency()
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
@@ -143,6 +154,7 @@ class FlowLowLatencyVideoView(
             .createMediaSource(mediaItem)
 
         pendingInitialLiveSeek = true
+        resetLiveEdgeSnapshot()
         player.setMediaSource(mediaSource)
         player.setPlaybackSpeed(1f)
         player.prepare()
@@ -225,12 +237,7 @@ class FlowLowLatencyVideoView(
             return
         }
 
-        val targetPositionMs = targetLivePosition()
-        if (targetPositionMs != null) {
-            player.seekTo(targetPositionMs)
-        } else {
-            player.seekToDefaultPosition()
-        }
+        player.seekToDefaultPosition()
         player.play()
         mainHandler.postDelayed(
             {
@@ -248,8 +255,7 @@ class FlowLowLatencyVideoView(
         }
 
         pendingInitialLiveSeek = false
-        val targetPositionMs = targetLivePosition() ?: return
-        player.seekTo(targetPositionMs)
+        player.seekToDefaultPosition()
         player.play()
         mainHandler.postDelayed(
             {
@@ -261,25 +267,6 @@ class FlowLowLatencyVideoView(
         )
     }
 
-    private fun targetLivePosition(): Long? {
-        val behindLiveEdgeMs = currentBehindLiveEdgeMs()
-        if (behindLiveEdgeMs != null) {
-            return clampSeekPosition(
-                player.currentPosition + behindLiveEdgeMs - JUMP_TO_LIVE_OFFSET_MS,
-            )
-        }
-
-        return null
-    }
-
-    private fun clampSeekPosition(positionMs: Long): Long {
-        val durationMs = player.duration
-        if (durationMs != C.TIME_UNSET && durationMs > 0) {
-            return positionMs.coerceIn(0, durationMs)
-        }
-        return positionMs.coerceAtLeast(0)
-    }
-
     private fun currentLatencySeconds(): Double? {
         if (player.isPlayingAd) {
             return null
@@ -288,17 +275,72 @@ class FlowLowLatencyVideoView(
         return currentBehindLiveEdgeMs()?.div(1000.0)
     }
 
-    private fun currentBehindLiveEdgeMs(): Long? =
-        currentHlsLiveWindowDurationMs()
-            ?.minus(player.currentPosition)
-            ?.coerceAtLeast(0)
+    private fun currentBehindLiveEdgeMs(): Long? {
+        val playlist = currentHlsMediaPlaylist() ?: return null
+        val manifestDurationMs =
+            playlist.durationUs
+                .div(1000L)
+                .takeIf { it > 0 } ?: return null
 
-    private fun currentHlsLiveWindowDurationMs(): Long? =
+        val nowMs = SystemClock.elapsedRealtime()
+        val snapshotKey = liveEdgeSnapshotKey(playlist)
+        if (
+            liveEdgeSnapshotKey != snapshotKey ||
+            liveEdgeSnapshotDurationMs == C.TIME_UNSET
+        ) {
+            liveEdgeSnapshotKey = snapshotKey
+            liveEdgeSnapshotDurationMs = manifestDurationMs
+            liveEdgeSnapshotRealtimeMs = nowMs
+            return (manifestDurationMs - player.currentPosition).coerceAtLeast(0L)
+        }
+
+        val elapsedSinceSnapshotMs = (nowMs - liveEdgeSnapshotRealtimeMs).coerceAtLeast(0L)
+        val interpolatedEdgeMs =
+            liveEdgeSnapshotDurationMs +
+                elapsedSinceSnapshotMs.coerceAtMost(maxLiveEdgeInterpolationMs(playlist))
+
+        return (interpolatedEdgeMs - player.currentPosition).coerceAtLeast(0L)
+    }
+
+    private fun refreshLiveEdgeSnapshot() {
+        val playlist = currentHlsMediaPlaylist() ?: return
+        val manifestDurationMs =
+            playlist.durationUs
+                .div(1000L)
+                .takeIf { it > 0 } ?: return
+
+        liveEdgeSnapshotKey = liveEdgeSnapshotKey(playlist)
+        liveEdgeSnapshotDurationMs = manifestDurationMs
+        liveEdgeSnapshotRealtimeMs = SystemClock.elapsedRealtime()
+    }
+
+    private fun resetLiveEdgeSnapshot() {
+        liveEdgeSnapshotKey = null
+        liveEdgeSnapshotDurationMs = C.TIME_UNSET
+        liveEdgeSnapshotRealtimeMs = 0L
+    }
+
+    private fun currentHlsMediaPlaylist(): HlsMediaPlaylist? =
         (player.currentManifest as? HlsManifest)
             ?.mediaPlaylist
-            ?.durationUs
+
+    private fun liveEdgeSnapshotKey(playlist: HlsMediaPlaylist): String =
+        "${playlist.mediaSequence}:${playlist.segments.size}:${playlist.trailingParts.size}:${playlist.durationUs}"
+
+    private fun maxLiveEdgeInterpolationMs(playlist: HlsMediaPlaylist): Long {
+        val partTargetMs =
+            playlist.partTargetDurationUs
+                .takeIf { it != C.TIME_UNSET && it > 0 }
+                ?.div(1000L)
+        if (partTargetMs != null) {
+            return (partTargetMs * 3).coerceAtLeast(500L)
+        }
+
+        return playlist.targetDurationUs
+            .takeIf { it > 0 }
             ?.div(1000L)
-            ?.takeIf { it > 0 }
+            ?: TARGET_LIVE_OFFSET_MS
+    }
 
     private fun sendQualitiesEvent(tracks: Tracks = player.currentTracks) {
         val previousSelectedQuality = availableVideoQualities.firstOrNull {
@@ -491,7 +533,6 @@ class FlowLowLatencyVideoView(
         const val LOW_LATENCY_PLAYBACK_BUFFER_MS = 1000
         const val LOW_LATENCY_REBUFFER_MS = 1500
         const val TARGET_LIVE_OFFSET_MS = 2000L
-        const val JUMP_TO_LIVE_OFFSET_MS = 2000L
         const val LATENCY_READ_INTERVAL_MS = 1000L
         const val LIVE_EDGE_LATENCY_UPDATE_DELAY_MS = 250L
         const val AUTO_QUALITY_ID = "auto"
