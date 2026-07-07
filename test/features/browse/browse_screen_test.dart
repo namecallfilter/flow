@@ -5,6 +5,7 @@ import "package:flow/api/twitch_auth.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/browse/browse_screen.dart";
 import "package:flow/features/following/following_screen.dart";
+import "package:flow/features/player/player_controller.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flutter/material.dart";
@@ -12,9 +13,17 @@ import "package:flutter_test/flutter_test.dart";
 import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
+import "../../helpers/fake_flow_video_controller.dart";
+
 typedef _RequestObserver = void Function(http.Request request);
 
 void main() {
+  setUp(() {
+    debugSetFlowVideoControllerFactory(FakeFlowVideoController.new);
+  });
+
+  tearDown(debugResetFlowVideoControllerFactory);
+
   testWidgets("opens live channels for a tapped category", (tester) async {
     final requestedRequests = <http.Request>[];
 
@@ -69,6 +78,17 @@ void main() {
               _graphQlVariables(request)["id"] == "509658",
         )
         .length;
+
+    await tester.tap(find.byKey(const ValueKey("stream_thumbnail_AussieAntics")));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey("player_page_aussieantics")), findsOneWidget);
+    expect(find.byKey(const ValueKey("channel_page_aussieantics")), findsNothing);
+
+    Navigator.of(
+      tester.element(find.byKey(const ValueKey("player_page_aussieantics"))),
+    ).pop();
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const ValueKey("stream_channel_identity_AussieAntics")));
     await tester.pumpAndSettle();
@@ -525,6 +545,10 @@ MockClient _browseHttpClient({_RequestObserver? onRequest}) => MockClient((reque
       );
     }
 
+    if (query.contains("FlowPlaybackAccessToken")) {
+      return _livePlaybackResponse();
+    }
+
     if (query.contains("FlowSearchCategories")) {
       return _categoryConnectionResponse(
         [
@@ -809,6 +833,16 @@ http.Response _jsonResponse(Map<String, Object?> body) => http.Response(
   200,
   headers: {"content-type": "application/json"},
 );
+
+http.Response _livePlaybackResponse() => _jsonResponse({
+  "data": {
+    "streamPlaybackAccessToken": {
+      "value": "token-value",
+      "signature": "sig-value",
+      "authorization": {"isForbidden": false},
+    },
+  },
+});
 
 http.Response _channelDetailsResponse({
   required String login,

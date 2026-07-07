@@ -29,6 +29,14 @@ class MainActivity : FlutterActivity() {
                     result.notImplemented()
                 }
             }
+
+        flutterEngine
+            .platformViewsController
+            .registry
+            .registerViewFactory(
+                "flow/low_latency_video",
+                FlowLowLatencyVideoFactory(flutterEngine.dartExecutor.binaryMessenger)
+            )
     }
 
     private fun openExternalUrl(url: String?, result: MethodChannel.Result) {

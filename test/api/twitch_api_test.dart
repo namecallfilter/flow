@@ -84,6 +84,140 @@ void main() {
     expect(channel.pastBroadcasts.single.duration, const Duration(seconds: 17999));
     expect(channel.pastBroadcasts.single.viewCount, 91234);
   });
+
+  test("fetches a live playback URL with expected GraphQL variables", () async {
+    late http.Request capturedRequest;
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      gqlAccessToken: "gql-token-123",
+      httpClient: MockClient((request) async {
+        capturedRequest = request;
+        return _jsonResponse({
+          "data": {
+            "streamPlaybackAccessToken": {
+              "value": "token-value",
+              "signature": "sig-value",
+              "authorization": {"isForbidden": false},
+            },
+          },
+        });
+      }),
+    );
+
+    final playback = await client.fetchLivePlayback("Jason");
+
+    final body = jsonDecode(capturedRequest.body) as Map<String, Object?>;
+    final variables = (body["variables"] as Map<String, Object?>?) ?? const {};
+
+    expect(capturedRequest.url.host, "gql.twitch.tv");
+    expect(body["query"], contains("FlowPlaybackAccessToken"));
+    expect(variables["login"], "jason");
+    expect(variables["platform"], "web");
+    expect(variables["playerType"], "site");
+
+    expect(playback.playlistUri.host, "usher.ttvnw.net");
+    expect(playback.playlistUri.path, "/api/v2/channel/hls/jason.m3u8");
+  });
+
+  test("builds a low-latency HLS URL with token and signature", () async {
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      gqlAccessToken: "gql-token-123",
+      httpClient: MockClient(
+        (_) async => _jsonResponse({
+          "data": {
+            "streamPlaybackAccessToken": {
+              "value": "my-token",
+              "signature": "my-signature",
+              "authorization": {"isForbidden": false},
+            },
+          },
+        }),
+      ),
+    );
+
+    final playback = await client.fetchLivePlayback("Jason");
+    final query = playback.playlistUri.queryParameters;
+
+    expect(playback.playlistUri.path, "/api/v2/channel/hls/jason.m3u8");
+    expect(query["token"], "my-token");
+    expect(query["sig"], "my-signature");
+    expect(query["player"], "twitchweb");
+    expect(query["player_backend"], "mediaplayer");
+    expect(query["type"], "any");
+    expect(query["allow_source"], "true");
+    expect(query["allow_audio_only"], "true");
+    expect(query["fast_bread"], "true");
+    expect(query["supported_codecs"], "avc1");
+    expect(query["playlist_include_framerate"], "true");
+    expect(query["p"], isNotEmpty);
+    expect(int.tryParse(query["p"]!), isNotNull);
+  });
+
+  test("throws for forbidden live playback responses", () {
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      gqlAccessToken: "gql-token-123",
+      httpClient: MockClient(
+        (_) async => _jsonResponse({
+          "data": {
+            "streamPlaybackAccessToken": {
+              "value": "token-value",
+              "signature": "sig-value",
+              "authorization": {
+                "isForbidden": true,
+                "forbiddenReasonCode": "CHANNEL_VIOLATED",
+              },
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(
+      client.fetchLivePlayback("jason"),
+      throwsA(
+        isA<TwitchApiException>().having(
+          (error) => error.message,
+          "message",
+          contains("CHANNEL_VIOLATED"),
+        ),
+      ),
+    );
+  });
+
+  test("throws when live playback token is missing", () {
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      gqlAccessToken: "gql-token-123",
+      httpClient: MockClient(
+        (_) async => _jsonResponse({
+          "data": {
+            "streamPlaybackAccessToken": {"value": null, "signature": "sig-value"},
+          },
+        }),
+      ),
+    );
+
+    expect(
+      client.fetchLivePlayback("jason"),
+      throwsA(isA<TwitchApiException>()),
+    );
+  });
+
+  test("throws when live playback login is blank", () {
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      gqlAccessToken: "gql-token-123",
+    );
+
+    expect(client.fetchLivePlayback(" "), throwsA(isA<TwitchApiException>()));
+  });
 }
 
 http.Response _jsonResponse(Map<String, Object?> body) => http.Response(

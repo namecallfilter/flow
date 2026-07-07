@@ -101,6 +101,15 @@ class TwitchApiCache {
     refresh: refresh,
   );
 
+  Future<TwitchLivePlayback> fetchLivePlayback(
+    String login, {
+    bool refresh = false,
+  }) => _cached(
+    _cacheKey("livePlayback", {"login": login.trim().toLowerCase()}),
+    (client) => client.fetchLivePlayback(login),
+    refresh: refresh,
+  );
+
   Future<TwitchPage<TwitchCategory>> searchCategoriesPage(
     String query, {
     int first = 20,

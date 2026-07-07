@@ -91,6 +91,32 @@ void main() {
     expect((await cache.fetchTopCategoriesPage()).data.single.name, "Category 2");
     expect(requests, 2);
   });
+
+  test("caches live playback by normalized login and supports refresh", () async {
+    var requests = 0;
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      gqlAccessToken: "gql-token-123",
+      httpClient: MockClient((_) async {
+        requests++;
+        return _livePlaybackResponse(
+          token: "token-$requests",
+          signature: "sig-$requests",
+        );
+      }),
+    );
+    final cache = TwitchApiCache(clientLoader: () async => client);
+
+    final first = await cache.fetchLivePlayback("Jason");
+    final second = await cache.fetchLivePlayback("jason");
+    final refreshed = await cache.fetchLivePlayback("jason", refresh: true);
+
+    expect(first.playlistUri.queryParameters["sig"], "sig-1");
+    expect(second.playlistUri.queryParameters["sig"], "sig-1");
+    expect(refreshed.playlistUri.queryParameters["sig"], "sig-2");
+    expect(requests, 2);
+  });
 }
 
 http.Response _jsonResponse(Map<String, Object?> body) => http.Response(
@@ -137,6 +163,19 @@ http.Response _channelDetailsResponse({
         "edges": const <Object?>[],
         "pageInfo": {"hasNextPage": false},
       },
+    },
+  },
+});
+
+http.Response _livePlaybackResponse({
+  required String token,
+  required String signature,
+}) => _jsonResponse({
+  "data": {
+    "streamPlaybackAccessToken": {
+      "value": token,
+      "signature": signature,
+      "authorization": {"isForbidden": false},
     },
   },
 });

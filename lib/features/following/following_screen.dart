@@ -11,6 +11,7 @@ import "package:flow/app/theme.dart";
 import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/following/following_store.dart";
 import "package:flow/features/following/twitch_login_screen.dart";
+import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flow/shared/widgets/app_bottom_nav.dart";
@@ -155,6 +156,24 @@ class _FollowingScreenState extends State<FollowingScreen> {
     );
   }
 
+  void _openLivePlayback(StreamChannel channel) {
+    final login = channel.login.trim().isEmpty ? channel.name.trim() : channel.login.trim();
+    if (login.isEmpty) {
+      return;
+    }
+
+    unawaited(
+      Navigator.of(context, rootNavigator: true).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => PlayerScreen(
+            apiCache: _apiCache,
+            channel: channel,
+          ),
+        ),
+      ),
+    );
+  }
+
   void _openOfflineChannel(OfflineChannel channel) {
     _openChannel(
       ChannelPreview(
@@ -222,6 +241,7 @@ class _FollowingScreenState extends State<FollowingScreen> {
                       for (final channel in liveChannels)
                         StreamCard(
                           channel: channel,
+                          onStreamSelected: _openLivePlayback,
                           onChannelSelected: _openLiveChannel,
                         ),
                     const SizedBox(height: AppSpacing.sm),
@@ -365,10 +385,12 @@ class StreamCard extends StatelessWidget {
   const StreamCard({
     required this.channel,
     super.key,
+    this.onStreamSelected,
     this.onChannelSelected,
   });
 
   final StreamChannel channel;
+  final ValueChanged<StreamChannel>? onStreamSelected;
   final ValueChanged<StreamChannel>? onChannelSelected;
 
   @override
@@ -395,7 +417,7 @@ class StreamCard extends StatelessWidget {
         ),
         child: InkWell(
           borderRadius: borderRadius,
-          onTap: () {},
+          onTap: onStreamSelected == null ? null : () => onStreamSelected!(channel),
           child: ConstrainedBox(
             constraints: const BoxConstraints(minHeight: 86),
             child: Padding(
@@ -502,6 +524,12 @@ class StreamCard extends StatelessWidget {
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<StreamChannel>("channel", channel));
+    properties.add(
+      ObjectFlagProperty<ValueChanged<StreamChannel>?>.has(
+        "onStreamSelected",
+        onStreamSelected,
+      ),
+    );
     properties.add(
       ObjectFlagProperty<ValueChanged<StreamChannel>?>.has(
         "onChannelSelected",

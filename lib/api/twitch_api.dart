@@ -1,8 +1,11 @@
+import "dart:math";
+
 import "package:flow/graphql/FlowChannelDetails.graphql.dart";
 import "package:flow/graphql/FlowCurrentUser.graphql.dart";
 import "package:flow/graphql/FlowFollowedLiveUsers.graphql.dart";
 import "package:flow/graphql/FlowFollowedUsers.graphql.dart";
 import "package:flow/graphql/FlowGameStreams.graphql.dart";
+import "package:flow/graphql/FlowPlaybackAccessToken.graphql.dart";
 import "package:flow/graphql/FlowSearchCategories.graphql.dart";
 import "package:flow/graphql/FlowSearchChannels.graphql.dart";
 import "package:flow/graphql/FlowTopGames.graphql.dart";
@@ -206,6 +209,14 @@ class TwitchPage<T> {
 
   final List<T> data;
   final String? cursor;
+}
+
+class TwitchLivePlayback {
+  const TwitchLivePlayback({
+    required this.playlistUri,
+  });
+
+  final Uri playlistUri;
 }
 
 class TwitchApiClient {
@@ -598,6 +609,53 @@ class TwitchApiClient {
     return _channelDetailsFromGraphQlUser(user);
   }
 
+  Future<TwitchLivePlayback> fetchLivePlayback(String login) async {
+    final normalizedLogin = _nonEmptyValue(login);
+    if (normalizedLogin == null) {
+      throw TwitchApiException("Channel login is required.");
+    }
+
+    final data = await _query(
+      () => _authenticatedGraphQlClient.query$FlowPlaybackAccessToken(
+        Options$Query$FlowPlaybackAccessToken(
+          variables: Variables$Query$FlowPlaybackAccessToken(
+            login: normalizedLogin.toLowerCase(),
+            platform: "web",
+            playerType: "site",
+          ),
+          fetchPolicy: graphql.FetchPolicy.noCache,
+        ),
+      ),
+      "FlowPlaybackAccessToken",
+    );
+
+    final tokenData = _mapValue(data.toJson()["streamPlaybackAccessToken"]);
+    if (tokenData == null) {
+      throw TwitchApiException("Live playback token is missing for $normalizedLogin.");
+    }
+
+    final authorization = _mapValue(tokenData["authorization"]);
+    if (authorization?["isForbidden"] == true) {
+      final reasonCode = authorization?["forbiddenReasonCode"];
+      final reason = reasonCode == null ? "" : " ($reasonCode)";
+      throw TwitchApiException("Live playback is forbidden for $normalizedLogin$reason.");
+    }
+
+    final token = _nonEmptyValue(tokenData["value"]?.toString());
+    final signature = _nonEmptyValue(tokenData["signature"]?.toString());
+    if (token == null || signature == null) {
+      throw TwitchApiException("Live playback token is missing for $normalizedLogin.");
+    }
+
+    return TwitchLivePlayback(
+      playlistUri: _buildLivePlaylistUri(
+        login: normalizedLogin.toLowerCase(),
+        signature: signature,
+        token: token,
+      ),
+    );
+  }
+
   Future<TwitchPage<TwitchFollowedStream>> _fetchGameStreamsPage({
     required String gameId,
     required int first,
@@ -656,6 +714,28 @@ class TwitchApiClient {
     }
 
     return TwitchPage<TwitchFollowedStream>(data: streams, cursor: null);
+  }
+
+  Uri _buildLivePlaylistUri({
+    required String login,
+    required String token,
+    required String signature,
+  }) {
+    final randomParam = Random().nextInt(1_000_000);
+
+    return Uri.https("usher.ttvnw.net", "/api/v2/channel/hls/$login.m3u8", {
+      "allow_source": "true",
+      "fast_bread": "true",
+      "player": "twitchweb",
+      "player_backend": "mediaplayer",
+      "p": randomParam.toString(),
+      "type": "any",
+      "supported_codecs": "avc1",
+      "playlist_include_framerate": "true",
+      "allow_audio_only": "true",
+      "sig": signature,
+      "token": token,
+    });
   }
 
   Future<T> _query<T>(

@@ -16,6 +16,7 @@ dependencies:
     http: ^1.6.0
     mobx: ^2.6.0
     shared_preferences: ^2.5.5
+    video_player: ^2.11.1
     webview_flutter: ^4.14.0
 
 dev_dependencies:

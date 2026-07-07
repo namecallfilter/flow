@@ -12,6 +12,7 @@ import "package:flow/features/browse/browse_store.dart";
 import "package:flow/features/browse/category_streams_store.dart";
 import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/following/following_screen.dart";
+import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
@@ -211,6 +212,24 @@ class _BrowseScreenState extends State<BrowseScreen> {
     );
   }
 
+  void _openLivePlayback(StreamChannel channel) {
+    final login = channel.login.trim().isEmpty ? channel.name.trim() : channel.login.trim();
+    if (login.isEmpty) {
+      return;
+    }
+
+    unawaited(
+      Navigator.of(context, rootNavigator: true).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => PlayerScreen(
+            apiCache: _apiCache,
+            channel: channel,
+          ),
+        ),
+      ),
+    );
+  }
+
   void _openSearch() {
     unawaited(
       Navigator.of(context).push<void>(
@@ -278,6 +297,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
                     else
                       _LiveChannelsList(
                         channels: _store.liveChannels,
+                        onStreamSelected: _openLivePlayback,
                         onChannelSelected: _openLiveChannel,
                       ),
                     if (_store.activeLoading && !_store.activeItemsEmpty) ...[
@@ -1079,6 +1099,24 @@ class _CategoryStreamsScreenState extends State<_CategoryStreamsScreen> {
     );
   }
 
+  void _openLivePlayback(StreamChannel channel) {
+    final login = channel.login.trim().isEmpty ? channel.name.trim() : channel.login.trim();
+    if (login.isEmpty) {
+      return;
+    }
+
+    unawaited(
+      Navigator.of(context, rootNavigator: true).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => PlayerScreen(
+            apiCache: widget.apiCache,
+            channel: channel,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) => Observer(
     builder: (_) {
@@ -1120,6 +1158,7 @@ class _CategoryStreamsScreenState extends State<_CategoryStreamsScreen> {
                     else
                       _LiveChannelsList(
                         channels: _store.channels,
+                        onStreamSelected: _openLivePlayback,
                         onChannelSelected: _openLiveChannel,
                       ),
                     if (_store.isLoading && _store.channels.isNotEmpty) ...[
@@ -1380,10 +1419,12 @@ class _BrowseSectionSelector extends StatelessWidget {
 class _LiveChannelsList extends StatelessWidget {
   const _LiveChannelsList({
     required this.channels,
+    required this.onStreamSelected,
     required this.onChannelSelected,
   });
 
   final List<StreamChannel> channels;
+  final ValueChanged<StreamChannel> onStreamSelected;
   final ValueChanged<StreamChannel> onChannelSelected;
 
   @override
@@ -1398,6 +1439,7 @@ class _LiveChannelsList extends StatelessWidget {
         for (final channel in channels)
           StreamCard(
             channel: channel,
+            onStreamSelected: onStreamSelected,
             onChannelSelected: onChannelSelected,
           ),
       ],
@@ -1408,6 +1450,12 @@ class _LiveChannelsList extends StatelessWidget {
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(IterableProperty<StreamChannel>("channels", channels));
+    properties.add(
+      ObjectFlagProperty<ValueChanged<StreamChannel>>.has(
+        "onStreamSelected",
+        onStreamSelected,
+      ),
+    );
     properties.add(
       ObjectFlagProperty<ValueChanged<StreamChannel>>.has(
         "onChannelSelected",
