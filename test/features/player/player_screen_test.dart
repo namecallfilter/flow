@@ -225,6 +225,59 @@ void main() {
     expect(controllers.first.seekToLiveCallCount, 0);
   });
 
+  testWidgets("failed refresh disposes the previous player", (tester) async {
+    var requests = 0;
+    final controllers = <FakeFlowVideoController>[];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: PlayerScreen(
+          apiCache: TwitchApiCache(
+            clientLoader: () async => TwitchApiClient(
+              clientId: "client-123",
+              accessToken: "token-123",
+              gqlAccessToken: "gql-token-123",
+              httpClient: MockClient((_) async {
+                requests++;
+                if (requests == 1) {
+                  return _livePlaybackResponse();
+                }
+                return _forbiddenPlaybackResponse();
+              }),
+            ),
+          ),
+          channel: _channel(),
+          videoControllerFactory: (playlistUri) {
+            final controller = FakeFlowVideoController(playlistUri);
+            controllers.add(controller);
+            return controller;
+          },
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(controllers, hasLength(1));
+    expect(controllers.first.isDisposed, isFalse);
+    expect(
+      find.byKey(const ValueKey("fake_video_/api/v2/channel/hls/jason.m3u8")),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey("player_refresh_button")));
+    await tester.pumpAndSettle();
+
+    expect(requests, 2);
+    expect(controllers.first.isDisposed, isTrue);
+    expect(find.byKey(const ValueKey("player_error_message")), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey("fake_video_/api/v2/channel/hls/jason.m3u8")),
+      findsNothing,
+    );
+  });
+
   testWidgets("shows controls again after tapping the hidden video surface", (tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -277,6 +330,40 @@ void main() {
 
     expect(find.byKey(const ValueKey("player_play_pause_button")), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
+  });
+
+  testWidgets("auto hides controls after buffering ends", (tester) async {
+    late FakeFlowVideoController controller;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: PlayerScreen(
+          apiCache: _playbackApiCache(),
+          channel: _channel(),
+          videoControllerFactory: (playlistUri) {
+            controller = FakeFlowVideoController(playlistUri);
+            return controller;
+          },
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    controller.setBuffering(isBuffering: true);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey("player_quality_button")), findsOneWidget);
+
+    controller.setBuffering(isBuffering: false);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey("player_video_tap_target")), findsOneWidget);
   });
 
   testWidgets("opens quality settings and selects a quality", (tester) async {

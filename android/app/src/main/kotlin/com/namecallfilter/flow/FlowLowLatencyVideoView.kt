@@ -5,15 +5,15 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
-import android.os.SystemClock
+import android.util.Log
 import android.view.View
 import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Metadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.common.Timeline
 import androidx.media3.common.Tracks
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.util.UnstableApi
@@ -26,12 +26,14 @@ import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.hls.playlist.HlsMediaPlaylist
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.extractor.metadata.id3.TextInformationFrame
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.platform.PlatformView
+import org.json.JSONObject
 
 @OptIn(UnstableApi::class)
 class FlowLowLatencyVideoView(
@@ -45,9 +47,8 @@ class FlowLowLatencyVideoView(
     private val mainHandler = Handler(Looper.getMainLooper())
     private var disposed = false
     private var pendingErrorMessage: String? = null
-    private var liveEdgeSnapshotKey: String? = null
-    private var liveEdgeSnapshotDurationMs = C.TIME_UNSET
-    private var liveEdgeSnapshotRealtimeMs = 0L
+    private var twitchLiveLatencySeconds: Double? = null
+    private var lastTranscodeReceiveMs = -1L
 
     private val trackSelector = DefaultTrackSelector(appContext)
     private val player = ExoPlayer.Builder(appContext)
@@ -84,11 +85,6 @@ class FlowLowLatencyVideoView(
             sendQualitiesEvent(tracks)
         }
 
-        override fun onTimelineChanged(timeline: Timeline, reason: Int) {
-            refreshLiveEdgeSnapshot()
-            sendLatency()
-        }
-
         override fun onPlaybackStateChanged(playbackState: Int) {
             channel.invokeMethod("buffering", playbackState == Player.STATE_BUFFERING)
             if (playbackState == Player.STATE_READY) {
@@ -103,6 +99,12 @@ class FlowLowLatencyVideoView(
             reason: Int,
         ) {
             sendLatency()
+        }
+
+        override fun onMetadata(metadata: Metadata) {
+            if (processTwitchMetadata(metadata)) {
+                sendLatency()
+            }
         }
 
         override fun onPlayerError(error: PlaybackException) {
@@ -133,6 +135,10 @@ class FlowLowLatencyVideoView(
     }
 
     private fun load(url: String) {
+        TwitchLatencyMetadata.resetServerOffset()
+        twitchLiveLatencySeconds = null
+        lastTranscodeReceiveMs = -1L
+
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
             .setUserAgent(USER_AGENT)
@@ -154,7 +160,6 @@ class FlowLowLatencyVideoView(
             .createMediaSource(mediaItem)
 
         pendingInitialLiveSeek = true
-        resetLiveEdgeSnapshot()
         player.setMediaSource(mediaSource)
         player.setPlaybackSpeed(1f)
         player.prepare()
@@ -268,13 +273,9 @@ class FlowLowLatencyVideoView(
     }
 
     private fun targetLivePosition(): Long? {
-        val playlistDurationMs =
-            currentHlsMediaPlaylist()
-                ?.durationUs
-                ?.div(1000L)
-                ?.takeIf { it > 0 } ?: return null
+        val availableEndMs = currentAvailableLiveEdgeMs() ?: return null
 
-        val targetPositionMs = (playlistDurationMs - TARGET_LIVE_OFFSET_MS).coerceAtLeast(0L)
+        val targetPositionMs = (availableEndMs - TARGET_LIVE_OFFSET_MS).coerceAtLeast(0L)
         return targetPositionMs.takeIf { it > player.currentPosition }
     }
 
@@ -283,74 +284,109 @@ class FlowLowLatencyVideoView(
             return null
         }
 
-        return currentBehindLiveEdgeMs()?.div(1000.0)
-    }
-
-    private fun currentBehindLiveEdgeMs(): Long? {
-        val playlist = currentHlsMediaPlaylist() ?: return null
-        val manifestDurationMs =
-            playlist.durationUs
-                .div(1000L)
-                .takeIf { it > 0 } ?: return null
-
-        val nowMs = SystemClock.elapsedRealtime()
-        val snapshotKey = liveEdgeSnapshotKey(playlist)
-        if (
-            liveEdgeSnapshotKey != snapshotKey ||
-            liveEdgeSnapshotDurationMs == C.TIME_UNSET
-        ) {
-            liveEdgeSnapshotKey = snapshotKey
-            liveEdgeSnapshotDurationMs = manifestDurationMs
-            liveEdgeSnapshotRealtimeMs = nowMs
-            return (manifestDurationMs - player.currentPosition).coerceAtLeast(0L)
-        }
-
-        val elapsedSinceSnapshotMs = (nowMs - liveEdgeSnapshotRealtimeMs).coerceAtLeast(0L)
-        val interpolatedEdgeMs =
-            liveEdgeSnapshotDurationMs +
-                elapsedSinceSnapshotMs.coerceAtMost(maxLiveEdgeInterpolationMs(playlist))
-
-        return (interpolatedEdgeMs - player.currentPosition).coerceAtLeast(0L)
-    }
-
-    private fun refreshLiveEdgeSnapshot() {
-        val playlist = currentHlsMediaPlaylist() ?: return
-        val manifestDurationMs =
-            playlist.durationUs
-                .div(1000L)
-                .takeIf { it > 0 } ?: return
-
-        liveEdgeSnapshotKey = liveEdgeSnapshotKey(playlist)
-        liveEdgeSnapshotDurationMs = manifestDurationMs
-        liveEdgeSnapshotRealtimeMs = SystemClock.elapsedRealtime()
-    }
-
-    private fun resetLiveEdgeSnapshot() {
-        liveEdgeSnapshotKey = null
-        liveEdgeSnapshotDurationMs = C.TIME_UNSET
-        liveEdgeSnapshotRealtimeMs = 0L
+        return twitchLiveLatencySeconds
+            ?: currentBehindLiveEdgeMs()?.div(1000.0)
     }
 
     private fun currentHlsMediaPlaylist(): HlsMediaPlaylist? =
         (player.currentManifest as? HlsManifest)
             ?.mediaPlaylist
 
-    private fun liveEdgeSnapshotKey(playlist: HlsMediaPlaylist): String =
-        "${playlist.mediaSequence}:${playlist.segments.size}:${playlist.trailingParts.size}:${playlist.durationUs}"
+    private fun currentAvailableLiveEdgeMs(): Long? {
+        val playlist = currentHlsMediaPlaylist() ?: return null
+        return TwitchLatencyMetadata.availableEndMsFor(playlist.baseUri)
+            ?: playlist.durationUs.div(1000L).takeIf { it > 0 }
+    }
 
-    private fun maxLiveEdgeInterpolationMs(playlist: HlsMediaPlaylist): Long {
-        val partTargetMs =
-            playlist.partTargetDurationUs
-                .takeIf { it != C.TIME_UNSET && it > 0 }
-                ?.div(1000L)
-        if (partTargetMs != null) {
-            return (partTargetMs * 3).coerceAtLeast(500L)
+    private fun currentBehindLiveEdgeMs(): Long? {
+        val availableEndMs = currentAvailableLiveEdgeMs() ?: return null
+
+        return (availableEndMs - player.currentPosition).coerceAtLeast(0L)
+    }
+
+    private fun processTwitchMetadata(metadata: Metadata): Boolean {
+        var didUpdate = false
+        for (index in 0 until metadata.length()) {
+            val entry = metadata.get(index)
+            if (entry is TextInformationFrame) {
+                didUpdate = processTextInformationFrame(entry) || didUpdate
+            }
+        }
+        return didUpdate
+    }
+
+    private fun processTextInformationFrame(frame: TextInformationFrame): Boolean {
+        if (frame.id != "TXXX" || frame.description != "segmentmetadata") {
+            return false
         }
 
-        return playlist.targetDurationUs
-            .takeIf { it > 0 }
-            ?.div(1000L)
-            ?: TARGET_LIVE_OFFSET_MS
+        for (text in frame.values) {
+            val transcodeReceiveMs = parseTwitchTranscodeReceiveMs(text) ?: continue
+            if (transcodeReceiveMs <= 0 || transcodeReceiveMs < lastTranscodeReceiveMs) {
+                return false
+            }
+
+            lastTranscodeReceiveMs = transcodeReceiveMs
+            return updateTwitchLiveLatency()
+        }
+
+        return false
+    }
+
+    private fun parseTwitchTranscodeReceiveMs(text: String): Long? {
+        val jsonValue =
+            runCatching {
+                val json = JSONObject(text)
+                if (!json.has("transc_r")) {
+                    null
+                } else {
+                    json.optLong("transc_r").takeIf { it > 0L }
+                }
+            }.getOrNull()
+
+        if (jsonValue != null) {
+            return jsonValue
+        }
+
+        return Regex("""(?:^|[&;,\s])transc_r[=:]"?(\d+)""")
+            .find(text)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.toLongOrNull()
+    }
+
+    private fun updateTwitchLiveLatency(): Boolean {
+        val transcodeReceiveMs = lastTranscodeReceiveMs.takeIf { it > 0L } ?: return false
+        val serverOffsetMs =
+            TwitchLatencyMetadata.latestServerOffsetMs()
+                ?: return false
+
+        val latencyMs = System.currentTimeMillis() + serverOffsetMs - transcodeReceiveMs
+        if (latencyMs < 0L) {
+            Log.w(
+                TAG,
+                "Ignoring negative Twitch latency " +
+                    "latencyMs=$latencyMs " +
+                    "serverOffsetMs=$serverOffsetMs " +
+                    "transcodeReceiveMs=$transcodeReceiveMs",
+            )
+            return false
+        }
+
+        if (latencyMs > MAX_TWITCH_LATENCY_MS) {
+            Log.w(
+                TAG,
+                "Ignoring huge Twitch latency " +
+                    "latencyMs=$latencyMs " +
+                    "serverOffsetMs=$serverOffsetMs " +
+                    "transcodeReceiveMs=$transcodeReceiveMs",
+            )
+            return false
+        }
+
+        twitchLiveLatencySeconds = latencyMs / 1000.0
+
+        return true
     }
 
     private fun sendQualitiesEvent(tracks: Tracks = player.currentTracks) {
@@ -546,8 +582,10 @@ class FlowLowLatencyVideoView(
         const val TARGET_LIVE_OFFSET_MS = 2000L
         const val LATENCY_READ_INTERVAL_MS = 1000L
         const val LIVE_EDGE_LATENCY_UPDATE_DELAY_MS = 250L
+        const val MAX_TWITCH_LATENCY_MS = 30_000L
         const val AUTO_QUALITY_ID = "auto"
         const val AUTO_QUALITY_LABEL = "Auto"
+        const val TAG = "FlowLowLatencyVideo"
         const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"

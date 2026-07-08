@@ -20,6 +20,7 @@ class FakeFlowVideoController extends FlowVideoController {
   List<FlowVideoQuality> _qualities;
   String _selectedQualityId = FlowVideoQuality.auto.id;
   int seekToLiveCallCount = 0;
+  bool isDisposed = false;
 
   @override
   bool get isInitialized => _isInitialized;
@@ -91,4 +92,10 @@ class FakeFlowVideoController extends FlowVideoController {
     key: ValueKey("fake_video_${playlistUri.path}"),
     color: const Color(0xFF101010),
   );
+
+  @override
+  void dispose() {
+    isDisposed = true;
+    super.dispose();
+  }
 }

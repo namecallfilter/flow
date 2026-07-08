@@ -91,7 +91,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   @override
   void dispose() {
     _loadGeneration++;
-    _controlsHideTimer?.cancel();
+    _cancelControlsHideTimer();
     _videoController?.removeListener(_handleVideoChanged);
     _videoController?.dispose();
     if (_isFullscreen) {
@@ -102,7 +102,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Future<void> _loadPlayback({bool refresh = false}) async {
     final generation = ++_loadGeneration;
-    _controlsHideTimer?.cancel();
+    _cancelControlsHideTimer();
     setState(() {
       _videoErrorMessage = null;
       _controlsVisible = true;
@@ -110,6 +110,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     final playback = await _store.load(refresh: refresh);
     if (!mounted || generation != _loadGeneration || playback == null) {
+      if (mounted && generation == _loadGeneration && playback == null) {
+        _disposeCurrentVideoController();
+        _cancelControlsHideTimer();
+        setState(() {
+          _videoController = null;
+          _isInitializingVideo = false;
+          _controlsVisible = true;
+        });
+      }
       return;
     }
 
@@ -156,7 +165,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
       nextController.removeListener(_handleVideoChanged);
       nextController.dispose();
-      _controlsHideTimer?.cancel();
+      _cancelControlsHideTimer();
       setState(() {
         _videoController = null;
         _isInitializingVideo = false;
@@ -170,15 +179,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (!mounted) {
       return;
     }
-    if (!_canAutoHideControls) {
-      _controlsHideTimer?.cancel();
+    if (_canAutoHideControls) {
+      if (_controlsVisible && _controlsHideTimer == null) {
+        _scheduleControlsHide();
+      }
+    } else {
+      _cancelControlsHideTimer();
     }
     setState(() {});
   }
 
   void _toggleControls() {
     if (_controlsVisible && _canAutoHideControls) {
-      _controlsHideTimer?.cancel();
+      _cancelControlsHideTimer();
       setState(() {
         _controlsVisible = false;
       });
@@ -188,7 +201,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _showControls({bool autoHide = true}) {
-    _controlsHideTimer?.cancel();
+    _cancelControlsHideTimer();
     if (mounted && !_controlsVisible) {
       setState(() {
         _controlsVisible = true;
@@ -200,18 +213,32 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   void _scheduleControlsHide() {
-    _controlsHideTimer?.cancel();
+    _cancelControlsHideTimer();
     if (!_canAutoHideControls) {
       return;
     }
     _controlsHideTimer = Timer(_controlsAutoHideDelay, () {
-      if (!mounted || !_canAutoHideControls) {
+      if (!mounted) {
+        return;
+      }
+      _controlsHideTimer = null;
+      if (!_canAutoHideControls) {
         return;
       }
       setState(() {
         _controlsVisible = false;
       });
     });
+  }
+
+  void _cancelControlsHideTimer() {
+    _controlsHideTimer?.cancel();
+    _controlsHideTimer = null;
+  }
+
+  void _disposeCurrentVideoController() {
+    _videoController?.removeListener(_handleVideoChanged);
+    _videoController?.dispose();
   }
 
   Future<void> _togglePlayback() async {
@@ -286,7 +313,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void> _toggleFullscreen() async {
     final nextFullscreen = !_isFullscreen;
 
-    _controlsHideTimer?.cancel();
+    _cancelControlsHideTimer();
     setState(() {
       _suppressChromeForFullscreenTransition = true;
       _controlsVisible = false;
