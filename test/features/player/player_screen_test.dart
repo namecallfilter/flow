@@ -7,6 +7,7 @@ import "package:flow/features/player/player_controller.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:http/http.dart" as http;
 import "package:http/testing.dart";
@@ -16,9 +17,19 @@ import "../../helpers/fake_flow_video_controller.dart";
 void main() {
   setUp(() {
     debugSetFlowVideoControllerFactory(FakeFlowVideoController.new);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (_) async => null,
+    );
   });
 
-  tearDown(debugResetFlowVideoControllerFactory);
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      null,
+    );
+    debugResetFlowVideoControllerFactory();
+  });
 
   testWidgets("loads playback and renders the video surface", (tester) async {
     await tester.pumpWidget(
@@ -112,9 +123,7 @@ void main() {
     expect(find.byTooltip("Enter landscape"), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey("player_fullscreen_button")));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.pumpAndSettle();
+    await _pumpFullscreenTransition(tester);
 
     expect(find.byKey(const ValueKey("player_chat_reserved_area")), findsNothing);
     expect(find.byIcon(Icons.screen_rotation_rounded), findsOneWidget);
@@ -128,9 +137,7 @@ void main() {
     expect(rotateIcon.size, 26);
 
     await tester.tap(find.byKey(const ValueKey("player_fullscreen_button")));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.pumpAndSettle();
+    await _pumpFullscreenTransition(tester);
 
     expect(find.byKey(const ValueKey("player_chat_reserved_area")), findsOneWidget);
   });
@@ -370,6 +377,13 @@ void main() {
 
     expect(find.byKey(const ValueKey("player_video_tap_target")), findsOneWidget);
   });
+}
+
+Future<void> _pumpFullscreenTransition(WidgetTester tester) async {
+  await tester.pump();
+  for (var i = 0; i < 5; i++) {
+    await tester.pump(const Duration(milliseconds: 16));
+  }
 }
 
 TwitchApiCache _playbackApiCache() => TwitchApiCache(

@@ -45,12 +45,37 @@ void main() {
     expect(gqlAuthorizationHeaders["FlowFollowedUsers"], "OAuth cookie-token-123");
     expect(gqlAuthorizationHeaders["FlowUsers"], isNull);
   });
+
+  test("refreshes stale GraphQL web-session token while loading saved auth", () async {
+    final store = _MemoryTwitchStore()
+      ..accessToken = "token-123"
+      ..webSessionToken = "stale-cookie-token";
+    final currentUserAuthorizationHeaders = <String?>[];
+    final controller = _authController(
+      secureStore: store,
+      cookieExtractor: const _StaticCookieExtractor("fresh-cookie-token"),
+      currentUserAuthorizationHeaders: currentUserAuthorizationHeaders,
+      invalidGqlAuthorization: "OAuth stale-cookie-token",
+    );
+
+    final connection = await controller.loadSavedConnection();
+
+    expect(connection, isNotNull);
+    expect(connection!.user.displayName, "Flow Tester");
+    expect(store.webSessionToken, "fresh-cookie-token");
+    expect(currentUserAuthorizationHeaders, [
+      "OAuth stale-cookie-token",
+      "OAuth fresh-cookie-token",
+    ]);
+  });
 }
 
 TwitchAuthController _authController({
   required _MemoryTwitchStore secureStore,
   TwitchCookieExtractor cookieExtractor = const _StaticCookieExtractor(),
   Map<String, String?>? gqlAuthorizationHeaders,
+  List<String?>? currentUserAuthorizationHeaders,
+  String? invalidGqlAuthorization,
 }) => TwitchAuthController(
   config: const TwitchAuthConfig(clientId: "client-123"),
   secureStore: secureStore,
@@ -61,6 +86,8 @@ TwitchAuthController _authController({
     gqlAccessToken: gqlAccessToken,
     httpClient: _authHttpClient(
       gqlAuthorizationHeaders: gqlAuthorizationHeaders,
+      currentUserAuthorizationHeaders: currentUserAuthorizationHeaders,
+      invalidGqlAuthorization: invalidGqlAuthorization,
     ),
   ),
   cookieExtractor: cookieExtractor,
@@ -68,6 +95,8 @@ TwitchAuthController _authController({
 
 MockClient _authHttpClient({
   Map<String, String?>? gqlAuthorizationHeaders,
+  List<String?>? currentUserAuthorizationHeaders,
+  String? invalidGqlAuthorization,
 }) => MockClient((request) async {
   if (request.url.host == "id.twitch.tv" && request.url.path == "/oauth2/validate") {
     return _jsonResponse({"client_id": "client-123", "user_id": "user-123"});
@@ -78,7 +107,16 @@ MockClient _authHttpClient({
     final variables = _graphQlVariables(request);
 
     if (query.contains("FlowCurrentUser")) {
-      gqlAuthorizationHeaders?["FlowCurrentUser"] = request.headers["Authorization"];
+      final authorization = request.headers["Authorization"];
+      gqlAuthorizationHeaders?["FlowCurrentUser"] = authorization;
+      currentUserAuthorizationHeaders?.add(authorization);
+      if (authorization == invalidGqlAuthorization) {
+        return _jsonResponse({
+          "errors": [
+            {"message": "Unauthorized"},
+          ],
+        });
+      }
       return _jsonResponse({
         "data": {
           "currentUser": {

@@ -233,17 +233,39 @@ class TwitchAuthController {
       return null;
     }
 
-    final gqlAccessToken = await secureStore.readWebSessionToken();
-    final apiClient = apiClientFactory(
-      accessToken,
-      gqlAccessToken: gqlAccessToken,
-    );
-    final isValid = await apiClient.validateAccessToken(accessToken);
+    final validationClient = apiClientFactory(accessToken);
+    final isValid = await validationClient.validateAccessToken(accessToken);
     if (!isValid) {
       return null;
     }
 
-    return _fetchConnection(apiClient);
+    final gqlAccessToken = await _loadWebSessionToken();
+    return _fetchConnectionWithWebSessionRetry(
+      accessToken: accessToken,
+      gqlAccessToken: gqlAccessToken,
+    );
+  }
+
+  Future<TwitchAuthConnection> _fetchConnectionWithWebSessionRetry({
+    required String accessToken,
+    required String? gqlAccessToken,
+  }) async {
+    try {
+      return await _fetchConnection(
+        apiClientFactory(accessToken, gqlAccessToken: gqlAccessToken),
+      );
+    } on TwitchApiException {
+      final refreshedGqlAccessToken = await extractAndStoreWebSessionToken();
+      if (refreshedGqlAccessToken == null || refreshedGqlAccessToken == gqlAccessToken) {
+        rethrow;
+      }
+      return _fetchConnection(
+        apiClientFactory(
+          accessToken,
+          gqlAccessToken: refreshedGqlAccessToken,
+        ),
+      );
+    }
   }
 
   Future<TwitchAuthConnection> _fetchConnection(
@@ -280,6 +302,14 @@ class TwitchAuthController {
 
     await secureStore.saveWebSessionToken(token);
     return token;
+  }
+
+  Future<String?> _loadWebSessionToken() async {
+    final token = (await secureStore.readWebSessionToken())?.trim();
+    if (token != null && token.isNotEmpty) {
+      return token;
+    }
+    return extractAndStoreWebSessionToken();
   }
 }
 

@@ -80,11 +80,11 @@ class _AndroidLowLatencyFlowVideoController extends FlowVideoController {
   _AndroidLowLatencyFlowVideoController(this.playlistUri);
 
   final Uri playlistUri;
-  final _initializeCompleter = Completer<void>();
   MethodChannel? _channel;
   bool _isInitialized = false;
   bool _isPlaying = true;
   bool _isBuffering = false;
+  bool _pendingSeekToLive = false;
   double? _latencySeconds;
   List<FlowVideoQuality> _qualities = const [FlowVideoQuality.auto];
   String _selectedQualityId = FlowVideoQuality.auto.id;
@@ -115,7 +115,10 @@ class _AndroidLowLatencyFlowVideoController extends FlowVideoController {
   String? get errorDescription => _errorDescription;
 
   @override
-  Future<void> initialize() => _initializeCompleter.future;
+  Future<void> initialize() async {
+    _isInitialized = true;
+    notifyListeners();
+  }
 
   @override
   Future<void> play() async {
@@ -133,7 +136,12 @@ class _AndroidLowLatencyFlowVideoController extends FlowVideoController {
 
   @override
   Future<void> seekToLive() async {
-    await _channel?.invokeMethod<void>("seekToLive");
+    final channel = _channel;
+    if (channel == null) {
+      _pendingSeekToLive = true;
+      return;
+    }
+    await channel.invokeMethod<void>("seekToLive");
   }
 
   @override
@@ -157,16 +165,22 @@ class _AndroidLowLatencyFlowVideoController extends FlowVideoController {
     final channel = MethodChannel("flow/low_latency_video/$viewId");
     _channel = channel;
     channel.setMethodCallHandler(_handleMethodCall);
-    _isInitialized = true;
-    if (!_initializeCompleter.isCompleted) {
-      _initializeCompleter.complete();
+    if (!_isInitialized) {
+      _isInitialized = true;
+      notifyListeners();
     }
-    notifyListeners();
     unawaited(channel.invokeMethod<void>("attach"));
     if (_isPlaying) {
       unawaited(channel.invokeMethod<void>("play"));
     } else {
       unawaited(channel.invokeMethod<void>("pause"));
+    }
+    if (_selectedQualityId != FlowVideoQuality.auto.id) {
+      unawaited(channel.invokeMethod<void>("setQuality", _selectedQualityId));
+    }
+    if (_pendingSeekToLive) {
+      _pendingSeekToLive = false;
+      unawaited(channel.invokeMethod<void>("seekToLive"));
     }
   }
 
@@ -197,9 +211,6 @@ class _AndroidLowLatencyFlowVideoController extends FlowVideoController {
     if (channel != null) {
       channel.setMethodCallHandler(null);
       unawaited(channel.invokeMethod<void>("dispose"));
-    }
-    if (!_initializeCompleter.isCompleted) {
-      _initializeCompleter.complete();
     }
     super.dispose();
   }

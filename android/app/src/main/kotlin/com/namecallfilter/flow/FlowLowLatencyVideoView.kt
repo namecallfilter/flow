@@ -237,7 +237,7 @@ class FlowLowLatencyVideoView(
             return
         }
 
-        player.seekToDefaultPosition()
+        targetLivePosition()?.let { player.seekTo(it) }
         player.play()
         mainHandler.postDelayed(
             {
@@ -255,7 +255,7 @@ class FlowLowLatencyVideoView(
         }
 
         pendingInitialLiveSeek = false
-        player.seekToDefaultPosition()
+        targetLivePosition()?.let { player.seekTo(it) }
         player.play()
         mainHandler.postDelayed(
             {
@@ -265,6 +265,17 @@ class FlowLowLatencyVideoView(
             },
             LIVE_EDGE_LATENCY_UPDATE_DELAY_MS,
         )
+    }
+
+    private fun targetLivePosition(): Long? {
+        val playlistDurationMs =
+            currentHlsMediaPlaylist()
+                ?.durationUs
+                ?.div(1000L)
+                ?.takeIf { it > 0 } ?: return null
+
+        val targetPositionMs = (playlistDurationMs - TARGET_LIVE_OFFSET_MS).coerceAtLeast(0L)
+        return targetPositionMs.takeIf { it > player.currentPosition }
     }
 
     private fun currentLatencySeconds(): Double? {

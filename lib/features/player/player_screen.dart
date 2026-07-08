@@ -318,8 +318,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Future<void> _waitForSystemChromeTransition(Future<void> transition) async {
-    unawaited(transition.catchError((_) {}));
-    await Future<void>.delayed(const Duration(milliseconds: 350));
+    try {
+      await transition;
+    } on Object {
+      // Keep fullscreen state transitions best-effort. A failed platform
+      // chrome call should not strand the player overlay mid-transition.
+    }
   }
 
   Future<void> _waitForTransitionFrame() {
