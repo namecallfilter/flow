@@ -4,6 +4,8 @@ import "dart:math" as math;
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/app/spacing.dart";
 import "package:flow/app/theme.dart";
+import "package:flow/features/browse/browse_screen.dart";
+import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/player/media3_player_controller.dart";
 import "package:flow/features/player/media3_player_view.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
@@ -124,6 +126,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   bool _wasPlayingBeforeBackground = false;
   bool _viewerRefreshInFlight = false;
   bool _appIsResumed = true;
+  bool _openingDestination = false;
   int _loadGeneration = 0;
 
   @override
@@ -268,6 +271,9 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         }
       },
     );
+    if (_openingDestination) {
+      unawaited(controller.pause());
+    }
   }
 
   void _handlePlayerEvent(TwitchPlayerEvent event) {
@@ -379,6 +385,110 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     }
   }
 
+  Future<void> _openChannel() async {
+    final login = widget.channel.login.trim().isEmpty
+        ? widget.channel.name.trim()
+        : widget.channel.login.trim();
+    if (login.isEmpty) {
+      return;
+    }
+
+    await _openDestination(
+      () => Navigator.of(context, rootNavigator: true).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => ChannelScreen(
+            apiCache: widget.apiCache,
+            initialChannel: ChannelPreview(
+              login: login,
+              displayName: widget.channel.name,
+              avatarImageUrl: widget.channel.avatarImageUrl,
+              isLive: true,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openCategory() async {
+    final categoryName = widget.channel.category.trim();
+    if (categoryName.isEmpty || categoryName.toLowerCase() == "live") {
+      return;
+    }
+
+    await _openDestination(() async {
+      try {
+        final page = await widget.apiCache.searchCategoriesPage(
+          categoryName,
+          first: 10,
+        );
+        if (!mounted) {
+          return;
+        }
+
+        final normalizedName = categoryName.toLowerCase();
+        final matches = page.data.where(
+          (category) => category.name.trim().toLowerCase() == normalizedName,
+        );
+        final category = matches.firstOrNull;
+        if (category == null) {
+          _showDestinationError("That category is no longer available.");
+          return;
+        }
+
+        final destination = BrowseCategory(
+          id: category.id,
+          name: category.name,
+          viewerCount: 0,
+          viewers: "--",
+          imageUrl: twitchBoxArtUrl(category.boxArtUrl),
+          colors: colorsForText(category.id),
+        );
+        await Navigator.of(context, rootNavigator: true).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => CategoryStreamsScreen(
+              apiCache: widget.apiCache,
+              category: destination,
+            ),
+          ),
+        );
+      } on Object catch (error) {
+        if (mounted) {
+          _showDestinationError(browseErrorMessage(error));
+        }
+      }
+    });
+  }
+
+  Future<void> _openDestination(Future<void> Function() open) async {
+    if (_openingDestination) {
+      return;
+    }
+    _openingDestination = true;
+    _controlsTimer?.cancel();
+    final resumeOnReturn = _playWhenReady;
+    try {
+      if (resumeOnReturn) {
+        await _playerController?.pause();
+      }
+      if (!mounted) {
+        return;
+      }
+      await open();
+    } finally {
+      _openingDestination = false;
+      if (mounted && resumeOnReturn) {
+        await _playerController?.play();
+      }
+    }
+  }
+
+  void _showDestinationError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
@@ -405,6 +515,8 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       onRefresh: () => _loadPlaybackUri(refresh: true),
       onToggleLandscape: () => _toggleLandscape(isLandscape: isLandscape),
       onSettings: _showQualitySettings,
+      onProfileTap: () => unawaited(_openChannel()),
+      onCategoryTap: () => unawaited(_openCategory()),
     );
 
     return Scaffold(
@@ -467,6 +579,8 @@ class _PlayerViewport extends StatelessWidget {
     required this.onRefresh,
     required this.onToggleLandscape,
     required this.onSettings,
+    required this.onProfileTap,
+    required this.onCategoryTap,
   });
 
   final StreamChannel channel;
@@ -490,6 +604,8 @@ class _PlayerViewport extends StatelessWidget {
   final Future<void> Function() onRefresh;
   final Future<void> Function() onToggleLandscape;
   final Future<void> Function() onSettings;
+  final VoidCallback onProfileTap;
+  final VoidCallback onCategoryTap;
 
   @override
   Widget build(BuildContext context) {
@@ -523,7 +639,12 @@ class _PlayerViewport extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  const IgnorePointer(child: _PlayerScrim()),
+                  AnimatedOpacity(
+                    key: const ValueKey("player_scrim"),
+                    opacity: controlsVisible ? 1 : 0,
+                    duration: const Duration(milliseconds: 160),
+                    child: const IgnorePointer(child: _PlayerScrim()),
+                  ),
                   Positioned.fill(
                     child: GestureDetector(
                       key: const ValueKey("player_surface_tap_target"),
@@ -549,6 +670,8 @@ class _PlayerViewport extends StatelessWidget {
                               channel: channel,
                               onBack: onBack,
                               onSettings: onSettings,
+                              onProfileTap: onProfileTap,
+                              onCategoryTap: onCategoryTap,
                             ),
                             _PlayerFooter(
                               viewers: viewerText,
@@ -633,6 +756,8 @@ class _PlayerViewport extends StatelessWidget {
     properties.add(StringProperty("viewerText", viewerText));
     properties.add(DiagnosticsProperty<Duration?>("liveDuration", liveDuration));
     properties.add(StringProperty("errorMessage", errorMessage));
+    properties.add(ObjectFlagProperty<VoidCallback>.has("onProfileTap", onProfileTap));
+    properties.add(ObjectFlagProperty<VoidCallback>.has("onCategoryTap", onCategoryTap));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onSurfaceTap", onSurfaceTap));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onBack", onBack));
     properties.add(
@@ -728,11 +853,15 @@ class _PlayerHeader extends StatelessWidget {
     required this.channel,
     required this.onBack,
     required this.onSettings,
+    required this.onProfileTap,
+    required this.onCategoryTap,
   });
 
   final StreamChannel channel;
   final VoidCallback onBack;
   final Future<void> Function() onSettings;
+  final VoidCallback onProfileTap;
+  final VoidCallback onCategoryTap;
 
   @override
   Widget build(BuildContext context) => Row(
@@ -745,12 +874,21 @@ class _PlayerHeader extends StatelessWidget {
         onPressed: onBack,
       ),
       const SizedBox(width: AppSpacing.xs),
-      AvatarRing(
-        key: const ValueKey("player_avatar"),
-        initials: channel.initials,
-        size: 36,
-        avatarColors: channel.avatarColors,
-        imageUrl: channel.avatarImageUrl,
+      Semantics(
+        button: true,
+        label: "Open ${channel.name} channel",
+        child: GestureDetector(
+          key: const ValueKey("player_profile_button"),
+          behavior: HitTestBehavior.opaque,
+          onTap: onProfileTap,
+          child: AvatarRing(
+            key: const ValueKey("player_avatar"),
+            initials: channel.initials,
+            size: 36,
+            avatarColors: channel.avatarColors,
+            imageUrl: channel.avatarImageUrl,
+          ),
+        ),
       ),
       const SizedBox(width: AppSpacing.xs),
       Expanded(
@@ -784,28 +922,37 @@ class _PlayerHeader extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 2),
-            Row(
-              key: const ValueKey("player_category_row"),
-              children: [
-                Icon(
-                  Icons.category_rounded,
-                  color: Colors.white.withValues(alpha: 0.78),
-                  size: 14,
-                ),
-                const SizedBox(width: 4),
-                Flexible(
-                  child: Text(
-                    channel.category,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
+            Semantics(
+              button: true,
+              label: "Open ${channel.category} category",
+              child: GestureDetector(
+                key: const ValueKey("player_category_button"),
+                behavior: HitTestBehavior.opaque,
+                onTap: onCategoryTap,
+                child: Row(
+                  key: const ValueKey("player_category_row"),
+                  children: [
+                    Icon(
+                      Icons.category_rounded,
                       color: Colors.white.withValues(alpha: 0.78),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
+                      size: 14,
                     ),
-                  ),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        channel.category,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.78),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ],
         ),
@@ -824,6 +971,8 @@ class _PlayerHeader extends StatelessWidget {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<StreamChannel>("channel", channel));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onBack", onBack));
+    properties.add(ObjectFlagProperty<VoidCallback>.has("onProfileTap", onProfileTap));
+    properties.add(ObjectFlagProperty<VoidCallback>.has("onCategoryTap", onCategoryTap));
     properties.add(
       ObjectFlagProperty<Future<void> Function()>.has("onSettings", onSettings),
     );
@@ -855,12 +1004,8 @@ class _PlayerFooter extends StatelessWidget {
     children: [
       const SizedBox.square(
         dimension: 40,
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: Padding(
-            padding: EdgeInsets.only(left: 19),
-            child: _LiveDot(key: ValueKey("player_live_dot")),
-          ),
+        child: Center(
+          child: _LiveDot(key: ValueKey("player_live_dot")),
         ),
       ),
       Expanded(
@@ -1068,14 +1213,25 @@ class _QualitySettingsSheet extends StatelessWidget {
                 AppSpacing.lg,
                 0,
                 AppSpacing.lg,
-                AppSpacing.sm,
+                AppSpacing.md,
               ),
-              child: Text(
-                "Quality",
-                style: theme.textTheme.titleSmall?.copyWith(
-                  color: colors.onSurfaceVariant,
+              child: Semantics(
+                header: true,
+                child: Text(
+                  "Quality",
+                  key: const ValueKey("player_quality_heading"),
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    color: colors.onSurface,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
+            ),
+            const Divider(
+              key: ValueKey("player_quality_heading_divider"),
+              height: 1,
+              indent: AppSpacing.lg,
+              endIndent: AppSpacing.lg,
             ),
             Flexible(
               child: ListView(
@@ -1186,6 +1342,11 @@ class _OverlayIconButton extends StatelessWidget {
     onPressed: onPressed,
     padding: EdgeInsets.zero,
     constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+    style: IconButton.styleFrom(
+      minimumSize: const Size.square(40),
+      maximumSize: const Size.square(40),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    ),
     color: Colors.white,
     iconSize: 27,
     icon: Icon(icon),

@@ -77,7 +77,6 @@ internal class TwitchLatencySession(
 
         val parsedTranscRMs = parsedTranscR.roundToLong()
         logger("latency parsed transc_r=$parsedTranscRMs")
-        transcR.set(parsedTranscRMs)
 
         val offsetMs = serverOffset.get()
         if (offsetMs == UNSET_VALUE) {
@@ -91,6 +90,9 @@ internal class TwitchLatencySession(
             return
         }
 
+        // Resume/jump freshness barriers must be anchored to accepted metadata.
+        // A rejected future or otherwise invalid value must not poison them.
+        transcR.set(parsedTranscRMs)
         displayedLatency.set(latencyMs)
         logger("latency accepted=${latencyMs}ms")
         onAcceptedLatency(latencyMs)

@@ -1,4 +1,5 @@
 import "dart:async";
+import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
@@ -9,6 +10,8 @@ import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flow/shared/widgets/avatar_ring.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
+import "package:http/http.dart" as http;
+import "package:http/testing.dart";
 
 void main() {
   testWidgets("shows measured latency and keeps playback controls independent", (
@@ -99,6 +102,7 @@ void main() {
     expect(topRow.left, closeTo(bottomRow.left, 0.01));
     expect(topRow.right, closeTo(bottomRow.right, 0.01));
     expect(centerControl.center, viewport.center);
+    _expectHorizontallyCenteredOverlay(tester, viewport);
     expect(tester.takeException(), isNull);
   });
 
@@ -138,6 +142,7 @@ void main() {
     expect(bottomRow.right, 756);
     expect(topRow.top, 20);
     expect(bottomRow.bottom, 380);
+    _expectHorizontallyCenteredOverlay(tester, viewport);
   });
 
   testWidgets("rotating preserves the platform player and playback session", (tester) async {
@@ -170,6 +175,50 @@ void main() {
     expect(playbackLoads, 1);
     expect(player._loadedUris, isEmpty);
     expect(find.byKey(const ValueKey("player_chrome_landscape")), findsOneWidget);
+  });
+
+  testWidgets("scrim fades with controls in portrait and landscape", (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final player = _FakePlayerController();
+    await tester.pumpWidget(_playerApp(player: player));
+    await tester.pump();
+
+    double scrimOpacity() => tester
+        .widget<AnimatedOpacity>(
+          find.byKey(const ValueKey("player_scrim")),
+        )
+        .opacity;
+
+    Future<void> toggleOverlay() async {
+      final viewport = tester.getRect(
+        find.byKey(const ValueKey("player_viewport")),
+      );
+      await tester.tapAt(
+        Offset(viewport.left + 100, viewport.center.dy),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+
+    expect(scrimOpacity(), 1);
+    await toggleOverlay();
+    expect(scrimOpacity(), 0);
+    await toggleOverlay();
+    expect(scrimOpacity(), 1);
+
+    tester.view.physicalSize = const Size(800, 400);
+    await tester.pump();
+    expect(find.byKey(const ValueKey("player_chrome_landscape")), findsOneWidget);
+    expect(scrimOpacity(), 1);
+
+    await toggleOverlay();
+    expect(scrimOpacity(), 0);
+    await toggleOverlay();
+    expect(scrimOpacity(), 1);
   });
 
   testWidgets("uses compact aligned chrome and exposes quality selection", (tester) async {
@@ -239,6 +288,15 @@ void main() {
     expect(find.text("Choose the stream resolution."), findsNothing);
     expect(find.byKey(const ValueKey("player_quality_auto")), findsOneWidget);
     expect(find.byKey(const ValueKey("player_quality_video:720")), findsOneWidget);
+    final qualityHeading = tester.widget<Text>(
+      find.byKey(const ValueKey("player_quality_heading")),
+    );
+    expect(qualityHeading.style?.fontSize, 18);
+    expect(qualityHeading.style?.fontWeight, FontWeight.w700);
+    expect(
+      find.byKey(const ValueKey("player_quality_heading_divider")),
+      findsOneWidget,
+    );
     final qualityTile = tester.widget<ListTile>(
       find.byKey(const ValueKey("player_quality_video:720")),
     );
@@ -339,6 +397,100 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(player._selectedQualityIds, ["video:720"]);
+  });
+
+  testWidgets("opens the streamer channel from the player profile", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final player = _FakePlayerController();
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        apiCache: _navigationApiCache(),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey("player_profile_button")));
+    await _pumpNavigation(tester);
+
+    expect(find.byKey(const ValueKey("channel_page_creator")), findsOneWidget);
+    expect(player._pauseCount, 1);
+    expect(player._playCount, 0);
+
+    await tester.pageBack();
+    await _pumpNavigation(tester);
+    expect(player._playCount, 1);
+  });
+
+  testWidgets("opens the exact category from the player metadata", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final player = _FakePlayerController();
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        apiCache: _navigationApiCache(),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey("player_category_button")));
+    await _pumpNavigation(tester);
+
+    expect(
+      find.byKey(const ValueKey("category_streams_page_Just Chatting")),
+      findsOneWidget,
+    );
+    expect(player._pauseCount, 1);
+    expect(player._playCount, 0);
+
+    await tester.pageBack();
+    await _pumpNavigation(tester);
+    expect(player._playCount, 1);
+  });
+
+  testWidgets("pauses a player that attaches behind an open destination", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final player = _FakePlayerController();
+    final playbackUri = Completer<Uri>();
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        apiCache: _navigationApiCache(),
+        playbackUriLoader: (_) => playbackUri.future,
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey("player_profile_button")));
+    await _pumpNavigation(tester);
+    expect(find.byKey(const ValueKey("channel_page_creator")), findsOneWidget);
+    expect(player._pauseCount, 0);
+
+    playbackUri.complete(Uri.parse("https://example.com/late-live.m3u8"));
+    await _pumpNavigation(tester);
+    expect(player._pauseCount, 1);
+
+    await tester.pageBack();
+    await _pumpNavigation(tester);
+    expect(player._playCount, 1);
   });
 
   testWidgets("updates viewers separately and freezes latency while paused", (tester) async {
@@ -558,8 +710,44 @@ void main() {
   });
 }
 
+void _expectHorizontallyCenteredOverlay(WidgetTester tester, Rect viewport) {
+  final topRow = tester.getRect(find.byKey(const ValueKey("player_top_row")));
+  final bottomRow = tester.getRect(find.byKey(const ValueKey("player_bottom_row")));
+  final back = tester.getRect(find.byKey(const ValueKey("player_back_button")));
+  final liveDot = tester.getRect(find.byKey(const ValueKey("player_live_dot")));
+  final settings = tester.getRect(
+    find.byKey(const ValueKey("player_settings_button")),
+  );
+  final orientation = tester.getRect(
+    find.byKey(const ValueKey("player_orientation_button")),
+  );
+
+  expect(topRow.center.dx, closeTo(viewport.center.dx, 0.01));
+  expect(bottomRow.center.dx, closeTo(viewport.center.dx, 0.01));
+  expect(back.size, const Size.square(40));
+  expect(settings.size, const Size.square(40));
+  expect(orientation.size, const Size.square(40));
+  expect(back.center.dx, closeTo(liveDot.center.dx, 0.01));
+  expect(settings.center.dx, closeTo(orientation.center.dx, 0.01));
+  expect(
+    (back.center.dx + settings.center.dx) / 2,
+    closeTo(viewport.center.dx, 0.01),
+  );
+  expect(
+    (liveDot.center.dx + orientation.center.dx) / 2,
+    closeTo(viewport.center.dx, 0.01),
+  );
+}
+
+Future<void> _pumpNavigation(WidgetTester tester) async {
+  for (var index = 0; index < 8; index++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+}
+
 Widget _playerApp({
   required _FakePlayerController player,
+  TwitchApiCache? apiCache,
   PlayerDisplayModeController? displayMode,
   PlaybackUriLoader? playbackUriLoader,
   ViewerCountLoader? viewerCountLoader,
@@ -567,12 +755,14 @@ Widget _playerApp({
 }) => MaterialApp(
   theme: buildFlowTheme(Brightness.dark),
   home: StreamPlayerScreen(
-    apiCache: TwitchApiCache(
-      clientLoader: () async => TwitchApiClient(
-        clientId: "client",
-        accessToken: "token",
-      ),
-    ),
+    apiCache:
+        apiCache ??
+        TwitchApiCache(
+          clientLoader: () async => TwitchApiClient(
+            clientId: "client",
+            accessToken: "token",
+          ),
+        ),
     channel: StreamChannel(
       id: "creator-1",
       login: "creator",
@@ -596,6 +786,75 @@ Widget _playerApp({
       onSurfaceCreated: onSurfaceCreated,
     ),
   ),
+);
+
+TwitchApiCache _navigationApiCache() => TwitchApiCache(
+  clientLoader: () async => TwitchApiClient(
+    clientId: "client",
+    accessToken: "token",
+    httpClient: MockClient((request) async {
+      final body = jsonDecode(request.body) as Map<String, Object?>;
+      final query = body["query"] as String? ?? "";
+      if (query.contains("FlowChannelDetails")) {
+        return _jsonResponse({
+          "data": {
+            "user": {
+              "id": "creator-1",
+              "login": "creator",
+              "displayName": "Creator",
+              "description": "",
+              "profileImageURL": null,
+              "followers": {"totalCount": 0},
+              "stream": null,
+              "videos": {
+                "edges": const <Object?>[],
+                "pageInfo": {"hasNextPage": false},
+              },
+            },
+          },
+        });
+      }
+      if (query.contains("FlowSearchCategories")) {
+        return _jsonResponse({
+          "data": {
+            "searchCategories": {
+              "edges": [
+                {
+                  "cursor": null,
+                  "node": {
+                    "id": "509658",
+                    "displayName": "Just Chatting",
+                    "boxArtURL":
+                        "https://static-cdn.jtvnw.net/ttv-boxart/509658-{width}x{height}.jpg",
+                  },
+                },
+              ],
+              "pageInfo": {"hasNextPage": false},
+            },
+          },
+        });
+      }
+      if (query.contains("FlowGameStreams")) {
+        return _jsonResponse({
+          "data": {
+            "game": {
+              "streams": {
+                "edges": const <Object?>[],
+                "pageInfo": {"hasNextPage": false},
+              },
+            },
+          },
+        });
+      }
+      throw StateError("Unexpected GraphQL request: $query");
+    }),
+  ),
+);
+
+http.Response _jsonResponse(Map<String, Object?> body) => http.Response(
+  jsonEncode(body),
+  200,
+  headers: {"content-type": "application/json"},
 );
 
 class _FakePlayerSurface extends StatefulWidget {
@@ -630,6 +889,8 @@ class _FakePlayerController implements TwitchPlayerController {
   final _loadedUris = <Uri>[];
   int _jumpToLiveCount = 0;
   int _toggleCount = 0;
+  int _pauseCount = 0;
+  int _playCount = 0;
 
   @override
   Stream<TwitchPlayerEvent> get events => _events.stream;
@@ -647,10 +908,14 @@ class _FakePlayerController implements TwitchPlayerController {
   }
 
   @override
-  Future<void> pause() async {}
+  Future<void> pause() async {
+    _pauseCount++;
+  }
 
   @override
-  Future<void> play() async {}
+  Future<void> play() async {
+    _playCount++;
+  }
 
   @override
   Future<void> setQuality(String id) async {

@@ -188,7 +188,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
     unawaited(
       Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
-          builder: (_) => _CategoryStreamsScreen(
+          builder: (_) => CategoryStreamsScreen(
             authController: _authController,
             apiCache: _apiCache,
             category: category,
@@ -468,7 +468,7 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
     unawaited(
       Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
-          builder: (_) => _CategoryStreamsScreen(
+          builder: (_) => CategoryStreamsScreen(
             authController: widget.authController,
             apiCache: widget.apiCache,
             category: category,
@@ -1068,26 +1068,27 @@ class _SearchCategoryRow extends StatelessWidget {
   }
 }
 
-class _CategoryStreamsScreen extends StatefulWidget {
-  const _CategoryStreamsScreen({
-    required this.authController,
+class CategoryStreamsScreen extends StatefulWidget {
+  const CategoryStreamsScreen({
     required this.apiCache,
     required this.category,
+    super.key,
+    this.authController,
     this.categoryStreamsStore,
   });
 
-  final TwitchAuthController authController;
+  final TwitchAuthController? authController;
   final TwitchApiCache apiCache;
   final BrowseCategory category;
   final CategoryStreamsStore? categoryStreamsStore;
 
   @override
-  State<_CategoryStreamsScreen> createState() => _CategoryStreamsScreenState();
+  State<CategoryStreamsScreen> createState() => _CategoryStreamsScreenState();
 
   @override
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
-    properties.add(DiagnosticsProperty<TwitchAuthController>("authController", authController));
+    properties.add(DiagnosticsProperty<TwitchAuthController?>("authController", authController));
     properties.add(DiagnosticsProperty<TwitchApiCache>("apiCache", apiCache));
     properties.add(DiagnosticsProperty<BrowseCategory>("category", category));
     properties.add(
@@ -1099,7 +1100,7 @@ class _CategoryStreamsScreen extends StatefulWidget {
   }
 }
 
-class _CategoryStreamsScreenState extends State<_CategoryStreamsScreen> {
+class _CategoryStreamsScreenState extends State<CategoryStreamsScreen> {
   final ScrollController _scrollController = ScrollController();
   late final CategoryStreamsStore _store;
 
