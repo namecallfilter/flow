@@ -6,6 +6,7 @@ import "package:flow/app/theme.dart";
 import "package:flow/features/player/media3_player_controller.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
+import "package:flow/shared/widgets/avatar_ring.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 
@@ -37,7 +38,11 @@ void main() {
     expect(find.text("--"), findsOneWidget);
     player.emit(const TwitchLatencyEvent(2050));
     player.emit(
-      const TwitchPlaybackStateEvent(isPlaying: false, isBuffering: false),
+      const TwitchPlaybackStateEvent(
+        isPlaying: false,
+        isBuffering: true,
+        playWhenReady: false,
+      ),
     );
     await tester.pump();
     expect(find.text("2.05s"), findsOneWidget);
@@ -74,7 +79,11 @@ void main() {
     await tester.pumpWidget(_playerApp(player: player));
     await tester.pump();
     player.emit(
-      const TwitchPlaybackStateEvent(isPlaying: false, isBuffering: false),
+      const TwitchPlaybackStateEvent(
+        isPlaying: false,
+        isBuffering: false,
+        playWhenReady: false,
+      ),
     );
     await tester.pump();
 
@@ -110,7 +119,11 @@ void main() {
     await tester.pumpWidget(_playerApp(player: player));
     await tester.pump();
     player.emit(
-      const TwitchPlaybackStateEvent(isPlaying: false, isBuffering: false),
+      const TwitchPlaybackStateEvent(
+        isPlaying: false,
+        isBuffering: false,
+        playWhenReady: false,
+      ),
     );
     await tester.pump();
 
@@ -126,12 +139,185 @@ void main() {
     expect(topRow.top, 20);
     expect(bottomRow.bottom, 380);
   });
+
+  testWidgets("rotating preserves the platform player and playback session", (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final player = _FakePlayerController();
+    var surfaceCreations = 0;
+    var playbackLoads = 0;
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        onSurfaceCreated: () => surfaceCreations++,
+        playbackUriLoader: (_) async {
+          playbackLoads++;
+          return Uri.parse("https://example.com/live.m3u8");
+        },
+      ),
+    );
+    await tester.pump();
+    expect(surfaceCreations, 1);
+    expect(playbackLoads, 1);
+
+    tester.view.physicalSize = const Size(800, 400);
+    await tester.pump();
+
+    expect(surfaceCreations, 1);
+    expect(playbackLoads, 1);
+    expect(player._loadedUris, isEmpty);
+    expect(find.byKey(const ValueKey("player_chrome_landscape")), findsOneWidget);
+  });
+
+  testWidgets("uses compact aligned chrome and exposes quality selection", (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final player = _FakePlayerController();
+    await tester.pumpWidget(_playerApp(player: player));
+    await tester.pump();
+    player.emit(
+      const TwitchPlaybackStateEvent(
+        isPlaying: false,
+        isBuffering: false,
+        playWhenReady: false,
+      ),
+    );
+    player.emit(
+      const TwitchQualitiesEvent(
+        selectedId: "auto",
+        qualities: [
+          TwitchQualityOption(
+            id: "video:720",
+            label: "720p60",
+            width: 1280,
+            height: 720,
+            frameRate: 60,
+            bitrate: 4500000,
+          ),
+        ],
+      ),
+    );
+    await tester.pump();
+
+    final viewport = tester.getRect(find.byKey(const ValueKey("player_viewport")));
+    final topRow = tester.getRect(find.byKey(const ValueKey("player_top_row")));
+    final bottomRow = tester.getRect(find.byKey(const ValueKey("player_bottom_row")));
+    final back = tester.getRect(find.byKey(const ValueKey("player_back_button")));
+    final liveDot = tester.getRect(find.byKey(const ValueKey("player_live_dot")));
+    final settings = tester.getRect(find.byKey(const ValueKey("player_settings_button")));
+    final orientation = tester.getRect(
+      find.byKey(const ValueKey("player_orientation_button")),
+    );
+
+    expect(topRow.top - viewport.top, 4);
+    expect(viewport.bottom - bottomRow.bottom, 4);
+    expect(topRow.left, 4);
+    expect(topRow.right, 396);
+    expect(back.center.dx, liveDot.center.dx);
+    expect(settings.center.dx, orientation.center.dx);
+    expect(tester.widget<AvatarRing>(find.byKey(const ValueKey("player_avatar"))).isLive, false);
+    final nameAndTitle = tester.widget<Text>(
+      find.byKey(const ValueKey("player_name_and_title")),
+    );
+    expect(nameAndTitle.textSpan?.toPlainText(), "Creator  A precise stream title");
+    expect(find.byIcon(Icons.category_rounded), findsOneWidget);
+    final playButton = tester.widget<IconButton>(
+      find.byKey(const ValueKey("player_play_pause_button")),
+    );
+    expect(playButton.style?.backgroundColor?.resolve({}), Colors.transparent);
+
+    await tester.tap(find.byKey(const ValueKey("player_settings_button")));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("player_quality_auto")), findsOneWidget);
+    expect(find.byKey(const ValueKey("player_quality_video:720")), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey("player_quality_video:720")));
+    await tester.pumpAndSettle();
+    expect(player._selectedQualityIds, ["video:720"]);
+  });
+
+  testWidgets("updates viewers separately and freezes latency while paused", (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final player = _FakePlayerController();
+    var playbackLoads = 0;
+    var viewerLoads = 0;
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        playbackUriLoader: (_) async {
+          playbackLoads++;
+          return Uri.parse("https://example.com/live.m3u8");
+        },
+        viewerCountLoader: (_) async {
+          viewerLoads++;
+          return viewerLoads == 1 ? 15000 : 20000;
+        },
+      ),
+    );
+    await tester.pump();
+    expect(find.text("15K"), findsOneWidget);
+
+    player.emit(
+      const TwitchPlaybackStateEvent(
+        isPlaying: true,
+        isBuffering: false,
+        playWhenReady: true,
+      ),
+    );
+    player.emit(const TwitchLatencyEvent(2000));
+    await tester.pump();
+    expect(find.text("2.00s"), findsOneWidget);
+
+    player.emit(
+      const TwitchPlaybackStateEvent(
+        isPlaying: false,
+        isBuffering: false,
+        playWhenReady: false,
+      ),
+    );
+    player.emit(const TwitchLatencyEvent(9000));
+    await tester.pump();
+    expect(find.text("2.00s"), findsOneWidget);
+    expect(find.text("9.00s"), findsNothing);
+    expect(find.byTooltip("Play"), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+
+    player.emit(
+      const TwitchPlaybackStateEvent(
+        isPlaying: false,
+        isBuffering: true,
+        playWhenReady: true,
+      ),
+    );
+    await tester.pump();
+    player.emit(const TwitchLatencyEvent(1500));
+    await tester.pump();
+    expect(find.text("1.50s"), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pump();
+    expect(find.text("20K"), findsOneWidget);
+    expect(viewerLoads, 2);
+    expect(playbackLoads, 1);
+    expect(player._loadedUris, isEmpty);
+  });
 }
 
 Widget _playerApp({
   required _FakePlayerController player,
   PlayerDisplayModeController? displayMode,
   PlaybackUriLoader? playbackUriLoader,
+  ViewerCountLoader? viewerCountLoader,
+  VoidCallback? onSurfaceCreated,
 }) => MaterialApp(
   theme: buildFlowTheme(Brightness.dark),
   home: StreamPlayerScreen(
@@ -155,10 +341,14 @@ Widget _playerApp({
       thumbnailColors: const [Colors.black, Colors.grey],
     ),
     playbackUriLoader: playbackUriLoader ?? (_) async => Uri.parse("https://example.com/live.m3u8"),
+    viewerCountLoader: viewerCountLoader ?? (_) async => null,
     displayModeController: displayMode ?? _FakeDisplayModeController(),
     clock: () => DateTime(2026, 7, 9, 20, 2, 3),
-    playerSurfaceBuilder: (context, uri, onControllerCreated) =>
-        _FakePlayerSurface(player: player, onControllerCreated: onControllerCreated),
+    playerSurfaceBuilder: (context, uri, onControllerCreated) => _FakePlayerSurface(
+      player: player,
+      onControllerCreated: onControllerCreated,
+      onSurfaceCreated: onSurfaceCreated,
+    ),
   ),
 );
 
@@ -166,10 +356,12 @@ class _FakePlayerSurface extends StatefulWidget {
   const _FakePlayerSurface({
     required this._player,
     required this._onControllerCreated,
+    this._onSurfaceCreated,
   });
 
   final TwitchPlayerController _player;
   final ValueChanged<TwitchPlayerController> _onControllerCreated;
+  final VoidCallback? _onSurfaceCreated;
 
   @override
   State<_FakePlayerSurface> createState() => _FakePlayerSurfaceState();
@@ -179,6 +371,7 @@ class _FakePlayerSurfaceState extends State<_FakePlayerSurface> {
   @override
   void initState() {
     super.initState();
+    widget._onSurfaceCreated?.call();
     widget._onControllerCreated(widget._player);
   }
 
@@ -214,9 +407,16 @@ class _FakePlayerController implements TwitchPlayerController {
   Future<void> play() async {}
 
   @override
+  Future<void> setQuality(String id) async {
+    _selectedQualityIds.add(id);
+  }
+
+  @override
   Future<void> togglePlayback() async {
     _toggleCount++;
   }
+
+  final _selectedQualityIds = <String>[];
 }
 
 class _FakeDisplayModeController implements PlayerDisplayModeController {

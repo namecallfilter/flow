@@ -6,6 +6,7 @@ import "package:flow/app/spacing.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/player/media3_player_controller.dart";
 import "package:flow/features/player/media3_player_view.dart";
+import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flow/shared/widgets/avatar_ring.dart";
 import "package:flutter/foundation.dart";
@@ -13,6 +14,7 @@ import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 
 typedef PlaybackUriLoader = Future<Uri> Function(String login);
+typedef ViewerCountLoader = Future<int?> Function(String login);
 typedef PlayerSurfaceBuilder =
     Widget Function(
       BuildContext context,
@@ -57,6 +59,7 @@ class StreamPlayerScreen extends StatefulWidget {
     required this.channel,
     super.key,
     this.playbackUriLoader,
+    this.viewerCountLoader,
     this.playerSurfaceBuilder,
     this.displayModeController = const SystemPlayerDisplayModeController(),
     this.clock = DateTime.now,
@@ -65,6 +68,7 @@ class StreamPlayerScreen extends StatefulWidget {
   final TwitchApiCache apiCache;
   final StreamChannel channel;
   final PlaybackUriLoader? playbackUriLoader;
+  final ViewerCountLoader? viewerCountLoader;
   final PlayerSurfaceBuilder? playerSurfaceBuilder;
   final PlayerDisplayModeController displayModeController;
   final DateTime Function() clock;
@@ -79,6 +83,9 @@ class StreamPlayerScreen extends StatefulWidget {
     properties.add(DiagnosticsProperty<StreamChannel>("channel", channel));
     properties.add(
       ObjectFlagProperty<PlaybackUriLoader?>.has("playbackUriLoader", playbackUriLoader),
+    );
+    properties.add(
+      ObjectFlagProperty<ViewerCountLoader?>.has("viewerCountLoader", viewerCountLoader),
     );
     properties.add(
       ObjectFlagProperty<PlayerSurfaceBuilder?>.has(
@@ -101,22 +108,36 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   StreamSubscription<TwitchPlayerEvent>? _playerEvents;
   Timer? _controlsTimer;
   Timer? _uptimeTimer;
+  Timer? _viewerTimer;
   Uri? _playbackUri;
   int? _latencyMs;
+  List<TwitchQualityOption> _qualities = const [];
+  String _selectedQualityId = "auto";
+  late String _viewerText;
   String? _errorMessage;
   bool _isPlaying = false;
   bool _isBuffering = true;
+  bool _playWhenReady = true;
   bool _controlsVisible = true;
   bool _wasPlayingBeforeBackground = false;
+  bool _viewerRefreshInFlight = false;
+  bool _appIsResumed = true;
   int _loadGeneration = 0;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _viewerText = widget.channel.viewers;
     _uptimeTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted && widget.channel.startedAt != null) {
         setState(() {});
+      }
+    });
+    unawaited(_refreshViewerCount());
+    _viewerTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (_appIsResumed) {
+        unawaited(_refreshViewerCount());
       }
     });
     unawaited(_loadPlaybackUri());
@@ -124,18 +145,23 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    final controller = _playerController;
-    if (controller == null) {
-      return;
-    }
     if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
-      if (_isPlaying) {
+      _appIsResumed = false;
+      final controller = _playerController;
+      if (controller == null) {
+        return;
+      }
+      if (_playWhenReady) {
         _wasPlayingBeforeBackground = true;
       }
       unawaited(controller.pause());
-    } else if (state == AppLifecycleState.resumed && _wasPlayingBeforeBackground) {
-      _wasPlayingBeforeBackground = false;
-      unawaited(controller.play());
+    } else if (state == AppLifecycleState.resumed) {
+      _appIsResumed = true;
+      unawaited(_refreshViewerCount());
+      if (_wasPlayingBeforeBackground && _playerController != null) {
+        _wasPlayingBeforeBackground = false;
+        unawaited(_playerController!.play());
+      }
     }
   }
 
@@ -144,6 +170,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     WidgetsBinding.instance.removeObserver(this);
     _controlsTimer?.cancel();
     _uptimeTimer?.cancel();
+    _viewerTimer?.cancel();
     unawaited(_playerEvents?.cancel());
     unawaited(widget.displayModeController.restore());
     super.dispose();
@@ -186,6 +213,35 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     }
   }
 
+  Future<void> _refreshViewerCount() async {
+    if (_viewerRefreshInFlight) {
+      return;
+    }
+    _viewerRefreshInFlight = true;
+    try {
+      final loader = widget.viewerCountLoader;
+      final viewerCount = loader == null
+          ? await _fetchViewerCount(widget.channel.login)
+          : await loader(widget.channel.login);
+      if (mounted && viewerCount != null && viewerCount >= 0) {
+        setState(() => _viewerText = formatCompactCount(viewerCount));
+      }
+    } on Object {
+      // Viewer count is supplemental; preserve the last known value on failure.
+    } finally {
+      _viewerRefreshInFlight = false;
+    }
+  }
+
+  Future<int?> _fetchViewerCount(String login) async {
+    final page = await widget.apiCache.fetchLiveStreamsPage(
+      first: 1,
+      userLogins: [login],
+      refresh: true,
+    );
+    return page.data.isEmpty ? null : page.data.first.viewerCount;
+  }
+
   void _handleControllerCreated(TwitchPlayerController controller) {
     unawaited(_playerEvents?.cancel());
     _playerController = controller;
@@ -209,12 +265,19 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     }
     switch (event) {
       case TwitchLatencyEvent(:final latencyMs):
-        setState(() => _latencyMs = latencyMs);
-      case TwitchPlaybackStateEvent(:final isPlaying, :final isBuffering):
+        if (_playWhenReady) {
+          setState(() => _latencyMs = latencyMs);
+        }
+      case TwitchPlaybackStateEvent(
+        :final isPlaying,
+        :final isBuffering,
+        :final playWhenReady,
+      ):
         setState(() {
           _isPlaying = isPlaying;
           _isBuffering = isBuffering;
-          if (!isPlaying || isBuffering) {
+          _playWhenReady = playWhenReady;
+          if (!playWhenReady || isBuffering) {
             _controlsVisible = true;
           }
         });
@@ -228,6 +291,11 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
           _isBuffering = false;
           _controlsVisible = true;
           _errorMessage = message;
+        });
+      case TwitchQualitiesEvent(:final qualities, :final selectedId):
+        setState(() {
+          _qualities = qualities;
+          _selectedQualityId = selectedId;
         });
     }
   }
@@ -266,6 +334,49 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     await widget.displayModeController.setLandscape(landscape: !isLandscape);
   }
 
+  Future<void> _showQualitySettings() async {
+    _controlsTimer?.cancel();
+    setState(() => _controlsVisible = true);
+    final selectedId = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text("Video quality"),
+        children: [
+          _QualityOptionTile(
+            id: "auto",
+            label: "Auto",
+            selected: _selectedQualityId == "auto",
+            onSelected: (id) => Navigator.of(dialogContext).pop(id),
+          ),
+          for (final quality in _qualities)
+            _QualityOptionTile(
+              id: quality.id,
+              label: quality.label,
+              selected: _selectedQualityId == quality.id,
+              onSelected: (id) => Navigator.of(dialogContext).pop(id),
+            ),
+        ],
+      ),
+    );
+    if (!mounted) {
+      return;
+    }
+    if (selectedId != null) {
+      try {
+        await _playerController?.setQuality(selectedId);
+      } on Object catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_playerErrorMessage(error))),
+          );
+        }
+      }
+    }
+    if (_isPlaying) {
+      _scheduleControlsHide();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
@@ -279,7 +390,9 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       controlsVisible: _controlsVisible,
       isPlaying: _isPlaying,
       isBuffering: _isBuffering,
+      playWhenReady: _playWhenReady,
       latencyMs: _latencyMs,
+      viewerText: _viewerText,
       liveDuration: _liveDuration,
       errorMessage: _errorMessage,
       onSurfaceTap: _toggleControls,
@@ -288,6 +401,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       onJumpToLive: _jumpToLive,
       onRefresh: () => _loadPlaybackUri(refresh: true),
       onToggleLandscape: () => _toggleLandscape(isLandscape: isLandscape),
+      onSettings: _showQualitySettings,
     );
 
     return Scaffold(
@@ -298,12 +412,21 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         bottom: false,
         left: false,
         right: false,
-        child: isLandscape
-            ? SizedBox.expand(child: viewport)
-            : Align(
-                alignment: Alignment.topCenter,
-                child: AspectRatio(aspectRatio: 16 / 9, child: viewport),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final viewportHeight = isLandscape
+                ? constraints.maxHeight
+                : constraints.maxWidth * 9 / 16;
+            return Align(
+              alignment: Alignment.topCenter,
+              child: SizedBox(
+                width: constraints.maxWidth,
+                height: viewportHeight,
+                child: viewport,
               ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -328,7 +451,9 @@ class _PlayerViewport extends StatelessWidget {
     required this.controlsVisible,
     required this.isPlaying,
     required this.isBuffering,
+    required this.playWhenReady,
     required this.latencyMs,
+    required this.viewerText,
     required this.liveDuration,
     required this.errorMessage,
     required this.onSurfaceTap,
@@ -337,6 +462,7 @@ class _PlayerViewport extends StatelessWidget {
     required this.onJumpToLive,
     required this.onRefresh,
     required this.onToggleLandscape,
+    required this.onSettings,
   });
 
   final StreamChannel channel;
@@ -347,7 +473,9 @@ class _PlayerViewport extends StatelessWidget {
   final bool controlsVisible;
   final bool isPlaying;
   final bool isBuffering;
+  final bool playWhenReady;
   final int? latencyMs;
+  final String viewerText;
   final Duration? liveDuration;
   final String? errorMessage;
   final VoidCallback onSurfaceTap;
@@ -356,16 +484,17 @@ class _PlayerViewport extends StatelessWidget {
   final Future<void> Function() onJumpToLive;
   final Future<void> Function() onRefresh;
   final Future<void> Function() onToggleLandscape;
+  final Future<void> Function() onSettings;
 
   @override
   Widget build(BuildContext context) {
     final viewPadding = MediaQuery.viewPaddingOf(context);
     final horizontalPadding = isLandscape
-        ? math.max(AppSpacing.md, math.max(viewPadding.left, viewPadding.right))
-        : AppSpacing.md;
+        ? math.max(AppSpacing.xs, math.max(viewPadding.left, viewPadding.right))
+        : AppSpacing.xs;
     final verticalPadding = isLandscape
-        ? math.max(AppSpacing.md, math.max(viewPadding.top, viewPadding.bottom))
-        : AppSpacing.md;
+        ? math.max(AppSpacing.xs, math.max(viewPadding.top, viewPadding.bottom))
+        : AppSpacing.xs;
 
     return ColoredBox(
       key: const ValueKey("player_viewport"),
@@ -374,61 +503,80 @@ class _PlayerViewport extends StatelessWidget {
         fit: StackFit.expand,
         children: [
           if (playbackUri case final uri?)
-            if (playerSurfaceBuilder case final builder?)
-              builder(context, uri, onControllerCreated)
-            else
-              Media3PlayerView(uri: uri, onControllerCreated: onControllerCreated),
-          const IgnorePointer(child: _PlayerScrim()),
-          Positioned.fill(
-            child: GestureDetector(
-              key: const ValueKey("player_surface_tap_target"),
-              behavior: HitTestBehavior.opaque,
-              onTap: onSurfaceTap,
+            KeyedSubtree(
+              key: const ValueKey("player_media_surface"),
+              child: playerSurfaceBuilder == null
+                  ? Media3PlayerView(
+                      uri: uri,
+                      onControllerCreated: onControllerCreated,
+                    )
+                  : playerSurfaceBuilder!(context, uri, onControllerCreated),
             ),
-          ),
-          AnimatedOpacity(
-            opacity: controlsVisible ? 1 : 0,
-            duration: const Duration(milliseconds: 160),
-            child: IgnorePointer(
-              ignoring: !controlsVisible,
-              child: Padding(
-                key: const ValueKey("player_overlay_padding"),
-                padding: EdgeInsets.symmetric(
-                  horizontal: horizontalPadding,
-                  vertical: verticalPadding,
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    _PlayerHeader(channel: channel, onBack: onBack),
-                    _PlayerFooter(
-                      viewers: channel.viewers,
-                      liveDuration: liveDuration,
-                      latencyMs: latencyMs,
-                      isLandscape: isLandscape,
-                      onJumpToLive: onJumpToLive,
-                      onRefresh: onRefresh,
-                      onToggleLandscape: onToggleLandscape,
+          KeyedSubtree(
+            key: ValueKey("player_chrome_${isLandscape ? "landscape" : "portrait"}"),
+            child: RepaintBoundary(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  const IgnorePointer(child: _PlayerScrim()),
+                  Positioned.fill(
+                    child: GestureDetector(
+                      key: const ValueKey("player_surface_tap_target"),
+                      behavior: HitTestBehavior.opaque,
+                      onTap: onSurfaceTap,
                     ),
-                  ],
-                ),
+                  ),
+                  AnimatedOpacity(
+                    opacity: controlsVisible ? 1 : 0,
+                    duration: const Duration(milliseconds: 160),
+                    child: IgnorePointer(
+                      ignoring: !controlsVisible,
+                      child: Padding(
+                        key: const ValueKey("player_overlay_padding"),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: horizontalPadding,
+                          vertical: verticalPadding,
+                        ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            _PlayerHeader(
+                              channel: channel,
+                              onBack: onBack,
+                              onSettings: onSettings,
+                            ),
+                            _PlayerFooter(
+                              viewers: viewerText,
+                              liveDuration: liveDuration,
+                              latencyMs: latencyMs,
+                              isLandscape: isLandscape,
+                              onJumpToLive: onJumpToLive,
+                              onRefresh: onRefresh,
+                              onToggleLandscape: onToggleLandscape,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (errorMessage case final message?)
+                    Center(
+                      child: _PlayerError(message: message, onRetry: onRefresh),
+                    )
+                  else
+                    Center(
+                      key: const ValueKey("player_center_control"),
+                      child: _CenterPlaybackControl(
+                        playWhenReady: playWhenReady,
+                        isBuffering: isBuffering,
+                        visible: controlsVisible,
+                        onPressed: onTogglePlayback,
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
-          if (errorMessage case final message?)
-            Center(
-              child: _PlayerError(message: message, onRetry: onRefresh),
-            )
-          else
-            Center(
-              key: const ValueKey("player_center_control"),
-              child: _CenterPlaybackControl(
-                isPlaying: isPlaying,
-                isBuffering: isBuffering,
-                visible: controlsVisible,
-                onPressed: onTogglePlayback,
-              ),
-            ),
         ],
       ),
     );
@@ -457,7 +605,11 @@ class _PlayerViewport extends StatelessWidget {
     );
     properties.add(FlagProperty("isPlaying", value: isPlaying, ifTrue: "playing"));
     properties.add(FlagProperty("isBuffering", value: isBuffering, ifTrue: "buffering"));
+    properties.add(
+      FlagProperty("playWhenReady", value: playWhenReady, ifTrue: "play requested"),
+    );
     properties.add(IntProperty("latencyMs", latencyMs));
+    properties.add(StringProperty("viewerText", viewerText));
     properties.add(DiagnosticsProperty<Duration?>("liveDuration", liveDuration));
     properties.add(StringProperty("errorMessage", errorMessage));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onSurfaceTap", onSurfaceTap));
@@ -479,6 +631,9 @@ class _PlayerViewport extends StatelessWidget {
         "onToggleLandscape",
         onToggleLandscape,
       ),
+    );
+    properties.add(
+      ObjectFlagProperty<Future<void> Function()>.has("onSettings", onSettings),
     );
   }
 }
@@ -505,10 +660,15 @@ class _PlayerScrim extends StatelessWidget {
 }
 
 class _PlayerHeader extends StatelessWidget {
-  const _PlayerHeader({required this.channel, required this.onBack});
+  const _PlayerHeader({
+    required this.channel,
+    required this.onBack,
+    required this.onSettings,
+  });
 
   final StreamChannel channel;
   final VoidCallback onBack;
+  final Future<void> Function() onSettings;
 
   @override
   Widget build(BuildContext context) => Row(
@@ -522,44 +682,75 @@ class _PlayerHeader extends StatelessWidget {
       ),
       const SizedBox(width: AppSpacing.xs),
       AvatarRing(
+        key: const ValueKey("player_avatar"),
         initials: channel.initials,
-        size: 38,
+        size: 36,
         avatarColors: channel.avatarColors,
         imageUrl: channel.avatarImageUrl,
-        isLive: true,
-        ringWidth: 2,
       ),
-      const SizedBox(width: AppSpacing.sm),
+      const SizedBox(width: AppSpacing.xs),
       Expanded(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              channel.title.isEmpty ? channel.name : channel.title,
+            Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(
+                    text: channel.name,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  if (channel.title.isNotEmpty)
+                    TextSpan(
+                      text: "  ${channel.title}",
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.82),
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                ],
+              ),
+              key: const ValueKey("player_name_and_title"),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
                 color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w800,
-                shadows: _textShadows,
+                fontSize: 15,
               ),
             ),
             const SizedBox(height: 2),
-            Text(
-              "${channel.name} · ${channel.category}",
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.82),
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                shadows: _textShadows,
-              ),
+            Row(
+              key: const ValueKey("player_category_row"),
+              children: [
+                Icon(
+                  Icons.category_rounded,
+                  color: Colors.white.withValues(alpha: 0.78),
+                  size: 14,
+                ),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    channel.category,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.78),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
+      ),
+      _OverlayIconButton(
+        key: const ValueKey("player_settings_button"),
+        tooltip: "Video quality",
+        icon: Icons.settings_rounded,
+        onPressed: onSettings,
       ),
     ],
   );
@@ -569,6 +760,9 @@ class _PlayerHeader extends StatelessWidget {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<StreamChannel>("channel", channel));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onBack", onBack));
+    properties.add(
+      ObjectFlagProperty<Future<void> Function()>.has("onSettings", onSettings),
+    );
   }
 }
 
@@ -595,6 +789,16 @@ class _PlayerFooter extends StatelessWidget {
   Widget build(BuildContext context) => Row(
     key: const ValueKey("player_bottom_row"),
     children: [
+      const SizedBox.square(
+        dimension: 40,
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Padding(
+            padding: EdgeInsets.only(left: 19),
+            child: _LiveDot(key: ValueKey("player_live_dot")),
+          ),
+        ),
+      ),
       Expanded(
         child: Align(
           alignment: Alignment.centerLeft,
@@ -603,8 +807,6 @@ class _PlayerFooter extends StatelessWidget {
             alignment: Alignment.centerLeft,
             child: Row(
               children: [
-                const _LiveDot(),
-                const SizedBox(width: 5),
                 _OverlayMetric(text: _formatLiveDuration(liveDuration)),
                 const SizedBox(width: AppSpacing.md),
                 const Icon(Icons.visibility_rounded, color: Colors.white, size: 19),
@@ -668,44 +870,49 @@ class _PlayerFooter extends StatelessWidget {
 
 class _CenterPlaybackControl extends StatelessWidget {
   const _CenterPlaybackControl({
-    required this.isPlaying,
+    required this.playWhenReady,
     required this.isBuffering,
     required this.visible,
     required this.onPressed,
   });
 
-  final bool isPlaying;
+  final bool playWhenReady;
   final bool isBuffering;
   final bool visible;
   final Future<void> Function() onPressed;
 
   @override
-  Widget build(BuildContext context) => AnimatedOpacity(
-    opacity: visible || isBuffering ? 1 : 0,
-    duration: const Duration(milliseconds: 160),
-    child: isBuffering
-        ? const SizedBox.square(
-            dimension: 42,
-            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
-          )
-        : IconButton(
-            key: const ValueKey("player_play_pause_button"),
-            tooltip: isPlaying ? "Pause" : "Play",
-            onPressed: onPressed,
-            iconSize: 54,
-            color: Colors.white,
-            style: IconButton.styleFrom(
-              backgroundColor: Colors.black.withValues(alpha: 0.24),
-              minimumSize: const Size.square(68),
+  Widget build(BuildContext context) {
+    final showBufferingIndicator = isBuffering && playWhenReady;
+    return AnimatedOpacity(
+      opacity: visible || showBufferingIndicator ? 1 : 0,
+      duration: const Duration(milliseconds: 160),
+      child: showBufferingIndicator
+          ? const SizedBox.square(
+              dimension: 42,
+              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
+            )
+          : IconButton(
+              key: const ValueKey("player_play_pause_button"),
+              tooltip: playWhenReady ? "Pause" : "Play",
+              onPressed: onPressed,
+              iconSize: 54,
+              color: Colors.white,
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.transparent,
+                minimumSize: const Size.square(68),
+              ),
+              icon: Icon(playWhenReady ? Icons.pause_rounded : Icons.play_arrow_rounded),
             ),
-            icon: Icon(isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded),
-          ),
-  );
+    );
+  }
 
   @override
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
-    properties.add(FlagProperty("isPlaying", value: isPlaying, ifTrue: "playing"));
+    properties.add(
+      FlagProperty("playWhenReady", value: playWhenReady, ifTrue: "play requested"),
+    );
     properties.add(FlagProperty("isBuffering", value: isBuffering, ifTrue: "buffering"));
     properties.add(FlagProperty("visible", value: visible, ifTrue: "visible"));
     properties.add(
@@ -759,6 +966,43 @@ class _PlayerError extends StatelessWidget {
   }
 }
 
+class _QualityOptionTile extends StatelessWidget {
+  const _QualityOptionTile({
+    required this.id,
+    required this.label,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final String id;
+  final String label;
+  final bool selected;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) => SimpleDialogOption(
+    key: ValueKey("player_quality_$id"),
+    onPressed: () => onSelected(id),
+    child: Row(
+      children: [
+        Expanded(child: Text(label)),
+        if (selected) const Icon(Icons.check_rounded, size: 20),
+      ],
+    ),
+  );
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(StringProperty("id", id));
+    properties.add(StringProperty("label", label));
+    properties.add(FlagProperty("selected", value: selected, ifTrue: "selected"));
+    properties.add(
+      ObjectFlagProperty<ValueChanged<String>>.has("onSelected", onSelected),
+    );
+  }
+}
+
 class _OverlayIconButton extends StatelessWidget {
   const _OverlayIconButton({
     required this.tooltip,
@@ -779,12 +1023,7 @@ class _OverlayIconButton extends StatelessWidget {
     constraints: const BoxConstraints.tightFor(width: 40, height: 40),
     color: Colors.white,
     iconSize: 27,
-    icon: Icon(
-      icon,
-      shadows: const [
-        Shadow(color: Color(0x99000000), blurRadius: 5, offset: Offset(0, 1)),
-      ],
-    ),
+    icon: Icon(icon),
   );
 
   @override
@@ -810,7 +1049,6 @@ class _OverlayMetric extends StatelessWidget {
       fontSize: 14,
       fontWeight: FontWeight.w700,
       fontFeatures: [FontFeature.tabularFigures()],
-      shadows: _textShadows,
     ),
   );
 
@@ -822,7 +1060,7 @@ class _OverlayMetric extends StatelessWidget {
 }
 
 class _LiveDot extends StatelessWidget {
-  const _LiveDot();
+  const _LiveDot({super.key});
 
   @override
   Widget build(BuildContext context) => const SizedBox.square(
@@ -832,10 +1070,6 @@ class _LiveDot extends StatelessWidget {
     ),
   );
 }
-
-const _textShadows = [
-  Shadow(color: Color(0xB3000000), blurRadius: 4, offset: Offset(0, 1)),
-];
 
 String _formatLatency(int? latencyMs) =>
     latencyMs == null ? "--" : "${(latencyMs / 1000).toStringAsFixed(2)}s";

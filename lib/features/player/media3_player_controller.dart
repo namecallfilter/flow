@@ -14,10 +14,40 @@ class TwitchPlaybackStateEvent extends TwitchPlayerEvent {
   const TwitchPlaybackStateEvent({
     required this.isPlaying,
     required this.isBuffering,
+    required this.playWhenReady,
   });
 
   final bool isPlaying;
   final bool isBuffering;
+  final bool playWhenReady;
+}
+
+class TwitchQualityOption {
+  const TwitchQualityOption({
+    required this.id,
+    required this.label,
+    required this.width,
+    required this.height,
+    required this.frameRate,
+    required this.bitrate,
+  });
+
+  final String id;
+  final String label;
+  final int width;
+  final int height;
+  final double? frameRate;
+  final int? bitrate;
+}
+
+class TwitchQualitiesEvent extends TwitchPlayerEvent {
+  const TwitchQualitiesEvent({
+    required this.qualities,
+    required this.selectedId,
+  });
+
+  final List<TwitchQualityOption> qualities;
+  final String selectedId;
 }
 
 class TwitchPlayerErrorEvent extends TwitchPlayerEvent {
@@ -38,6 +68,8 @@ abstract interface class TwitchPlayerController {
   Future<void> togglePlayback();
 
   Future<void> jumpToLive();
+
+  Future<void> setQuality(String id);
 }
 
 class MethodChannelTwitchPlayerController implements TwitchPlayerController {
@@ -73,6 +105,9 @@ class MethodChannelTwitchPlayerController implements TwitchPlayerController {
   Future<void> play() => _methodChannel.invokeMethod<void>("play");
 
   @override
+  Future<void> setQuality(String id) => _methodChannel.invokeMethod<void>("setQuality", id);
+
+  @override
   Future<void> togglePlayback() => _methodChannel.invokeMethod<void>("togglePlayback");
 }
 
@@ -89,6 +124,37 @@ TwitchPlayerEvent? _decodeEvent(Object? rawEvent) {
       return TwitchPlaybackStateEvent(
         isPlaying: rawEvent["isPlaying"] == true,
         isBuffering: rawEvent["isBuffering"] == true,
+        playWhenReady: rawEvent["playWhenReady"] == true,
+      );
+    case "qualities":
+      final rawQualities = rawEvent["qualities"];
+      final qualities = <TwitchQualityOption>[];
+      if (rawQualities is List) {
+        for (final rawQuality in rawQualities) {
+          if (rawQuality is! Map) {
+            continue;
+          }
+          final id = rawQuality["id"]?.toString() ?? "";
+          final label = rawQuality["label"]?.toString() ?? "";
+          final height = (rawQuality["height"] as num?)?.round() ?? 0;
+          if (id.isEmpty || label.isEmpty || height <= 0) {
+            continue;
+          }
+          qualities.add(
+            TwitchQualityOption(
+              id: id,
+              label: label,
+              width: (rawQuality["width"] as num?)?.round() ?? 0,
+              height: height,
+              frameRate: (rawQuality["fps"] as num?)?.toDouble(),
+              bitrate: (rawQuality["bitrate"] as num?)?.round(),
+            ),
+          );
+        }
+      }
+      return TwitchQualitiesEvent(
+        qualities: qualities,
+        selectedId: rawEvent["selectedId"]?.toString() ?? "auto",
       );
     case "error":
       final message = rawEvent["message"]?.toString().trim() ?? "";

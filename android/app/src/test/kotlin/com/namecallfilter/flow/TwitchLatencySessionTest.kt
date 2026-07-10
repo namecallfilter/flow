@@ -2,6 +2,7 @@ package com.namecallfilter.flow
 
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.Metadata
+import androidx.media3.common.C
 import androidx.media3.extractor.metadata.id3.TextInformationFrame
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -101,5 +102,13 @@ class TwitchLatencySessionTest {
 
         assertEquals(2_000L, session.displayedLatencyMs)
         assertEquals(listOf(2_000L), accepted)
+    }
+
+    @Test
+    fun playableLivePositionKeepsAStableBufferAndNeverSeeksBackward() {
+        assertEquals(9_000L, playableLivePositionMs(10_000L, 1_000L, 4_000L))
+        assertEquals(9_500L, playableLivePositionMs(10_000L, 1_000L, 9_500L))
+        assertEquals(0L, playableLivePositionMs(100L, 1_000L, 0L))
+        assertNull(playableLivePositionMs(C.TIME_UNSET, 1_000L, 4_000L))
     }
 }
