@@ -1,3 +1,5 @@
+import "dart:math" as math;
+
 import "package:flow/graphql/FlowChannelDetails.graphql.dart";
 import "package:flow/graphql/FlowCurrentUser.graphql.dart";
 import "package:flow/graphql/FlowFollowedLiveUsers.graphql.dart";
@@ -638,13 +640,14 @@ class TwitchApiClient {
     return Uri(
       scheme: "https",
       host: "usher.ttvnw.net",
-      pathSegments: ["api", "channel", "hls", "$normalizedLogin.m3u8"],
+      pathSegments: ["api", "v2", "channel", "hls", "$normalizedLogin.m3u8"],
       queryParameters: {
         "allow_audio_only": "true",
         "allow_source": "true",
         "fast_bread": "true",
         "playlist_include_framerate": "true",
         "player": "twitchweb",
+        "p": math.Random().nextInt(10_000_000).toString(),
         "sig": signature,
         "supported_codecs": "h264",
         "token": token,

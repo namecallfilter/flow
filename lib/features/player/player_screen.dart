@@ -111,8 +111,10 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   Timer? _viewerTimer;
   Uri? _playbackUri;
   int? _latencyMs;
-  List<TwitchQualityOption> _qualities = const [];
-  String _selectedQualityId = "auto";
+  TwitchAdEvent? _activeAd;
+  final ValueNotifier<_QualitySettingsState> _qualitySettings = ValueNotifier(
+    const _QualitySettingsState(qualities: [], selectedId: "auto"),
+  );
   late String _viewerText;
   String? _errorMessage;
   bool _isPlaying = false;
@@ -172,15 +174,23 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     _uptimeTimer?.cancel();
     _viewerTimer?.cancel();
     unawaited(_playerEvents?.cancel());
+    _qualitySettings.dispose();
     unawaited(widget.displayModeController.restore());
     super.dispose();
   }
 
   Future<void> _loadPlaybackUri({bool refresh = false}) async {
     final generation = ++_loadGeneration;
+    if (refresh) {
+      _qualitySettings.value = const _QualitySettingsState(
+        qualities: [],
+        selectedId: "auto",
+      );
+    }
     setState(() {
       _errorMessage = null;
       _isBuffering = true;
+      _activeAd = null;
       if (refresh) {
         _latencyMs = null;
         _controlsVisible = true;
@@ -252,6 +262,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
           setState(() {
             _isBuffering = false;
             _controlsVisible = true;
+            _activeAd = null;
             _errorMessage = _playerErrorMessage(error);
           });
         }
@@ -268,6 +279,8 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         if (_playWhenReady) {
           setState(() => _latencyMs = latencyMs);
         }
+      case TwitchAdEvent(:final active):
+        setState(() => _activeAd = active ? event : null);
       case TwitchPlaybackStateEvent(
         :final isPlaying,
         :final isBuffering,
@@ -290,13 +303,14 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         setState(() {
           _isBuffering = false;
           _controlsVisible = true;
+          _activeAd = null;
           _errorMessage = message;
         });
       case TwitchQualitiesEvent(:final qualities, :final selectedId):
-        setState(() {
-          _qualities = qualities;
-          _selectedQualityId = selectedId;
-        });
+        _qualitySettings.value = _QualitySettingsState(
+          qualities: List.unmodifiable(qualities),
+          selectedId: selectedId,
+        );
     }
   }
 
@@ -337,25 +351,13 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   Future<void> _showQualitySettings() async {
     _controlsTimer?.cancel();
     setState(() => _controlsVisible = true);
-    final selectedId = await showDialog<String>(
+    final selectedId = await showModalBottomSheet<String>(
       context: context,
-      builder: (dialogContext) => SimpleDialog(
-        title: const Text("Video quality"),
-        children: [
-          _QualityOptionTile(
-            id: "auto",
-            label: "Auto",
-            selected: _selectedQualityId == "auto",
-            onSelected: (id) => Navigator.of(dialogContext).pop(id),
-          ),
-          for (final quality in _qualities)
-            _QualityOptionTile(
-              id: quality.id,
-              label: quality.label,
-              selected: _selectedQualityId == quality.id,
-              onSelected: (id) => Navigator.of(dialogContext).pop(id),
-            ),
-        ],
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheetContext) => _QualitySettingsSheet(
+        settings: _qualitySettings,
+        onSelected: (id) => Navigator.of(sheetContext).pop(id),
       ),
     );
     if (!mounted) {
@@ -392,6 +394,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       isBuffering: _isBuffering,
       playWhenReady: _playWhenReady,
       latencyMs: _latencyMs,
+      activeAd: _activeAd,
       viewerText: _viewerText,
       liveDuration: _liveDuration,
       errorMessage: _errorMessage,
@@ -453,6 +456,7 @@ class _PlayerViewport extends StatelessWidget {
     required this.isBuffering,
     required this.playWhenReady,
     required this.latencyMs,
+    required this.activeAd,
     required this.viewerText,
     required this.liveDuration,
     required this.errorMessage,
@@ -475,6 +479,7 @@ class _PlayerViewport extends StatelessWidget {
   final bool isBuffering;
   final bool playWhenReady;
   final int? latencyMs;
+  final TwitchAdEvent? activeAd;
   final String viewerText;
   final Duration? liveDuration;
   final String? errorMessage;
@@ -577,6 +582,21 @@ class _PlayerViewport extends StatelessWidget {
               ),
             ),
           ),
+          if (activeAd case final ad?)
+            AnimatedPositioned(
+              key: const ValueKey("player_ad_position"),
+              duration: const Duration(milliseconds: 160),
+              curve: Curves.easeOutCubic,
+              top: verticalPadding + (controlsVisible ? 44 : 4),
+              left: horizontalPadding + 48,
+              right: horizontalPadding + 48,
+              child: IgnorePointer(
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: _AdProgressPill(ad: ad),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -609,6 +629,7 @@ class _PlayerViewport extends StatelessWidget {
       FlagProperty("playWhenReady", value: playWhenReady, ifTrue: "play requested"),
     );
     properties.add(IntProperty("latencyMs", latencyMs));
+    properties.add(DiagnosticsProperty<TwitchAdEvent?>("activeAd", activeAd));
     properties.add(StringProperty("viewerText", viewerText));
     properties.add(DiagnosticsProperty<Duration?>("liveDuration", liveDuration));
     properties.add(StringProperty("errorMessage", errorMessage));
@@ -635,6 +656,49 @@ class _PlayerViewport extends StatelessWidget {
     properties.add(
       ObjectFlagProperty<Future<void> Function()>.has("onSettings", onSettings),
     );
+  }
+}
+
+class _AdProgressPill extends StatelessWidget {
+  const _AdProgressPill({required this.ad});
+
+  final TwitchAdEvent ad;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = _formatAdProgress(ad);
+    return Semantics(
+      key: const ValueKey("player_ad_progress"),
+      container: true,
+      label: _adSemanticsLabel(ad),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.78),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Text(
+            text,
+            key: const ValueKey("player_ad_progress_text"),
+            maxLines: 1,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(DiagnosticsProperty<TwitchAdEvent>("ad", ad));
   }
 }
 
@@ -966,6 +1030,108 @@ class _PlayerError extends StatelessWidget {
   }
 }
 
+class _QualitySettingsState {
+  const _QualitySettingsState({
+    required this.qualities,
+    required this.selectedId,
+  });
+
+  final List<TwitchQualityOption> qualities;
+  final String selectedId;
+}
+
+class _QualitySettingsSheet extends StatelessWidget {
+  const _QualitySettingsSheet({
+    required this.settings,
+    required this.onSelected,
+  });
+
+  final ValueListenable<_QualitySettingsState> settings;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    return SafeArea(
+      top: false,
+      child: ValueListenableBuilder<_QualitySettingsState>(
+        valueListenable: settings,
+        builder: (context, state, _) => Column(
+          key: const ValueKey("player_quality_sheet"),
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg,
+                0,
+                AppSpacing.lg,
+                AppSpacing.sm,
+              ),
+              child: Text(
+                "Quality",
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+            ),
+            Flexible(
+              child: ListView(
+                key: const ValueKey("player_quality_list"),
+                shrinkWrap: true,
+                primary: false,
+                padding: EdgeInsets.zero,
+                children: [
+                  _QualityOptionTile(
+                    id: "auto",
+                    label: "Auto",
+                    selected: state.selectedId == "auto",
+                    onSelected: onSelected,
+                  ),
+                  for (final quality in state.qualities)
+                    _QualityOptionTile(
+                      id: quality.id,
+                      label: quality.label,
+                      selected: state.selectedId == quality.id,
+                      onSelected: onSelected,
+                    ),
+                  if (state.qualities.isEmpty)
+                    const SizedBox(
+                      key: ValueKey("player_quality_loading"),
+                      height: 48,
+                      child: Center(
+                        child: SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(
+      DiagnosticsProperty<ValueListenable<_QualitySettingsState>>(
+        "settings",
+        settings,
+      ),
+    );
+    properties.add(
+      ObjectFlagProperty<ValueChanged<String>>.has("onSelected", onSelected),
+    );
+  }
+}
+
 class _QualityOptionTile extends StatelessWidget {
   const _QualityOptionTile({
     required this.id,
@@ -980,14 +1146,13 @@ class _QualityOptionTile extends StatelessWidget {
   final ValueChanged<String> onSelected;
 
   @override
-  Widget build(BuildContext context) => SimpleDialogOption(
-    key: ValueKey("player_quality_$id"),
-    onPressed: () => onSelected(id),
-    child: Row(
-      children: [
-        Expanded(child: Text(label)),
-        if (selected) const Icon(Icons.check_rounded, size: 20),
-      ],
+  Widget build(BuildContext context) => Semantics(
+    selected: selected,
+    child: ListTile(
+      key: ValueKey("player_quality_$id"),
+      title: Text(label),
+      trailing: selected ? const Icon(Icons.check_rounded) : null,
+      onTap: () => onSelected(id),
     ),
   );
 
@@ -1073,6 +1238,30 @@ class _LiveDot extends StatelessWidget {
 
 String _formatLatency(int? latencyMs) =>
     latencyMs == null ? "--" : "${(latencyMs / 1000).toStringAsFixed(2)}s";
+
+String _formatAdProgress(TwitchAdEvent ad) {
+  final hasCount = ad.current > 0 && ad.total > 0 && ad.current <= ad.total;
+  final prefix = hasCount ? "Ad ${ad.current} of ${ad.total}" : "Ad";
+  return "$prefix · ${_formatAdCountdown(ad.remainingMs)}";
+}
+
+String _formatAdCountdown(int remainingMs) {
+  final totalSeconds = math.max(0, (remainingMs + 999) ~/ 1000);
+  final hours = totalSeconds ~/ Duration.secondsPerHour;
+  final minutes = (totalSeconds ~/ Duration.secondsPerMinute).remainder(60);
+  final seconds = totalSeconds.remainder(60).toString().padLeft(2, "0");
+  if (hours > 0) {
+    return "$hours:${minutes.toString().padLeft(2, "0")}:$seconds";
+  }
+  return "$minutes:$seconds";
+}
+
+String _adSemanticsLabel(TwitchAdEvent ad) {
+  final hasCount = ad.current > 0 && ad.total > 0 && ad.current <= ad.total;
+  final count = hasCount ? " ${ad.current} of ${ad.total}" : "";
+  final remainingSeconds = math.max(0, (ad.remainingMs + 999) ~/ 1000);
+  return "Advertisement$count, $remainingSeconds seconds remaining";
+}
 
 String _formatLiveDuration(Duration? duration) {
   if (duration == null) {

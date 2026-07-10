@@ -10,6 +10,24 @@ class TwitchLatencyEvent extends TwitchPlayerEvent {
   final int? latencyMs;
 }
 
+class TwitchAdEvent extends TwitchPlayerEvent {
+  const TwitchAdEvent({
+    required this.active,
+    required this.current,
+    required this.total,
+    required this.durationMs,
+    required this.remainingMs,
+    this.rollType,
+  });
+
+  final bool active;
+  final int current;
+  final int total;
+  final int durationMs;
+  final int remainingMs;
+  final String? rollType;
+}
+
 class TwitchPlaybackStateEvent extends TwitchPlayerEvent {
   const TwitchPlaybackStateEvent({
     required this.isPlaying,
@@ -120,6 +138,16 @@ TwitchPlayerEvent? _decodeEvent(Object? rawEvent) {
     case "latency":
       final latency = rawEvent["latencyMs"];
       return TwitchLatencyEvent(latency is num ? latency.round() : null);
+    case "ad":
+      final rawRollType = rawEvent["rollType"]?.toString().trim();
+      return TwitchAdEvent(
+        active: rawEvent["active"] == true,
+        current: (rawEvent["current"] as num?)?.round() ?? 0,
+        total: (rawEvent["total"] as num?)?.round() ?? 0,
+        durationMs: (rawEvent["durationMs"] as num?)?.round() ?? 0,
+        remainingMs: (rawEvent["remainingMs"] as num?)?.round() ?? 0,
+        rollType: rawRollType == null || rawRollType.isEmpty ? null : rawRollType,
+      );
     case "state":
       return TwitchPlaybackStateEvent(
         isPlaying: rawEvent["isPlaying"] == true,

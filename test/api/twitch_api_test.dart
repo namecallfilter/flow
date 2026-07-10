@@ -119,10 +119,11 @@ void main() {
     expect(body["query"], contains('playerBackend: "mediaplayer"'));
     expect(uri.scheme, "https");
     expect(uri.host, "usher.ttvnw.net");
-    expect(uri.path, "/api/channel/hls/KaiCenat.m3u8");
+    expect(uri.path, "/api/v2/channel/hls/KaiCenat.m3u8");
     expect(uri.queryParameters["sig"], "signature-123");
     expect(uri.queryParameters["token"], "{\"expires\":1780000000}");
     expect(uri.queryParameters["fast_bread"], "true");
+    expect(int.tryParse(uri.queryParameters["p"] ?? ""), isNotNull);
     expect(uri.queryParameters["supported_codecs"], "h264");
   });
 }

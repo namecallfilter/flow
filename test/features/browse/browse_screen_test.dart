@@ -5,6 +5,7 @@ import "package:flow/api/twitch_auth.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/browse/browse_screen.dart";
 import "package:flow/features/following/following_screen.dart";
+import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flutter/material.dart";
@@ -360,7 +361,7 @@ void main() {
     expect(searchRequestsAfterReopen, searchRequestsAfterFirstOpen);
   });
 
-  testWidgets("opens search channels with live results limited to the avatar", (
+  testWidgets("opens live search results in the player and avatars as channels", (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -393,7 +394,18 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey("browse_search_channel_HighCreator")));
     await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("player_page_highcreator")), findsOneWidget);
     expect(find.byKey(const ValueKey("channel_page_highcreator")), findsNothing);
+    final player = tester.widget<StreamPlayerScreen>(find.byType(StreamPlayerScreen));
+    expect(player.channel.login, "highcreator");
+    expect(player.channel.name, "HighCreator");
+    expect(player.channel.category, "Minecraft");
+
+    Navigator.of(
+      tester.element(find.byKey(const ValueKey("player_page_highcreator"))),
+      rootNavigator: true,
+    ).pop();
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const ValueKey("browse_search_channel_avatar_HighCreator")));
     await tester.pumpAndSettle();

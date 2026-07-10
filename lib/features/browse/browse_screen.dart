@@ -441,6 +441,7 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
                         isSearching: _store.isSearching,
                         topPadding: topScrollPadding,
                         onChannelSelected: _openChannel,
+                        onStreamSelected: _openPlayer,
                         onCategorySelected: _openCategory,
                       ),
               ),
@@ -490,6 +491,38 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
               avatarImageUrl: channel.thumbnailUrl,
               isLive: channel.isLive,
             ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openPlayer(TwitchSearchChannel channel) {
+    final login = channel.broadcasterLogin.trim();
+    if (!channel.isLive || login.isEmpty) {
+      return;
+    }
+
+    final channelName = displayName(channel.displayName, login);
+    final streamChannel = StreamChannel(
+      id: channel.id,
+      login: login,
+      name: channelName,
+      initials: initialsForName(channelName),
+      title: channel.title.isEmpty ? "Live now" : channel.title,
+      category: channel.gameName.isEmpty ? "Live" : channel.gameName,
+      viewers: "--",
+      avatarColors: colorsForText(channel.id),
+      thumbnailColors: colorsForText(channel.id, count: 3),
+      avatarImageUrl: channel.thumbnailUrl,
+      startedAt: channel.startedAt,
+    );
+    unawaited(
+      Navigator.of(context, rootNavigator: true).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => StreamPlayerScreen(
+            apiCache: widget.apiCache,
+            channel: streamChannel,
           ),
         ),
       ),
@@ -728,6 +761,7 @@ class _SearchResults extends StatelessWidget {
     required this.isSearching,
     required this.topPadding,
     required this.onChannelSelected,
+    required this.onStreamSelected,
     required this.onCategorySelected,
   });
 
@@ -737,6 +771,7 @@ class _SearchResults extends StatelessWidget {
   final bool isSearching;
   final double topPadding;
   final ValueChanged<TwitchSearchChannel> onChannelSelected;
+  final ValueChanged<TwitchSearchChannel> onStreamSelected;
   final ValueChanged<BrowseCategory> onCategorySelected;
 
   @override
@@ -765,6 +800,7 @@ class _SearchResults extends StatelessWidget {
           _SearchChannelRow(
             channel: channel,
             onChannelSelected: onChannelSelected,
+            onStreamSelected: onStreamSelected,
           ),
       ],
       if (categories.isNotEmpty) ...[
@@ -804,6 +840,12 @@ class _SearchResults extends StatelessWidget {
       ObjectFlagProperty<ValueChanged<TwitchSearchChannel>>.has(
         "onChannelSelected",
         onChannelSelected,
+      ),
+    );
+    properties.add(
+      ObjectFlagProperty<ValueChanged<TwitchSearchChannel>>.has(
+        "onStreamSelected",
+        onStreamSelected,
       ),
     );
     properties.add(
@@ -853,10 +895,12 @@ class _SearchChannelRow extends StatelessWidget {
   const _SearchChannelRow({
     required this.channel,
     required this.onChannelSelected,
+    required this.onStreamSelected,
   });
 
   final TwitchSearchChannel channel;
   final ValueChanged<TwitchSearchChannel> onChannelSelected;
+  final ValueChanged<TwitchSearchChannel> onStreamSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -870,7 +914,13 @@ class _SearchChannelRow extends StatelessWidget {
     return ListTile(
       key: ValueKey("browse_search_channel_$channelName"),
       contentPadding: EdgeInsets.zero,
-      onTap: channel.isLive ? null : () => onChannelSelected(channel),
+      onTap: () {
+        if (channel.isLive) {
+          onStreamSelected(channel);
+        } else {
+          onChannelSelected(channel);
+        }
+      },
       leading: GestureDetector(
         key: ValueKey("browse_search_channel_avatar_$channelName"),
         behavior: HitTestBehavior.opaque,
@@ -922,6 +972,12 @@ class _SearchChannelRow extends StatelessWidget {
       ObjectFlagProperty<ValueChanged<TwitchSearchChannel>>.has(
         "onChannelSelected",
         onChannelSelected,
+      ),
+    );
+    properties.add(
+      ObjectFlagProperty<ValueChanged<TwitchSearchChannel>>.has(
+        "onStreamSelected",
+        onStreamSelected,
       ),
     );
   }

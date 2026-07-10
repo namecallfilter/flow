@@ -234,10 +234,110 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey("player_settings_button")));
     await tester.pumpAndSettle();
+    expect(find.text("Quality"), findsOneWidget);
+    expect(find.text("Video quality"), findsNothing);
+    expect(find.text("Choose the stream resolution."), findsNothing);
     expect(find.byKey(const ValueKey("player_quality_auto")), findsOneWidget);
     expect(find.byKey(const ValueKey("player_quality_video:720")), findsOneWidget);
+    final qualityTile = tester.widget<ListTile>(
+      find.byKey(const ValueKey("player_quality_video:720")),
+    );
+    expect(qualityTile.subtitle, isNull);
+    expect(qualityTile.shape, isNull);
+    expect(qualityTile.selectedTileColor, isNull);
+    expect(qualityTile.trailing, isNull);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey("player_quality_auto")),
+        matching: find.byIcon(Icons.check_rounded),
+      ),
+      findsOneWidget,
+    );
     await tester.tap(find.byKey(const ValueKey("player_quality_video:720")));
     await tester.pumpAndSettle();
+    expect(player._selectedQualityIds, ["video:720"]);
+  });
+
+  testWidgets("an open quality sheet populates when player tracks arrive", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final player = _FakePlayerController();
+    final playbackUri = Completer<Uri>();
+    var surfaceCreations = 0;
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        playbackUriLoader: (_) => playbackUri.future,
+        onSurfaceCreated: () => surfaceCreations++,
+      ),
+    );
+    await tester.pump();
+    expect(surfaceCreations, 0);
+
+    await tester.tap(find.byKey(const ValueKey("player_settings_button")));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.byKey(const ValueKey("player_quality_sheet")), findsOneWidget);
+    expect(find.byKey(const ValueKey("player_quality_auto")), findsOneWidget);
+    expect(find.byKey(const ValueKey("player_quality_loading")), findsOneWidget);
+    expect(find.byKey(const ValueKey("player_quality_video:1080")), findsNothing);
+
+    playbackUri.complete(Uri.parse("https://example.com/live.m3u8"));
+    await tester.pump();
+    expect(surfaceCreations, 1);
+
+    player.emit(
+      const TwitchQualitiesEvent(
+        selectedId: "video:1080",
+        qualities: [
+          TwitchQualityOption(
+            id: "video:1080",
+            label: "1080p60",
+            width: 1920,
+            height: 1080,
+            frameRate: 60,
+            bitrate: 6000000,
+          ),
+          TwitchQualityOption(
+            id: "video:720",
+            label: "720p60",
+            width: 1280,
+            height: 720,
+            frameRate: 60,
+            bitrate: 4500000,
+          ),
+        ],
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey("player_quality_loading")), findsNothing);
+    expect(find.byKey(const ValueKey("player_quality_video:1080")), findsOneWidget);
+    expect(find.byKey(const ValueKey("player_quality_video:720")), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey("player_quality_video:1080")),
+        matching: find.byIcon(Icons.check_rounded),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey("player_quality_auto")),
+        matching: find.byIcon(Icons.check_rounded),
+      ),
+      findsNothing,
+    );
+
+    await tester.tap(find.byKey(const ValueKey("player_quality_video:720")));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(player._selectedQualityIds, ["video:720"]);
   });
 
@@ -309,6 +409,152 @@ void main() {
     expect(viewerLoads, 2);
     expect(playbackLoads, 1);
     expect(player._loadedUris, isEmpty);
+  });
+
+  testWidgets("keeps stitched-ad progress visible through updates and rotation", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final player = _FakePlayerController();
+    await tester.pumpWidget(_playerApp(player: player));
+    await tester.pump();
+
+    player.emit(const TwitchLatencyEvent(2100));
+    player.emit(
+      const TwitchAdEvent(
+        active: true,
+        current: 1,
+        total: 3,
+        durationMs: 30000,
+        remainingMs: 24000,
+        rollType: "preroll",
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text("2.10s"), findsOneWidget);
+    expect(find.text("Ad 1 of 3 · 0:24"), findsOneWidget);
+    expect(find.byKey(const ValueKey("player_ad_progress")), findsOneWidget);
+    final visibleAdTop = tester
+        .getTopLeft(
+          find.byKey(const ValueKey("player_ad_progress")),
+        )
+        .dy;
+    expect(
+      find.ancestor(
+        of: find.byKey(const ValueKey("player_ad_progress")),
+        matching: find.byType(AnimatedOpacity),
+      ),
+      findsNothing,
+    );
+
+    final portraitViewport = tester.getRect(
+      find.byKey(const ValueKey("player_viewport")),
+    );
+    await tester.tapAt(
+      Offset(portraitViewport.left + 100, portraitViewport.center.dy),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text("Ad 1 of 3 · 0:24"), findsOneWidget);
+    final hiddenAdTop = tester
+        .getTopLeft(
+          find.byKey(const ValueKey("player_ad_progress")),
+        )
+        .dy;
+    expect(hiddenAdTop, lessThan(visibleAdTop));
+    expect(visibleAdTop - hiddenAdTop, closeTo(40, 0.01));
+    final controlsOpacity = tester.widget<AnimatedOpacity>(
+      find
+          .ancestor(
+            of: find.byKey(const ValueKey("player_top_row")),
+            matching: find.byType(AnimatedOpacity),
+          )
+          .first,
+    );
+    expect(controlsOpacity.opacity, 0);
+
+    await tester.tapAt(
+      Offset(portraitViewport.left + 100, portraitViewport.center.dy),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey("player_ad_progress"))).dy,
+      closeTo(visibleAdTop, 0.01),
+    );
+
+    await tester.tapAt(
+      Offset(portraitViewport.left + 100, portraitViewport.center.dy),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    player.emit(
+      const TwitchAdEvent(
+        active: true,
+        current: 2,
+        total: 3,
+        durationMs: 30000,
+        remainingMs: 12000,
+        rollType: "midroll",
+      ),
+    );
+    await tester.pump();
+    expect(find.text("Ad 2 of 3 · 0:12"), findsOneWidget);
+
+    tester.view.physicalSize = const Size(800, 400);
+    await tester.pump();
+    final landscapeViewport = tester.getRect(
+      find.byKey(const ValueKey("player_viewport")),
+    );
+    final adPill = tester.getRect(find.byKey(const ValueKey("player_ad_progress")));
+    expect(find.text("Ad 2 of 3 · 0:12"), findsOneWidget);
+    expect(landscapeViewport.contains(adPill.topLeft), isTrue);
+    expect(landscapeViewport.contains(adPill.bottomRight), isTrue);
+
+    player.emit(
+      const TwitchAdEvent(
+        active: true,
+        current: 0,
+        total: 0,
+        durationMs: 6000,
+        remainingMs: 6000,
+      ),
+    );
+    await tester.pump();
+    expect(find.text("Ad · 0:06"), findsOneWidget);
+
+    player.emit(const TwitchPlayerErrorEvent("Playback failed"));
+    await tester.pump();
+    expect(find.byKey(const ValueKey("player_ad_progress")), findsNothing);
+
+    player.emit(
+      const TwitchAdEvent(
+        active: true,
+        current: 3,
+        total: 3,
+        durationMs: 6000,
+        remainingMs: 4000,
+      ),
+    );
+    await tester.pump();
+
+    player.emit(
+      const TwitchAdEvent(
+        active: false,
+        current: 0,
+        total: 0,
+        durationMs: 0,
+        remainingMs: 0,
+      ),
+    );
+    await tester.pump();
+    expect(find.byKey(const ValueKey("player_ad_progress")), findsNothing);
   });
 }
 
