@@ -12,6 +12,7 @@ import "package:flow/features/browse/browse_store.dart";
 import "package:flow/features/browse/category_streams_store.dart";
 import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/following/following_screen.dart";
+import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
@@ -211,6 +212,16 @@ class _BrowseScreenState extends State<BrowseScreen> {
     );
   }
 
+  void _openPlayer(StreamChannel channel) {
+    unawaited(
+      Navigator.of(context, rootNavigator: true).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => StreamPlayerScreen(apiCache: _apiCache, channel: channel),
+        ),
+      ),
+    );
+  }
+
   void _openSearch() {
     unawaited(
       Navigator.of(context).push<void>(
@@ -279,6 +290,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
                       _LiveChannelsList(
                         channels: _store.liveChannels,
                         onChannelSelected: _openLiveChannel,
+                        onStreamSelected: _openPlayer,
                       ),
                     if (_store.activeLoading && !_store.activeItemsEmpty) ...[
                       const SizedBox(height: AppSpacing.md),
@@ -1079,6 +1091,19 @@ class _CategoryStreamsScreenState extends State<_CategoryStreamsScreen> {
     );
   }
 
+  void _openPlayer(StreamChannel channel) {
+    unawaited(
+      Navigator.of(context, rootNavigator: true).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => StreamPlayerScreen(
+            apiCache: widget.apiCache,
+            channel: channel,
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) => Observer(
     builder: (_) {
@@ -1121,6 +1146,7 @@ class _CategoryStreamsScreenState extends State<_CategoryStreamsScreen> {
                       _LiveChannelsList(
                         channels: _store.channels,
                         onChannelSelected: _openLiveChannel,
+                        onStreamSelected: _openPlayer,
                       ),
                     if (_store.isLoading && _store.channels.isNotEmpty) ...[
                       const SizedBox(height: AppSpacing.md),
@@ -1381,10 +1407,12 @@ class _LiveChannelsList extends StatelessWidget {
   const _LiveChannelsList({
     required this.channels,
     required this.onChannelSelected,
+    required this.onStreamSelected,
   });
 
   final List<StreamChannel> channels;
   final ValueChanged<StreamChannel> onChannelSelected;
+  final ValueChanged<StreamChannel> onStreamSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -1399,6 +1427,7 @@ class _LiveChannelsList extends StatelessWidget {
           StreamCard(
             channel: channel,
             onChannelSelected: onChannelSelected,
+            onStreamSelected: onStreamSelected,
           ),
       ],
     );
@@ -1412,6 +1441,12 @@ class _LiveChannelsList extends StatelessWidget {
       ObjectFlagProperty<ValueChanged<StreamChannel>>.has(
         "onChannelSelected",
         onChannelSelected,
+      ),
+    );
+    properties.add(
+      ObjectFlagProperty<ValueChanged<StreamChannel>>.has(
+        "onStreamSelected",
+        onStreamSelected,
       ),
     );
   }

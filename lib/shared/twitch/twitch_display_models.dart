@@ -13,6 +13,8 @@ class StreamChannel {
     this.login = "",
     this.avatarImageUrl,
     this.thumbnailUrl,
+    this.viewerCount = 0,
+    this.startedAt,
   });
 
   final String id;
@@ -26,6 +28,8 @@ class StreamChannel {
   final List<Color> thumbnailColors;
   final String? avatarImageUrl;
   final String? thumbnailUrl;
+  final int viewerCount;
+  final DateTime? startedAt;
 }
 
 class OfflineChannel {

@@ -4,6 +4,16 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+dependencies {
+    val media3Version = "1.10.1"
+    implementation("androidx.media3:media3-exoplayer:$media3Version")
+    implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
+    implementation("androidx.media3:media3-ui:$media3Version")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20250517")
+}
+
 android {
     namespace = "com.namecallfilter.flow"
     compileSdk = flutter.compileSdkVersion

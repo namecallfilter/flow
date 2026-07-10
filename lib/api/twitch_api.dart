@@ -3,6 +3,7 @@ import "package:flow/graphql/FlowCurrentUser.graphql.dart";
 import "package:flow/graphql/FlowFollowedLiveUsers.graphql.dart";
 import "package:flow/graphql/FlowFollowedUsers.graphql.dart";
 import "package:flow/graphql/FlowGameStreams.graphql.dart";
+import "package:flow/graphql/FlowPlaybackAccessToken.graphql.dart";
 import "package:flow/graphql/FlowSearchCategories.graphql.dart";
 import "package:flow/graphql/FlowSearchChannels.graphql.dart";
 import "package:flow/graphql/FlowTopGames.graphql.dart";
@@ -598,6 +599,60 @@ class TwitchApiClient {
     return _channelDetailsFromGraphQlUser(user);
   }
 
+  Future<Uri> fetchLivePlaybackUri(String login) async {
+    final normalizedLogin = _nonEmptyValue(login);
+    if (normalizedLogin == null) {
+      throw TwitchApiException("Channel login is required.");
+    }
+
+    final data = await _query(
+      () => _playbackGraphQlClient.query$FlowPlaybackAccessToken(
+        Options$Query$FlowPlaybackAccessToken(
+          variables: Variables$Query$FlowPlaybackAccessToken(
+            login: normalizedLogin,
+            platform: "web",
+            playerType: "site",
+          ),
+          fetchPolicy: graphql.FetchPolicy.noCache,
+        ),
+      ),
+      "FlowPlaybackAccessToken",
+    );
+    final access = data.streamPlaybackAccessToken;
+    final authorization = access?.authorization;
+    if (authorization?.isForbidden == true) {
+      final reason = _nonEmptyValue(authorization?.forbiddenReasonCode);
+      throw TwitchApiException(
+        reason == null
+            ? "This stream is not available."
+            : "This stream is not available ($reason).",
+      );
+    }
+
+    final token = _nonEmptyValue(access?.value);
+    final signature = _nonEmptyValue(access?.signature);
+    if (token == null || signature == null) {
+      throw TwitchApiException("Twitch returned no playback access token for $normalizedLogin.");
+    }
+
+    return Uri(
+      scheme: "https",
+      host: "usher.ttvnw.net",
+      pathSegments: ["api", "channel", "hls", "$normalizedLogin.m3u8"],
+      queryParameters: {
+        "allow_audio_only": "true",
+        "allow_source": "true",
+        "fast_bread": "true",
+        "playlist_include_framerate": "true",
+        "player": "twitchweb",
+        "sig": signature,
+        "supported_codecs": "h264",
+        "token": token,
+        "type": "any",
+      },
+    );
+  }
+
   Future<TwitchPage<TwitchFollowedStream>> _fetchGameStreamsPage({
     required String gameId,
     required int first,
@@ -696,6 +751,9 @@ class TwitchApiClient {
     }
     return _tokenGraphQlClient;
   }
+
+  graphql.GraphQLClient get _playbackGraphQlClient =>
+      _nonEmptyValue(gqlAccessToken) == null ? _graphQlClient : _tokenGraphQlClient;
 
   Map<String, String> _graphQlHeaders({required bool includeToken}) {
     final headers = {
