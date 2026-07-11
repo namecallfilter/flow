@@ -161,6 +161,42 @@ internal fun adFallbackLatencyMs(
     return latencyMs.takeIf { it in 0..MAX_VALID_LATENCY_MS }
 }
 
+/**
+ * Keeps the stitched-ad timeline fallback alive across inaccurate playlist cue
+ * boundaries. Twitch can remove/end a DATERANGE before the final stitched
+ * creative and its queued metadata have finished playing. A current, accepted
+ * transc_r sample is the authoritative signal that normal live content has
+ * resumed.
+ */
+internal class StitchedAdLatencyFallback {
+    private var active = false
+    private var cueActive = false
+
+    fun onAdProgress(isActive: Boolean) {
+        // Arm only on a cue's rising edge. Once a valid primary sample releases
+        // this fallback, repeated ticks for that same cue must not re-arm it.
+        if (isActive && !cueActive) {
+            active = true
+        }
+        cueActive = isActive
+    }
+
+    /** Returns true when a latched fallback was released. */
+    fun onAcceptedPrimaryLatency(): Boolean {
+        val wasActive = active
+        active = false
+        return wasActive
+    }
+
+    fun shouldUseTimeline(primaryLatencyIsFresh: Boolean): Boolean =
+        active && !primaryLatencyIsFresh
+
+    fun reset() {
+        active = false
+        cueActive = false
+    }
+}
+
 internal fun parseHlsAttributeList(tag: String): Map<String, String> {
     val attributes = linkedMapOf<String, String>()
     val value = tag.substringAfter(':', missingDelimiterValue = "")

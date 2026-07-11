@@ -264,12 +264,24 @@ void main() {
       find.byKey(const ValueKey("player_orientation_button")),
     );
 
-    expect(topRow.top - viewport.top, 4);
-    expect(viewport.bottom - bottomRow.bottom, 4);
-    expect(topRow.left, 4);
-    expect(topRow.right, 396);
+    expect(topRow.top - viewport.top, 8);
+    expect(viewport.bottom - bottomRow.bottom, 8);
+    expect(topRow.left, 8);
+    expect(topRow.right, 392);
     expect(back.center.dx, liveDot.center.dx);
     expect(settings.center.dx, orientation.center.dx);
+    final liveDuration = tester.getRect(
+      find.byKey(const ValueKey("player_live_duration")),
+    );
+    expect(liveDuration.left - liveDot.right, lessThanOrEqualTo(8));
+    final jumpLive = tester.getRect(
+      find.byKey(const ValueKey("player_jump_live_button")),
+    );
+    final refresh = tester.getRect(
+      find.byKey(const ValueKey("player_refresh_button")),
+    );
+    expect(refresh.center.dx - jumpLive.center.dx, 48);
+    expect(orientation.center.dx - refresh.center.dx, 48);
     expect(tester.widget<AvatarRing>(find.byKey(const ValueKey("player_avatar"))).isLive, false);
     final nameAndTitle = tester.widget<Text>(
       find.byKey(const ValueKey("player_name_and_title")),
@@ -314,6 +326,72 @@ void main() {
     await tester.tap(find.byKey(const ValueKey("player_quality_video:720")));
     await tester.pumpAndSettle();
     expect(player._selectedQualityIds, ["video:720"]);
+  });
+
+  testWidgets("a hidden-overlay center tap reveals controls before pausing", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final player = _FakePlayerController();
+    await tester.pumpWidget(_playerApp(player: player));
+    await tester.pump();
+    player.emit(
+      const TwitchPlaybackStateEvent(
+        isPlaying: true,
+        isBuffering: false,
+        playWhenReady: true,
+      ),
+    );
+    await tester.pump();
+
+    final viewport = tester.getRect(
+      find.byKey(const ValueKey("player_viewport")),
+    );
+    await tester.tapAt(Offset(viewport.left + 100, viewport.center.dy));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(_controlsOpacity(tester), 0);
+
+    await tester.tapAt(viewport.center);
+    await tester.pump(const Duration(milliseconds: 200));
+
+    expect(player._toggleCount, 0);
+    expect(_controlsOpacity(tester), 1);
+
+    await tester.tap(find.byKey(const ValueKey("player_play_pause_button")));
+    await tester.pump();
+    expect(player._toggleCount, 1);
+  });
+
+  testWidgets("the live dot stays static without moving its aligned center", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(_playerApp(player: _FakePlayerController()));
+    await tester.pump();
+
+    final dot = find.byKey(const ValueKey("player_live_dot"));
+    final initialCenter = tester.getRect(dot).center;
+    expect(tester.getSize(dot), const Size.square(16));
+    expect(
+      find.descendant(of: dot, matching: find.byType(AnimatedScale)),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: dot, matching: find.byType(AnimatedOpacity)),
+      findsNothing,
+    );
+
+    await tester.pump(const Duration(milliseconds: 1400));
+
+    expect(tester.getRect(dot).center, initialCenter);
   });
 
   testWidgets("an open quality sheet populates when player tracks arrive", (
@@ -710,6 +788,17 @@ void main() {
   });
 }
 
+double _controlsOpacity(WidgetTester tester) => tester
+    .widget<AnimatedOpacity>(
+      find
+          .ancestor(
+            of: find.byKey(const ValueKey("player_top_row")),
+            matching: find.byType(AnimatedOpacity),
+          )
+          .first,
+    )
+    .opacity;
+
 void _expectHorizontallyCenteredOverlay(WidgetTester tester, Rect viewport) {
   final topRow = tester.getRect(find.byKey(const ValueKey("player_top_row")));
   final bottomRow = tester.getRect(find.byKey(const ValueKey("player_bottom_row")));
@@ -721,6 +810,15 @@ void _expectHorizontallyCenteredOverlay(WidgetTester tester, Rect viewport) {
   final orientation = tester.getRect(
     find.byKey(const ValueKey("player_orientation_button")),
   );
+  final jumpLive = tester.getRect(
+    find.byKey(const ValueKey("player_jump_live_button")),
+  );
+  final refresh = tester.getRect(
+    find.byKey(const ValueKey("player_refresh_button")),
+  );
+  final liveDuration = tester.getRect(
+    find.byKey(const ValueKey("player_live_duration")),
+  );
 
   expect(topRow.center.dx, closeTo(viewport.center.dx, 0.01));
   expect(bottomRow.center.dx, closeTo(viewport.center.dx, 0.01));
@@ -728,6 +826,9 @@ void _expectHorizontallyCenteredOverlay(WidgetTester tester, Rect viewport) {
   expect(settings.size, const Size.square(40));
   expect(orientation.size, const Size.square(40));
   expect(back.center.dx, closeTo(liveDot.center.dx, 0.01));
+  expect(liveDuration.left - liveDot.right, lessThanOrEqualTo(8));
+  expect(refresh.center.dx - jumpLive.center.dx, 48);
+  expect(orientation.center.dx - refresh.center.dx, 48);
   expect(settings.center.dx, closeTo(orientation.center.dx, 0.01));
   expect(
     (back.center.dx + settings.center.dx) / 2,

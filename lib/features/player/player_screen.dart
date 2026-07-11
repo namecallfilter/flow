@@ -611,11 +611,11 @@ class _PlayerViewport extends StatelessWidget {
   Widget build(BuildContext context) {
     final viewPadding = MediaQuery.viewPaddingOf(context);
     final horizontalPadding = isLandscape
-        ? math.max(AppSpacing.xs, math.max(viewPadding.left, viewPadding.right))
-        : AppSpacing.xs;
+        ? math.max(AppSpacing.sm, math.max(viewPadding.left, viewPadding.right))
+        : AppSpacing.sm;
     final verticalPadding = isLandscape
-        ? math.max(AppSpacing.xs, math.max(viewPadding.top, viewPadding.bottom))
-        : AppSpacing.xs;
+        ? math.max(AppSpacing.sm, math.max(viewPadding.top, viewPadding.bottom))
+        : AppSpacing.sm;
 
     return ColoredBox(
       key: const ValueKey("player_viewport"),
@@ -1002,10 +1002,14 @@ class _PlayerFooter extends StatelessWidget {
   Widget build(BuildContext context) => Row(
     key: const ValueKey("player_bottom_row"),
     children: [
-      const SizedBox.square(
-        dimension: 40,
-        child: Center(
-          child: _LiveDot(key: ValueKey("player_live_dot")),
+      const SizedBox(
+        width: 32,
+        height: 40,
+        child: Padding(
+          padding: EdgeInsets.only(left: 12, right: 4),
+          child: Center(
+            child: _LiveDot(key: ValueKey("player_live_dot")),
+          ),
         ),
       ),
       Expanded(
@@ -1016,7 +1020,10 @@ class _PlayerFooter extends StatelessWidget {
             alignment: Alignment.centerLeft,
             child: Row(
               children: [
-                _OverlayMetric(text: _formatLiveDuration(liveDuration)),
+                _OverlayMetric(
+                  key: const ValueKey("player_live_duration"),
+                  text: _formatLiveDuration(liveDuration),
+                ),
                 const SizedBox(width: AppSpacing.md),
                 const Icon(Icons.visibility_rounded, color: Colors.white, size: 19),
                 const SizedBox(width: 5),
@@ -1040,12 +1047,14 @@ class _PlayerFooter extends StatelessWidget {
         icon: Icons.fast_forward_rounded,
         onPressed: onJumpToLive,
       ),
+      const SizedBox(width: AppSpacing.sm),
       _OverlayIconButton(
         key: const ValueKey("player_refresh_button"),
         tooltip: "Refresh player",
         icon: Icons.refresh_rounded,
         onPressed: onRefresh,
       ),
+      const SizedBox(width: AppSpacing.sm),
       _OverlayIconButton(
         key: const ValueKey("player_orientation_button"),
         tooltip: isLandscape ? "Exit landscape" : "Enter landscape",
@@ -1093,26 +1102,31 @@ class _CenterPlaybackControl extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final showBufferingIndicator = isBuffering && playWhenReady;
-    return AnimatedOpacity(
-      opacity: visible || showBufferingIndicator ? 1 : 0,
-      duration: const Duration(milliseconds: 160),
-      child: showBufferingIndicator
-          ? const SizedBox.square(
-              dimension: 42,
-              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
-            )
-          : IconButton(
-              key: const ValueKey("player_play_pause_button"),
-              tooltip: playWhenReady ? "Pause" : "Play",
-              onPressed: onPressed,
-              iconSize: 54,
-              color: Colors.white,
-              style: IconButton.styleFrom(
-                backgroundColor: Colors.transparent,
-                minimumSize: const Size.square(68),
+    return IgnorePointer(
+      ignoring: !visible || showBufferingIndicator,
+      child: AnimatedOpacity(
+        opacity: visible || showBufferingIndicator ? 1 : 0,
+        duration: const Duration(milliseconds: 160),
+        child: showBufferingIndicator
+            ? const SizedBox.square(
+                dimension: 42,
+                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3),
+              )
+            : IconButton(
+                key: const ValueKey("player_play_pause_button"),
+                tooltip: playWhenReady ? "Pause" : "Play",
+                onPressed: onPressed,
+                iconSize: 54,
+                color: Colors.white,
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.transparent,
+                  minimumSize: const Size.square(68),
+                ),
+                icon: Icon(
+                  playWhenReady ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                ),
               ),
-              icon: Icon(playWhenReady ? Icons.pause_rounded : Icons.play_arrow_rounded),
-            ),
+      ),
     );
   }
 
@@ -1390,9 +1404,17 @@ class _LiveDot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => const SizedBox.square(
-    dimension: 10,
-    child: DecoratedBox(
-      decoration: BoxDecoration(color: AppColors.liveRed, shape: BoxShape.circle),
+    dimension: 16,
+    child: Center(
+      child: SizedBox.square(
+        dimension: 10,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: AppColors.liveRed,
+            shape: BoxShape.circle,
+          ),
+        ),
+      ),
     ),
   );
 }

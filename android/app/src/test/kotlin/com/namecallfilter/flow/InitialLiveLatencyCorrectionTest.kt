@@ -12,7 +12,7 @@ class InitialLiveLatencyCorrectionTest {
         val plan = plan(
             measuredLatencyMs = 5_000L,
             currentPositionMs = 10_000L,
-            bufferedPositionMs = 14_000L,
+            bufferedPositionMs = 15_000L,
             windowDurationMs = 16_000L,
         )
 
@@ -37,33 +37,35 @@ class InitialLiveLatencyCorrectionTest {
     }
 
     @Test
-    fun unavailableExactTargetWaitsInsteadOfMakingMisleadingPartialSeek() {
+    fun unavailableExactTargetUsesSafeBufferedPartialAndStaysPending() {
         val plan = plan(
             measuredLatencyMs = 5_000L,
             currentPositionMs = 10_000L,
-            bufferedPositionMs = 11_000L,
+            bufferedPositionMs = 12_000L,
             windowDurationMs = 13_500L,
         )
 
-        assertEquals(LiveLatencyCorrectionPlanOutcome.WAIT_FOR_BUFFER, plan.outcome)
-        assertNull(plan.seekPositionMs)
+        assertEquals(LiveLatencyCorrectionPlanOutcome.SEEK, plan.outcome)
+        assertEquals(10_500L, plan.seekPositionMs)
+        assertFalse(plan.reachesTarget)
     }
 
     @Test
-    fun knownLiveWindowNeverSubstitutesForActuallyBufferedMedia() {
+    fun partialCorrectionNeverAdvancesPastActuallyBufferedMedia() {
         val plan = plan(
             measuredLatencyMs = 4_500L,
             currentPositionMs = 10_000L,
-            bufferedPositionMs = 10_500L,
+            bufferedPositionMs = 12_000L,
             windowDurationMs = 14_000L,
         )
 
-        assertEquals(LiveLatencyCorrectionPlanOutcome.WAIT_FOR_BUFFER, plan.outcome)
-        assertNull(plan.seekPositionMs)
+        assertEquals(LiveLatencyCorrectionPlanOutcome.SEEK, plan.outcome)
+        assertEquals(10_500L, plan.seekPositionMs)
+        assertFalse(plan.reachesTarget)
     }
 
     @Test
-    fun knownLiveWindowAlsoBoundsABufferedCorrection() {
+    fun knownLiveWindowAlsoBoundsAPartialBufferedCorrection() {
         val plan = plan(
             measuredLatencyMs = 4_500L,
             currentPositionMs = 10_000L,
@@ -71,8 +73,36 @@ class InitialLiveLatencyCorrectionTest {
             windowDurationMs = 13_000L,
         )
 
+        assertEquals(LiveLatencyCorrectionPlanOutcome.SEEK, plan.outcome)
+        assertEquals(11_500L, plan.seekPositionMs)
+        assertFalse(plan.reachesTarget)
+    }
+
+    @Test
+    fun partialCorrectionWaitsWhenNoMeaningfulSafeAdvanceExists() {
+        val plan = plan(
+            measuredLatencyMs = 5_000L,
+            currentPositionMs = 10_000L,
+            bufferedPositionMs = 10_300L,
+            windowDurationMs = 16_000L,
+        )
+
         assertEquals(LiveLatencyCorrectionPlanOutcome.WAIT_FOR_BUFFER, plan.outcome)
         assertNull(plan.seekPositionMs)
+    }
+
+    @Test
+    fun longPauseImmediatelyAdvancesToBufferedEdgeInsteadOfSpeedOnlyCatchUp() {
+        val plan = plan(
+            measuredLatencyMs = 15_990L,
+            currentPositionMs = 16_019L,
+            bufferedPositionMs = 28_000L,
+            windowDurationMs = 34_000L,
+        )
+
+        assertEquals(LiveLatencyCorrectionPlanOutcome.SEEK, plan.outcome)
+        assertEquals(26_500L, plan.seekPositionMs)
+        assertFalse(plan.reachesTarget)
     }
 
     @Test
@@ -228,7 +258,8 @@ class InitialLiveLatencyCorrectionTest {
         currentPositionMs = currentPositionMs,
         bufferedPositionMs = bufferedPositionMs,
         windowDurationMs = windowDurationMs,
-        bufferedSafetyMs = 250L,
+        bufferedSafetyMs = 1_000L,
+        partialBufferedSafetyMs = 1_500L,
         minimumAdvanceMs = 100L,
         targetToleranceMs = 100L,
     )
@@ -241,7 +272,8 @@ class InitialLiveLatencyCorrectionTest {
         currentPositionMs = 10_000L,
         bufferedPositionMs = 15_000L,
         windowDurationMs = 16_000L,
-        bufferedSafetyMs = 250L,
+        bufferedSafetyMs = 1_000L,
+        partialBufferedSafetyMs = 1_500L,
         minimumAdvanceMs = 100L,
         targetToleranceMs = 100L,
     )

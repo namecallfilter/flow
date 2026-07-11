@@ -2,7 +2,6 @@ package com.namecallfilter.flow
 
 import androidx.media3.common.util.UnstableApi
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 @UnstableApi
@@ -10,55 +9,88 @@ class TwitchLatencyPlaybackSpeedControlTest {
     private val policy = TwitchLatencySpeedPolicy()
 
     @Test
-    fun proportionalCatchUpRespondsBeforeLatencyCanRatchetUpward() {
-        assertSpeed(1.0075f, policy.decide(input(latencyMs = 1_800L)))
-        assertSpeed(1.0175f, policy.decide(input(latencyMs = 2_000L)))
-        assertSpeed(1.0375f, policy.decide(input(latencyMs = 2_400L)))
-        assertSpeed(1.05f, policy.decide(input(latencyMs = 4_000L)))
-
-        listOf(1_575L, 1_650L, 1_725L).forEach { latencyMs ->
+    fun catchUpIsBoundedBetweenOneAndOnePointZeroThree() {
+        listOf(700L, 1_500L, 1_650L, 1_849L).forEach { latencyMs ->
             assertSpeed(1.0f, policy.decide(input(latencyMs = latencyMs)))
+        }
+
+        assertSpeed(1.03f, policy.decide(input(latencyMs = 1_850L)))
+        assertSpeed(1.03f, policy.decide(input(latencyMs = Long.MAX_VALUE)))
+    }
+
+    @Test
+    fun latencyHysteresisDoesNotToggleAudioSpeedAroundTarget() {
+        assertSpeed(1.03f, policy.decide(input(latencyMs = 1_850L)))
+
+        listOf(1_825L, 1_725L, 1_651L).forEach { latencyMs ->
+            assertSpeed(1.03f, policy.decide(input(latencyMs = latencyMs)))
+        }
+        assertSpeed(1.0f, policy.decide(input(latencyMs = 1_650L)))
+        assertSpeed(1.0f, policy.decide(input(latencyMs = 1_849L)))
+    }
+
+    @Test
+    fun oneCatchUpSpeedAvoidsAudioPipelineChurnAsLatencyChanges() {
+        listOf(1_850L, 2_000L, 2_500L, 3_500L, 8_000L, 2_200L, 1_651L).forEach { latencyMs ->
+            assertSpeed(1.03f, policy.decide(input(latencyMs = latencyMs)))
         }
     }
 
     @Test
-    fun bufferTiersCapCatchUpWithoutDisablingItAtNormalLowLatencyBuffers() {
+    fun bufferGateHasHysteresisAndKeepsCatchUpArmed() {
         assertDecision(
             speed = 1.0f,
             reason = TwitchLatencySpeedReason.LOW_BUFFER,
-            policy.decide(input(latencyMs = 4_000L, bufferedDurationMs = 349L)),
+            policy.decide(input(latencyMs = 4_000L, bufferedDurationMs = 249L)),
         )
         assertDecision(
-            speed = 1.01f,
+            speed = 1.0f,
             reason = TwitchLatencySpeedReason.LOW_BUFFER,
-            policy.decide(input(latencyMs = 4_000L, bufferedDurationMs = 500L)),
+            policy.decide(input(latencyMs = 4_000L, bufferedDurationMs = 999L)),
         )
         assertDecision(
             speed = 1.03f,
-            reason = TwitchLatencySpeedReason.LOW_BUFFER,
-            policy.decide(input(latencyMs = 4_000L, bufferedDurationMs = 800L)),
+            reason = TwitchLatencySpeedReason.HIGH_LATENCY,
+            policy.decide(input(latencyMs = 4_000L, bufferedDurationMs = 1_000L)),
         )
         assertDecision(
-            speed = 1.05f,
+            speed = 1.03f,
             reason = TwitchLatencySpeedReason.HIGH_LATENCY,
-            policy.decide(input(latencyMs = 4_000L, bufferedDurationMs = 1_500L)),
+            policy.decide(input(latencyMs = 4_000L, bufferedDurationMs = 500L)),
+        )
+        assertDecision(
+            speed = 1.0f,
+            reason = TwitchLatencySpeedReason.LOW_BUFFER,
+            policy.decide(input(latencyMs = 4_000L, bufferedDurationMs = 249L)),
         )
     }
 
     @Test
-    fun dangerouslyLowLatencyRestoresSafetyProportionally() {
-        assertSpeed(0.98f, policy.decide(input(latencyMs = 700L, bufferedDurationMs = 100L)))
-        val gentle = policy.decide(input(latencyMs = 1_500L, bufferedDurationMs = 100L))
-        assertTrue(gentle.speed in 0.99f..0.999f)
-        assertEquals(TwitchLatencySpeedMode.RESTORING_SAFETY, gentle.mode)
+    fun firstCatchUpEntryRequiresTheFullResumeBuffer() {
+        val firstAtNineHundredNinetyNine = TwitchLatencySpeedPolicy().decide(
+            input(latencyMs = 4_000L, bufferedDurationMs = 999L),
+        )
+        assertDecision(
+            speed = 1.0f,
+            reason = TwitchLatencySpeedReason.LOW_BUFFER,
+            decision = firstAtNineHundredNinetyNine,
+        )
+
+        val firstAtOneSecond = TwitchLatencySpeedPolicy().decide(
+            input(latencyMs = 4_000L, bufferedDurationMs = 1_000L),
+        )
+        assertDecision(
+            speed = 1.03f,
+            reason = TwitchLatencySpeedReason.HIGH_LATENCY,
+            decision = firstAtOneSecond,
+        )
     }
 
     @Test
-    fun missingStaleAndInactiveMeasurementsNeverChangeSpeed() {
+    fun missingAndStaleMeasurementsNeverChangeSpeed() {
         listOf(
             input(latencyMs = null),
-            input(latencyMs = 6_000L, measurementAgeMs = 3_501L),
-            input(latencyMs = 6_000L, playbackActive = false),
+            input(latencyMs = 6_000L, measurementAgeMs = 6_001L),
         ).forEach { currentInput ->
             assertSpeed(1.0f, policy.decide(currentInput))
         }
@@ -99,7 +131,7 @@ class TwitchLatencyPlaybackSpeedControlTest {
     }
 
     @Test
-    fun freshTranscRImmediatelyRestartsCorrectionAfterRebuffer() {
+    fun briefRebufferPreservesFreshCorrection() {
         var realtimeMs = 10_000L
         val controller = TwitchLatencyPlaybackSpeedControl(
             realtimeClockMs = { realtimeMs },
@@ -107,14 +139,43 @@ class TwitchLatencyPlaybackSpeedControlTest {
         )
         controller.setPlaybackActive(true)
         controller.updateLatencyMeasurement(4_000L)
-        assertSpeed(1.05f, adjustedSpeed(controller))
+        assertSpeed(1.03f, adjustedSpeed(controller))
 
         controller.notifyRebuffer()
-        assertSpeed(1.0f, adjustedSpeed(controller))
+        assertSpeed(1.03f, adjustedSpeed(controller))
+    }
 
-        realtimeMs += 50L
-        controller.updateLatencyMeasurement(4_000L)
-        assertSpeed(1.05f, adjustedSpeed(controller))
+    @Test
+    fun staleGapStopsSpeedWithoutDiscardingCatchUpHysteresis() {
+        val policy = TwitchLatencySpeedPolicy()
+        assertSpeed(1.03f, policy.decide(input(latencyMs = 1_900L)))
+        assertSpeed(
+            1.0f,
+            policy.decide(input(latencyMs = 1_800L, measurementAgeMs = 6_001L)),
+        )
+        assertSpeed(
+            1.03f,
+            policy.decide(input(latencyMs = 1_800L, measurementAgeMs = 0L)),
+        )
+    }
+
+    @Test
+    fun asynchronousIsPlayingCallbackCannotSuppressMedia3Correction() {
+        var realtimeMs = 10_000L
+        val controller = TwitchLatencyPlaybackSpeedControl(
+            realtimeClockMs = { realtimeMs },
+            logger = {},
+        )
+        controller.setPlaybackActive(true)
+        controller.updateLatencyMeasurement(2_000L)
+        assertSpeed(1.03f, adjustedSpeed(controller))
+
+        controller.setPlaybackActive(false)
+        realtimeMs += 250L
+        assertSpeed(1.03f, adjustedSpeed(controller))
+
+        controller.setPlaybackActive(true)
+        assertSpeed(1.03f, adjustedSpeed(controller))
     }
 
     @Test
@@ -129,18 +190,16 @@ class TwitchLatencyPlaybackSpeedControlTest {
             source = LiveLatencyMeasurementSource.STITCHED_AD_TIMELINE,
         )
 
-        assertSpeed(1.0175f, adjustedSpeed(controller))
+        assertSpeed(1.03f, adjustedSpeed(controller))
     }
 
     private fun input(
         latencyMs: Long? = 3_000L,
         measurementAgeMs: Long? = 500L,
-        playbackActive: Boolean = true,
         bufferedDurationMs: Long? = 4_000L,
     ) = TwitchLatencySpeedInput(
         latencyMs = latencyMs,
         measurementAgeMs = measurementAgeMs,
-        playbackActive = playbackActive,
         bufferedDurationMs = bufferedDurationMs,
     )
 

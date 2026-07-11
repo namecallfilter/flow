@@ -65,6 +65,7 @@ internal class TwitchPlayerView(
     private var selectedQualityId = AUTO_QUALITY_ID
     private val qualityOverrides = mutableMapOf<String, TrackSelectionOverride>()
     private val adCues = mutableMapOf<String, TwitchAdCue>()
+    private val stitchedAdLatencyFallback = StitchedAdLatencyFallback()
     private var latestAdEvent: Map<String, Any?> = inactiveAdEvent()
     private var hasRenderedFirstFrame = false
     private var latestCorrectionMeasurement: LiveLatencyMeasurement? = null
@@ -231,6 +232,7 @@ internal class TwitchPlayerView(
         metadataListener = null
         latencySession = null
         adCues.clear()
+        stitchedAdLatencyFallback.reset()
         methodChannel.setMethodCallHandler(null)
         eventChannel.setStreamHandler(null)
         eventSink = null
@@ -247,6 +249,7 @@ internal class TwitchPlayerView(
         latestError = null
         latestQualities = emptyList()
         adCues.clear()
+        stitchedAdLatencyFallback.reset()
         qualityOverrides.clear()
         selectedQualityId = AUTO_QUALITY_ID
         player.trackSelectionParameters = player.trackSelectionParameters
@@ -274,6 +277,9 @@ internal class TwitchPlayerView(
                 if (generation == sessionGeneration && player.playWhenReady) {
                     val measuredRealtimeMs = SystemClock.elapsedRealtime()
                     lastPrimaryLatencyRealtimeMs = measuredRealtimeMs
+                    if (stitchedAdLatencyFallback.onAcceptedPrimaryLatency()) {
+                        Log.d(LOG_TAG, "latency switched from stitched-ad timeline to transc_r")
+                    }
                     emitLatency(latencyMs)
                     val transcRMs = session.lastTranscR
                     if (transcRMs != null) {
@@ -301,6 +307,7 @@ internal class TwitchPlayerView(
             .setUserAgent(USER_AGENT)
         val dataSourceFactory = DefaultDataSource.Factory(playerView.context, httpDataSourceFactory)
         val mediaSource = HlsMediaSource.Factory(dataSourceFactory)
+            .setExtractorFactory(TwitchEmsgMetadataBridgeExtractorFactory())
             .setMetadataType(HlsMediaSource.METADATA_TYPE_ID3)
             .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(MINIMUM_LOAD_RETRY_COUNT))
             .setPlaylistParserFactory(
@@ -424,6 +431,7 @@ internal class TwitchPlayerView(
             bufferedPositionMs = bufferedPositionMs,
             windowDurationMs = windowDurationMs,
             bufferedSafetyMs = CORRECTION_EDGE_GUARD_MS,
+            partialBufferedSafetyMs = CORRECTION_PARTIAL_BUFFER_SAFETY_MS,
             minimumAdvanceMs = CORRECTION_MINIMUM_ADVANCE_MS,
             targetToleranceMs = CORRECTION_TARGET_TOLERANCE_MS,
         )
@@ -536,16 +544,20 @@ internal class TwitchPlayerView(
             }
         }
         val progress = twitchAdProgress(adCues.values, playbackEpochMs)
+        stitchedAdLatencyFallback.onAdProgress(progress != null)
         if (progress == null) {
             emitAd(null, null)
-            return
+        } else {
+            emitAd(progress.cue, progress)
         }
 
-        emitAd(progress.cue, progress)
         val primaryLatencyIsFresh = lastPrimaryLatencyRealtimeMs?.let { measuredAtMs ->
             SystemClock.elapsedRealtime() - measuredAtMs <= PRIMARY_LATENCY_FRESHNESS_MS
         } == true
-        if (player.playWhenReady && !primaryLatencyIsFresh) {
+        if (
+            player.playWhenReady &&
+            stitchedAdLatencyFallback.shouldUseTimeline(primaryLatencyIsFresh)
+        ) {
             adFallbackLatencyMs(
                 clientNowMs = System.currentTimeMillis(),
                 serverOffsetMs = latencySession?.serverOffsetMs,
@@ -741,7 +753,8 @@ internal class TwitchPlayerView(
         const val AD_PROGRESS_INTERVAL_MS = 500L
         const val EXPIRED_AD_CUE_RETENTION_MS = 30 * 60_000L
         const val PRIMARY_LATENCY_FRESHNESS_MS = 2500L
-        const val CORRECTION_EDGE_GUARD_MS = 250L
+        const val CORRECTION_EDGE_GUARD_MS = 1000L
+        const val CORRECTION_PARTIAL_BUFFER_SAFETY_MS = 1500L
         const val CORRECTION_MINIMUM_ADVANCE_MS = 100L
         const val CORRECTION_TARGET_TOLERANCE_MS = 100L
         const val CORRECTION_MEASUREMENT_MAX_AGE_MS = 2500L

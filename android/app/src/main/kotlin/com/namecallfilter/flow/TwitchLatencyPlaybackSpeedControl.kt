@@ -10,23 +10,19 @@ import androidx.media3.exoplayer.LivePlaybackSpeedControl
 internal enum class TwitchLatencySpeedMode {
     STEADY,
     CATCHING_UP,
-    RESTORING_SAFETY,
 }
 
 internal enum class TwitchLatencySpeedReason {
     NO_MEASUREMENT,
     STALE_MEASUREMENT,
-    PLAYBACK_INACTIVE,
     LOW_BUFFER,
     TARGET_RANGE,
     HIGH_LATENCY,
-    LOW_LATENCY,
 }
 
 internal data class TwitchLatencySpeedInput(
     val latencyMs: Long?,
     val measurementAgeMs: Long?,
-    val playbackActive: Boolean,
     val bufferedDurationMs: Long?,
 )
 
@@ -39,18 +35,24 @@ internal data class TwitchLatencySpeedDecision(
 /**
  * A deliberately conservative controller around Twitch's validated transc_r latency.
  *
- * Playback speed is proportional to the measured target error, with a small 1x
- * deadband. Buffer tiers cap (rather than completely disable) catch-up so a
- * low-latency stream can correct slow upward drift without consuming its last
- * few hundred milliseconds of playable media.
+ * Playback speed uses one stable correction level. Enter/exit
+ * hysteresis prevents normal segment-metadata jitter around the target from
+ * repeatedly rebuilding Media3's time-stretching audio pipeline. Catch-up stays
+ * at the same speed until latency reaches the exit threshold.
+ *
+ * Low buffer uses a separate hysteresis gate. This avoids oscillating between
+ * 1x and catch-up speed when the reported buffered duration sits on a boundary.
  */
 internal class TwitchLatencySpeedPolicy {
-    fun reset() = Unit
+    private var catchingUp = false
+    private var bufferConstrained = false
+
+    fun reset() {
+        catchingUp = false
+        bufferConstrained = false
+    }
 
     fun decide(input: TwitchLatencySpeedInput): TwitchLatencySpeedDecision {
-        if (!input.playbackActive) {
-            return steady(TwitchLatencySpeedReason.PLAYBACK_INACTIVE)
-        }
         val latencyMs = input.latencyMs
             ?: return steady(TwitchLatencySpeedReason.NO_MEASUREMENT)
         val measurementAgeMs = input.measurementAgeMs
@@ -62,36 +64,32 @@ internal class TwitchLatencySpeedPolicy {
             return steady(TwitchLatencySpeedReason.STALE_MEASUREMENT)
         }
 
-        val errorMs = latencyMs - TARGET_LATENCY_MS
-        if (errorMs in -TARGET_DEADBAND_MS..TARGET_DEADBAND_MS) {
+        if (!catchingUp && latencyMs < CATCH_UP_ENTER_LATENCY_MS) {
             return steady(TwitchLatencySpeedReason.TARGET_RANGE)
         }
-        val requestedSpeed = (
-            NORMAL_PLAYBACK_SPEED +
-                PROPORTIONAL_GAIN_PER_MILLISECOND * errorMs.toFloat()
-            ).coerceIn(MIN_PLAYBACK_SPEED, MAX_PLAYBACK_SPEED)
-        if (errorMs < 0) {
-            return TwitchLatencySpeedDecision(
-                speed = requestedSpeed,
-                mode = TwitchLatencySpeedMode.RESTORING_SAFETY,
-                reason = TwitchLatencySpeedReason.LOW_LATENCY,
-            )
+        if (catchingUp && latencyMs <= CATCH_UP_EXIT_LATENCY_MS) {
+            reset()
+            return steady(TwitchLatencySpeedReason.TARGET_RANGE)
+        }
+        if (!catchingUp) {
+            catchingUp = true
+            // Enter catch-up only after a full safety buffer is available.
+            // Once active, the lower pause threshold prevents a normal HLS
+            // buffer sawtooth from repeatedly toggling the audio processor.
+            bufferConstrained = true
         }
 
         val bufferedDurationMs = input.bufferedDurationMs
-        val speed = when {
-            bufferedDurationMs == null || bufferedDurationMs < MIN_CATCH_UP_BUFFER_MS ->
-                NORMAL_PLAYBACK_SPEED
-            bufferedDurationMs < MEDIUM_CATCH_UP_BUFFER_MS ->
-                minOf(requestedSpeed, GENTLE_CATCH_UP_SPEED)
-            bufferedDurationMs < MAX_CATCH_UP_BUFFER_MS ->
-                minOf(requestedSpeed, MEDIUM_CATCH_UP_SPEED)
-            else -> requestedSpeed
+        bufferConstrained = when {
+            bufferedDurationMs == null -> true
+            bufferConstrained -> bufferedDurationMs < RESUME_CATCH_UP_BUFFER_MS
+            else -> bufferedDurationMs < PAUSE_CATCH_UP_BUFFER_MS
         }
+        val speed = if (bufferConstrained) NORMAL_PLAYBACK_SPEED else CATCH_UP_SPEED
         return TwitchLatencySpeedDecision(
             speed = speed,
             mode = TwitchLatencySpeedMode.CATCHING_UP,
-            reason = if (speed < requestedSpeed || speed == NORMAL_PLAYBACK_SPEED) {
+            reason = if (bufferConstrained) {
                 TwitchLatencySpeedReason.LOW_BUFFER
             } else {
                 TwitchLatencySpeedReason.HIGH_LATENCY
@@ -111,17 +109,15 @@ internal class TwitchLatencySpeedPolicy {
 
     internal companion object {
         const val TARGET_LATENCY_MS = 1_650L
-        const val TARGET_DEADBAND_MS = 75L
-        const val PROPORTIONAL_GAIN_PER_MILLISECOND = 0.00005f
-        const val MIN_CATCH_UP_BUFFER_MS = 350L
-        const val MEDIUM_CATCH_UP_BUFFER_MS = 750L
-        const val MAX_CATCH_UP_BUFFER_MS = 1_500L
-        const val MAX_MEASUREMENT_AGE_MS = 3_500L
+        const val CATCH_UP_ENTER_LATENCY_MS = 1_850L
+        const val CATCH_UP_EXIT_LATENCY_MS = TARGET_LATENCY_MS
+        const val PAUSE_CATCH_UP_BUFFER_MS = 250L
+        const val RESUME_CATCH_UP_BUFFER_MS = 1_000L
+        const val MAX_MEASUREMENT_AGE_MS = 6_000L
         const val NORMAL_PLAYBACK_SPEED = 1.0f
-        const val GENTLE_CATCH_UP_SPEED = 1.01f
-        const val MEDIUM_CATCH_UP_SPEED = 1.03f
-        const val MAX_PLAYBACK_SPEED = 1.05f
-        const val MIN_PLAYBACK_SPEED = 0.98f
+        const val CATCH_UP_SPEED = 1.03f
+        const val MAX_PLAYBACK_SPEED = CATCH_UP_SPEED
+        const val MIN_PLAYBACK_SPEED = NORMAL_PLAYBACK_SPEED
     }
 }
 
@@ -142,13 +138,11 @@ internal class TwitchLatencyPlaybackSpeedControl(
     private val loadControlTargetLiveOffsetUs =
         millisecondsToMicroseconds(loadControlTargetLiveOffsetMs)
     private var measurement: Measurement? = null
-    private var playbackActive = false
     private var lastLoggedDecision: TwitchLatencySpeedDecision? = null
 
     @Synchronized
     fun reset() {
         measurement = null
-        playbackActive = false
         lastLoggedDecision = null
         policy.reset()
         logger("speed control reset")
@@ -174,15 +168,11 @@ internal class TwitchLatencyPlaybackSpeedControl(
     }
 
     @Synchronized
+    @Suppress("UNUSED_PARAMETER")
     fun setPlaybackActive(isActive: Boolean) {
-        if (playbackActive && !isActive) {
-            // A measurement taken before a pause, seek, or rebuffer no longer
-            // describes the position playback will resume from.
-            measurement = null
-            policy.reset()
-            lastLoggedDecision = null
-        }
-        playbackActive = isActive
+        // Kept as a compatibility hook for player callbacks. Media3 already
+        // invokes getAdjustedPlaybackSpeed only for eligible READY live
+        // playback, while Player.isPlaying callbacks can arrive one loop late.
     }
 
     @Synchronized
@@ -198,10 +188,11 @@ internal class TwitchLatencyPlaybackSpeedControl(
 
     @Synchronized
     override fun notifyRebuffer() {
-        measurement = null
-        policy.reset()
-        lastLoggedDecision = null
-        logger("speed control waiting for fresh transc_r after rebuffer")
+        // Media3 calls this only for buffer depletion. The playback position has
+        // not discontinuously changed, so the last validated latency remains
+        // useful if the rebuffer is brief. Age validation still prevents an old
+        // sample from driving correction after a long stall.
+        logger("speed control preserving fresh latency through rebuffer")
     }
 
     @Synchronized
@@ -219,7 +210,6 @@ internal class TwitchLatencyPlaybackSpeedControl(
                 measurementAgeMs = currentMeasurement?.let {
                     nowRealtimeMs - it.realtimeMs
                 },
-                playbackActive = playbackActive,
                 bufferedDurationMs = microsecondsToMillisecondsOrNull(bufferedDurationUs),
             ),
         )

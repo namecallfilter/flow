@@ -103,6 +103,32 @@ class TwitchAdCueTest {
     }
 
     @Test
+    fun stitchedAdLatencyFallbackSurvivesEarlyCueEndUntilPrimaryReturns() {
+        val fallback = StitchedAdLatencyFallback()
+
+        assertFalse(fallback.shouldUseTimeline(primaryLatencyIsFresh = false))
+        fallback.onAdProgress(isActive = true)
+        assertTrue(fallback.shouldUseTimeline(primaryLatencyIsFresh = false))
+        assertFalse(fallback.shouldUseTimeline(primaryLatencyIsFresh = true))
+
+        // The playlist can say the ad ended before the last stitched creative.
+        // With no current transc_r yet, the ad timeline remains authoritative.
+        assertTrue(fallback.shouldUseTimeline(primaryLatencyIsFresh = false))
+        assertTrue(fallback.onAcceptedPrimaryLatency())
+        assertFalse(fallback.shouldUseTimeline(primaryLatencyIsFresh = false))
+        assertFalse(fallback.onAcceptedPrimaryLatency())
+        // A later ticker update for the same cue cannot replace transc_r.
+        fallback.onAdProgress(isActive = true)
+        assertFalse(fallback.shouldUseTimeline(primaryLatencyIsFresh = false))
+
+        fallback.onAdProgress(isActive = false)
+        fallback.onAdProgress(isActive = true)
+        assertTrue(fallback.shouldUseTimeline(primaryLatencyIsFresh = false))
+        fallback.reset()
+        assertFalse(fallback.shouldUseTimeline(primaryLatencyIsFresh = false))
+    }
+
+    @Test
     fun reportsCurrentCreativeAndRemainingTimeAcrossTheWholePod() {
         val first = TwitchAdCue(
             id = "first",
