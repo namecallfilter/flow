@@ -50,7 +50,7 @@ class SystemPlayerDisplayModeController implements PlayerDisplayModeController {
 
   @override
   Future<void> restore() async {
-    await SystemChrome.setPreferredOrientations(DeviceOrientation.values);
+    await SystemChrome.setPreferredOrientations(const <DeviceOrientation>[]);
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   }
 }
