@@ -1,9 +1,11 @@
+import "dart:async";
 import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/channel/channel_screen.dart";
+import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/widgets/avatar_ring.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flutter/material.dart";
@@ -112,6 +114,115 @@ void main() {
     expect(metadata.overflow, isNot(TextOverflow.ellipsis));
   });
 
+  testWidgets("opens the live player when the channel avatar is tapped", (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: ChannelScreen(
+          apiCache: TwitchApiCache(
+            clientLoader: () async => TwitchApiClient(
+              clientId: "client-123",
+              accessToken: "token-123",
+              httpClient: MockClient((_) async => _channelDetailsResponse()),
+            ),
+          ),
+          initialChannel: const ChannelPreview(
+            login: "jason",
+            displayName: "Jason",
+            isLive: true,
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey("channel_profile_avatar")));
+    await tester.pumpAndSettle();
+
+    final player = tester.widget<StreamPlayerScreen>(
+      find.byType(StreamPlayerScreen),
+    );
+    expect(player.channel.id, "creator-1");
+    expect(player.channel.login, "jason");
+    expect(player.channel.name, "Jason");
+    expect(player.channel.title, "Live with chat");
+    expect(player.channel.category, "Just Chatting");
+    expect(player.channel.viewers, "26.3K");
+    expect(
+      player.channel.startedAt?.toUtc(),
+      DateTime.parse("2026-07-04T01:00:00Z"),
+    );
+  });
+
+  testWidgets("does not open stale preview playback before channel details load", (
+    tester,
+  ) async {
+    final response = Completer<http.Response>();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: ChannelScreen(
+          apiCache: TwitchApiCache(
+            clientLoader: () async => TwitchApiClient(
+              clientId: "client-123",
+              accessToken: "token-123",
+              httpClient: MockClient((_) => response.future),
+            ),
+          ),
+          initialChannel: const ChannelPreview(
+            login: "jason",
+            displayName: "Jason",
+            isLive: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey("channel_profile_avatar")));
+    await tester.pump();
+    expect(find.byType(StreamPlayerScreen), findsNothing);
+
+    response.complete(_channelDetailsResponse(isLive: false));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets("does not open the player from an offline channel avatar", (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: ChannelScreen(
+          apiCache: TwitchApiCache(
+            clientLoader: () async => TwitchApiClient(
+              clientId: "client-123",
+              accessToken: "token-123",
+              httpClient: MockClient(
+                (_) async => _channelDetailsResponse(isLive: false),
+              ),
+            ),
+          ),
+          initialChannel: const ChannelPreview(
+            login: "jason",
+            displayName: "Jason",
+            isLive: true,
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey("channel_live_badge")), findsNothing);
+    await tester.tap(find.byKey(const ValueKey("channel_profile_avatar")));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(StreamPlayerScreen), findsNothing);
+  });
+
   testWidgets("loads more past broadcasts when scrolling near the bottom", (tester) async {
     final requestedRequests = <http.Request>[];
     await tester.binding.setSurfaceSize(const Size(390, 420));
@@ -184,6 +295,7 @@ http.Response _channelDetailsResponse({
   String videoTitle = "2025 Japan Trip",
   String category = "Just Chatting",
   String? nextCursor,
+  bool isLive = true,
 }) => http.Response(
   jsonEncode({
     "data": {
@@ -194,17 +306,19 @@ http.Response _channelDetailsResponse({
         "description": "Hi Im Jason",
         "profileImageURL": "https://static-cdn.jtvnw.net/creator-1.png",
         "followers": {"totalCount": 2300000},
-        "stream": {
-          "id": "live-1",
-          "createdAt": "2026-07-04T01:00:00Z",
-          "game": {"id": "509658", "displayName": category},
-          "previewImageURL":
-              "https://static-cdn.jtvnw.net/previews-ttv/live_user_jason-320x180.jpg",
-          "viewersCount": 26300,
-          "broadcaster": {
-            "broadcastSettings": {"title": "Live with chat"},
-          },
-        },
+        "stream": isLive
+            ? {
+                "id": "live-1",
+                "createdAt": "2026-07-04T01:00:00Z",
+                "game": {"id": "509658", "displayName": category},
+                "previewImageURL":
+                    "https://static-cdn.jtvnw.net/previews-ttv/live_user_jason-320x180.jpg",
+                "viewersCount": 26300,
+                "broadcaster": {
+                  "broadcastSettings": {"title": "Live with chat"},
+                },
+              }
+            : null,
         "videos": {
           "edges": [
             {

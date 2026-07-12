@@ -71,4 +71,23 @@ void main() {
       );
     });
   });
+
+  test("preserves stream start time for player metadata", () {
+    final startedAt = DateTime(2026, 7, 9, 20, 30);
+
+    final channel = streamChannelFromStream(
+      TwitchFollowedStream(
+        id: "stream-1",
+        userId: "creator-1",
+        userLogin: "creator",
+        userName: "Creator",
+        gameName: "Just Chatting",
+        title: "Live now",
+        viewerCount: 1234,
+        startedAt: startedAt,
+      ),
+    );
+
+    expect(channel.startedAt, startedAt);
+  });
 }

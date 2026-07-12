@@ -69,7 +69,7 @@ void main() {
     expect(find.text("Just Chatting"), findsOneWidget);
   });
 
-  testWidgets("opens channel pages from live identity and offline rows", (
+  testWidgets("opens the player from live media and channels from identities", (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -108,7 +108,14 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey("stream_thumbnail_LiveOne")));
     await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("player_page_liveone")), findsOneWidget);
     expect(find.byKey(const ValueKey("channel_page_liveone")), findsNothing);
+
+    Navigator.of(
+      tester.element(find.byKey(const ValueKey("player_page_liveone"))),
+      rootNavigator: true,
+    ).pop();
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const ValueKey("stream_channel_identity_LiveOne")));
     await tester.pumpAndSettle();

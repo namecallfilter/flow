@@ -2,6 +2,7 @@ import "package:flutter/material.dart";
 
 class StreamChannel {
   const StreamChannel({
+    required this.login,
     required this.name,
     required this.initials,
     required this.title,
@@ -10,9 +11,9 @@ class StreamChannel {
     required this.avatarColors,
     required this.thumbnailColors,
     this.id = "",
-    this.login = "",
     this.avatarImageUrl,
     this.thumbnailUrl,
+    this.startedAt,
   });
 
   final String id;
@@ -26,6 +27,7 @@ class StreamChannel {
   final List<Color> thumbnailColors;
   final String? avatarImageUrl;
   final String? thumbnailUrl;
+  final DateTime? startedAt;
 }
 
 class OfflineChannel {

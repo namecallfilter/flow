@@ -12,6 +12,7 @@ import "package:flow/features/browse/browse_store.dart";
 import "package:flow/features/browse/category_streams_store.dart";
 import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/following/following_screen.dart";
+import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
@@ -187,7 +188,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
     unawaited(
       Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
-          builder: (_) => _CategoryStreamsScreen(
+          builder: (_) => CategoryStreamsScreen(
             authController: _authController,
             apiCache: _apiCache,
             category: category,
@@ -209,6 +210,10 @@ class _BrowseScreenState extends State<BrowseScreen> {
         ),
       ),
     );
+  }
+
+  void _openPlayer(StreamChannel channel) {
+    _openStreamPlayer(context, _apiCache, channel);
   }
 
   void _openSearch() {
@@ -279,6 +284,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
                       _LiveChannelsList(
                         channels: _store.liveChannels,
                         onChannelSelected: _openLiveChannel,
+                        onStreamSelected: _openPlayer,
                       ),
                     if (_store.activeLoading && !_store.activeItemsEmpty) ...[
                       const SizedBox(height: AppSpacing.md),
@@ -429,6 +435,7 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
                         isSearching: _store.isSearching,
                         topPadding: topScrollPadding,
                         onChannelSelected: _openChannel,
+                        onStreamSelected: _openPlayer,
                         onCategorySelected: _openCategory,
                       ),
               ),
@@ -455,7 +462,7 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
     unawaited(
       Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
-          builder: (_) => _CategoryStreamsScreen(
+          builder: (_) => CategoryStreamsScreen(
             authController: widget.authController,
             apiCache: widget.apiCache,
             category: category,
@@ -482,6 +489,29 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
         ),
       ),
     );
+  }
+
+  void _openPlayer(TwitchSearchChannel channel) {
+    final login = channel.broadcasterLogin.trim();
+    if (!channel.isLive || login.isEmpty) {
+      return;
+    }
+
+    final channelName = displayName(channel.displayName, login);
+    final streamChannel = StreamChannel(
+      id: channel.id,
+      login: login,
+      name: channelName,
+      initials: initialsForName(channelName),
+      title: channel.title.isEmpty ? "Live now" : channel.title,
+      category: channel.gameName.isEmpty ? "Live" : channel.gameName,
+      viewers: "--",
+      avatarColors: colorsForText(channel.id),
+      thumbnailColors: colorsForText(channel.id, count: 3),
+      avatarImageUrl: channel.thumbnailUrl,
+      startedAt: channel.startedAt,
+    );
+    _openStreamPlayer(context, widget.apiCache, streamChannel);
   }
 }
 
@@ -716,6 +746,7 @@ class _SearchResults extends StatelessWidget {
     required this.isSearching,
     required this.topPadding,
     required this.onChannelSelected,
+    required this.onStreamSelected,
     required this.onCategorySelected,
   });
 
@@ -725,6 +756,7 @@ class _SearchResults extends StatelessWidget {
   final bool isSearching;
   final double topPadding;
   final ValueChanged<TwitchSearchChannel> onChannelSelected;
+  final ValueChanged<TwitchSearchChannel> onStreamSelected;
   final ValueChanged<BrowseCategory> onCategorySelected;
 
   @override
@@ -753,6 +785,7 @@ class _SearchResults extends StatelessWidget {
           _SearchChannelRow(
             channel: channel,
             onChannelSelected: onChannelSelected,
+            onStreamSelected: onStreamSelected,
           ),
       ],
       if (categories.isNotEmpty) ...[
@@ -792,6 +825,12 @@ class _SearchResults extends StatelessWidget {
       ObjectFlagProperty<ValueChanged<TwitchSearchChannel>>.has(
         "onChannelSelected",
         onChannelSelected,
+      ),
+    );
+    properties.add(
+      ObjectFlagProperty<ValueChanged<TwitchSearchChannel>>.has(
+        "onStreamSelected",
+        onStreamSelected,
       ),
     );
     properties.add(
@@ -841,10 +880,12 @@ class _SearchChannelRow extends StatelessWidget {
   const _SearchChannelRow({
     required this.channel,
     required this.onChannelSelected,
+    required this.onStreamSelected,
   });
 
   final TwitchSearchChannel channel;
   final ValueChanged<TwitchSearchChannel> onChannelSelected;
+  final ValueChanged<TwitchSearchChannel> onStreamSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -858,7 +899,13 @@ class _SearchChannelRow extends StatelessWidget {
     return ListTile(
       key: ValueKey("browse_search_channel_$channelName"),
       contentPadding: EdgeInsets.zero,
-      onTap: channel.isLive ? null : () => onChannelSelected(channel),
+      onTap: () {
+        if (channel.isLive) {
+          onStreamSelected(channel);
+        } else {
+          onChannelSelected(channel);
+        }
+      },
       leading: GestureDetector(
         key: ValueKey("browse_search_channel_avatar_$channelName"),
         behavior: HitTestBehavior.opaque,
@@ -910,6 +957,12 @@ class _SearchChannelRow extends StatelessWidget {
       ObjectFlagProperty<ValueChanged<TwitchSearchChannel>>.has(
         "onChannelSelected",
         onChannelSelected,
+      ),
+    );
+    properties.add(
+      ObjectFlagProperty<ValueChanged<TwitchSearchChannel>>.has(
+        "onStreamSelected",
+        onStreamSelected,
       ),
     );
   }
@@ -1000,26 +1053,27 @@ class _SearchCategoryRow extends StatelessWidget {
   }
 }
 
-class _CategoryStreamsScreen extends StatefulWidget {
-  const _CategoryStreamsScreen({
-    required this.authController,
+class CategoryStreamsScreen extends StatefulWidget {
+  const CategoryStreamsScreen({
     required this.apiCache,
     required this.category,
+    super.key,
+    this.authController,
     this.categoryStreamsStore,
   });
 
-  final TwitchAuthController authController;
+  final TwitchAuthController? authController;
   final TwitchApiCache apiCache;
   final BrowseCategory category;
   final CategoryStreamsStore? categoryStreamsStore;
 
   @override
-  State<_CategoryStreamsScreen> createState() => _CategoryStreamsScreenState();
+  State<CategoryStreamsScreen> createState() => _CategoryStreamsScreenState();
 
   @override
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
-    properties.add(DiagnosticsProperty<TwitchAuthController>("authController", authController));
+    properties.add(DiagnosticsProperty<TwitchAuthController?>("authController", authController));
     properties.add(DiagnosticsProperty<TwitchApiCache>("apiCache", apiCache));
     properties.add(DiagnosticsProperty<BrowseCategory>("category", category));
     properties.add(
@@ -1031,7 +1085,7 @@ class _CategoryStreamsScreen extends StatefulWidget {
   }
 }
 
-class _CategoryStreamsScreenState extends State<_CategoryStreamsScreen> {
+class _CategoryStreamsScreenState extends State<CategoryStreamsScreen> {
   final ScrollController _scrollController = ScrollController();
   late final CategoryStreamsStore _store;
 
@@ -1079,6 +1133,10 @@ class _CategoryStreamsScreenState extends State<_CategoryStreamsScreen> {
     );
   }
 
+  void _openPlayer(StreamChannel channel) {
+    _openStreamPlayer(context, widget.apiCache, channel);
+  }
+
   @override
   Widget build(BuildContext context) => Observer(
     builder: (_) {
@@ -1121,6 +1179,7 @@ class _CategoryStreamsScreenState extends State<_CategoryStreamsScreen> {
                       _LiveChannelsList(
                         channels: _store.channels,
                         onChannelSelected: _openLiveChannel,
+                        onStreamSelected: _openPlayer,
                       ),
                     if (_store.isLoading && _store.channels.isNotEmpty) ...[
                       const SizedBox(height: AppSpacing.md),
@@ -1381,10 +1440,12 @@ class _LiveChannelsList extends StatelessWidget {
   const _LiveChannelsList({
     required this.channels,
     required this.onChannelSelected,
+    required this.onStreamSelected,
   });
 
   final List<StreamChannel> channels;
   final ValueChanged<StreamChannel> onChannelSelected;
+  final ValueChanged<StreamChannel> onStreamSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -1399,6 +1460,7 @@ class _LiveChannelsList extends StatelessWidget {
           StreamCard(
             channel: channel,
             onChannelSelected: onChannelSelected,
+            onStreamSelected: onStreamSelected,
           ),
       ],
     );
@@ -1414,6 +1476,12 @@ class _LiveChannelsList extends StatelessWidget {
         onChannelSelected,
       ),
     );
+    properties.add(
+      ObjectFlagProperty<ValueChanged<StreamChannel>>.has(
+        "onStreamSelected",
+        onStreamSelected,
+      ),
+    );
   }
 }
 
@@ -1423,6 +1491,23 @@ ChannelPreview _channelPreviewFromStreamChannel(StreamChannel channel) => Channe
   avatarImageUrl: channel.avatarImageUrl,
   isLive: true,
 );
+
+void _openStreamPlayer(
+  BuildContext context,
+  TwitchApiCache apiCache,
+  StreamChannel channel,
+) {
+  if (channel.login.trim().isEmpty) {
+    return;
+  }
+  unawaited(
+    Navigator.of(context, rootNavigator: true).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => StreamPlayerScreen(apiCache: apiCache, channel: channel),
+      ),
+    ),
+  );
+}
 
 class _CategoryGrid extends StatelessWidget {
   const _CategoryGrid({

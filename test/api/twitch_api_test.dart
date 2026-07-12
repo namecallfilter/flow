@@ -84,6 +84,86 @@ void main() {
     expect(channel.pastBroadcasts.single.duration, const Duration(seconds: 17999));
     expect(channel.pastBroadcasts.single.viewCount, 91234);
   });
+
+  test("builds a signed Twitch live HLS playback URI", () async {
+    late http.Request capturedRequest;
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      gqlAccessToken: "web-token-123",
+      httpClient: MockClient((request) async {
+        capturedRequest = request;
+        return _jsonResponse({
+          "data": {
+            "streamPlaybackAccessToken": {
+              "value": "{\"expires\":1780000000}",
+              "signature": "signature-123",
+              "authorization": {
+                "isForbidden": false,
+                "forbiddenReasonCode": null,
+              },
+            },
+          },
+        });
+      }),
+    );
+
+    final uri = await client.fetchLivePlaybackUri("KaiCenat");
+    final body = jsonDecode(capturedRequest.body) as Map<String, Object?>;
+    final variables = body["variables"]! as Map<String, Object?>;
+
+    expect(capturedRequest.headers["Authorization"], "OAuth web-token-123");
+    expect(variables["login"], "KaiCenat");
+    expect(variables["platform"], "web");
+    expect(variables["playerType"], "site");
+    expect(body["query"], contains('playerBackend: "mediaplayer"'));
+    expect(uri.scheme, "https");
+    expect(uri.host, "usher.ttvnw.net");
+    expect(uri.path, "/api/v2/channel/hls/KaiCenat.m3u8");
+    expect(uri.queryParameters["sig"], "signature-123");
+    expect(uri.queryParameters["token"], "{\"expires\":1780000000}");
+    expect(uri.queryParameters["fast_bread"], "true");
+    expect(int.tryParse(uri.queryParameters["p"] ?? ""), isNotNull);
+    expect(uri.queryParameters["supported_codecs"], "h264");
+  });
+
+  test("retries a failed authenticated playback-token query anonymously", () async {
+    final authorizationHeaders = <String?>[];
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      gqlAccessToken: "stale-web-token",
+      httpClient: MockClient((request) async {
+        final authorization = request.headers["Authorization"];
+        authorizationHeaders.add(authorization);
+        if (authorization != null) {
+          return _jsonResponse({
+            "errors": [
+              {"message": "Unauthorized"},
+            ],
+          });
+        }
+        return _jsonResponse({
+          "data": {
+            "streamPlaybackAccessToken": {
+              "value": "anonymous-token",
+              "signature": "anonymous-signature",
+              "authorization": {
+                "isForbidden": false,
+                "forbiddenReasonCode": null,
+              },
+            },
+          },
+        });
+      }),
+    );
+
+    final uri = await client.fetchLivePlaybackUri("publicchannel");
+
+    expect(authorizationHeaders, ["OAuth stale-web-token", null]);
+    expect(uri.queryParameters["sig"], "anonymous-signature");
+    expect(uri.queryParameters["token"], "anonymous-token");
+  });
 }
 
 http.Response _jsonResponse(Map<String, Object?> body) => http.Response(

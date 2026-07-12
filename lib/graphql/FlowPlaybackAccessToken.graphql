@@ -1,0 +1,17 @@
+query FlowPlaybackAccessToken($login: String!, $platform: String!, $playerType: String!) {
+  streamPlaybackAccessToken(
+    channelName: $login
+    params: {
+      platform: $platform
+      playerBackend: "mediaplayer"
+      playerType: $playerType
+    }
+  ) {
+    value
+    signature
+    authorization {
+      isForbidden
+      forbiddenReasonCode
+    }
+  }
+}

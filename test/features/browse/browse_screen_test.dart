@@ -1,11 +1,16 @@
 import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
+import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/browse/browse_screen.dart";
+import "package:flow/features/browse/browse_store.dart";
+import "package:flow/features/browse/category_streams_store.dart";
 import "package:flow/features/following/following_screen.dart";
+import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/preferences/preferences.dart";
+import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
@@ -120,6 +125,70 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey("channel_page_aussieantics")), findsOneWidget);
+  });
+
+  testWidgets("does not open players for missing browse or category logins", (tester) async {
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+      ),
+    );
+    const channel = StreamChannel(
+      login: "",
+      name: "MissingLogin",
+      initials: "ML",
+      title: "Live now",
+      category: "Just Chatting",
+      viewers: "1",
+      avatarColors: [Colors.purple, Colors.pink],
+      thumbnailColors: [Colors.black, Colors.grey],
+    );
+    final browseStore = BrowseStore(apiCache: apiCache)
+      ..categoriesLoaded = true
+      ..liveChannelsLoaded = true
+      ..selectedSection = BrowseSection.liveChannels
+      ..liveChannels = const [channel];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: BrowseScreen(
+          apiCache: apiCache,
+          browseStore: browseStore,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey("stream_thumbnail_MissingLogin")));
+    await tester.pumpAndSettle();
+    expect(find.byType(StreamPlayerScreen), findsNothing);
+
+    const category = BrowseCategory(
+      id: "category-1",
+      name: "Just Chatting",
+      viewerCount: 1,
+      viewers: "1",
+      imageUrl: null,
+      colors: [Colors.purple, Colors.pink],
+    );
+    final categoryStore = CategoryStreamsStore(apiCache: apiCache, category: category)
+      ..loaded = true
+      ..channels = const [channel];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: CategoryStreamsScreen(
+          apiCache: apiCache,
+          category: category,
+          categoryStreamsStore: categoryStore,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey("stream_thumbnail_MissingLogin")));
+    await tester.pumpAndSettle();
+    expect(find.byType(StreamPlayerScreen), findsNothing);
   });
 
   testWidgets("does not paginate when switching between Browse sections", (
@@ -360,7 +429,7 @@ void main() {
     expect(searchRequestsAfterReopen, searchRequestsAfterFirstOpen);
   });
 
-  testWidgets("opens search channels with live results limited to the avatar", (
+  testWidgets("opens live search results in the player and avatars as channels", (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -393,7 +462,18 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey("browse_search_channel_HighCreator")));
     await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("player_page_highcreator")), findsOneWidget);
     expect(find.byKey(const ValueKey("channel_page_highcreator")), findsNothing);
+    final player = tester.widget<StreamPlayerScreen>(find.byType(StreamPlayerScreen));
+    expect(player.channel.login, "highcreator");
+    expect(player.channel.name, "HighCreator");
+    expect(player.channel.category, "Minecraft");
+
+    Navigator.of(
+      tester.element(find.byKey(const ValueKey("player_page_highcreator"))),
+      rootNavigator: true,
+    ).pop();
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const ValueKey("browse_search_channel_avatar_HighCreator")));
     await tester.pumpAndSettle();

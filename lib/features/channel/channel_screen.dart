@@ -6,7 +6,9 @@ import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/app/radius.dart";
 import "package:flow/app/spacing.dart";
 import "package:flow/features/channel/channel_store.dart";
+import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
+import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flow/shared/widgets/pull_to_refresh.dart";
 import "package:flow/shared/widgets/section_header.dart";
@@ -79,6 +81,23 @@ class _ChannelScreenState extends State<ChannelScreen> {
 
   Future<void> _refresh() => _store.load(refresh: true);
 
+  void _openLiveStream(StreamChannel channel) {
+    if (channel.login.trim().isEmpty) {
+      return;
+    }
+
+    unawaited(
+      Navigator.of(context, rootNavigator: true).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => StreamPlayerScreen(
+            apiCache: widget.apiCache,
+            channel: channel,
+          ),
+        ),
+      ),
+    );
+  }
+
   void _loadMoreWhenNearBottom() {
     if (!_scrollController.hasClients || _scrollController.position.extentAfter > 420) {
       return;
@@ -91,6 +110,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
     builder: (_) {
       final theme = Theme.of(context);
       final channel = _store.channel;
+      final livePlayerChannel = _livePlayerChannel(channel, widget.initialChannel);
       final bottomScrollPadding = 24 + MediaQuery.of(context).padding.bottom;
 
       return Scaffold(
@@ -125,6 +145,9 @@ class _ChannelScreenState extends State<ChannelScreen> {
                       _ChannelHeader(
                         channel: channel,
                         initialChannel: widget.initialChannel,
+                        onProfileTap: livePlayerChannel == null
+                            ? null
+                            : () => _openLiveStream(livePlayerChannel),
                       ),
                       const SizedBox(height: AppSpacing.xxl),
                       const SectionHeader(title: "Past broadcasts"),
@@ -225,10 +248,12 @@ class _ChannelHeader extends StatelessWidget {
   const _ChannelHeader({
     required this.channel,
     required this.initialChannel,
+    required this.onProfileTap,
   });
 
   final TwitchChannelDetails? channel;
   final ChannelPreview initialChannel;
+  final VoidCallback? onProfileTap;
 
   @override
   Widget build(BuildContext context) {
@@ -236,7 +261,7 @@ class _ChannelHeader extends StatelessWidget {
     final displayName = _displayName(channel, initialChannel);
     final avatarImageUrl = channel?.profileImageUrl ?? initialChannel.avatarImageUrl;
     final liveStream = channel?.liveStream;
-    final isLive = liveStream != null || initialChannel.isLive;
+    final isLive = channel == null ? initialChannel.isLive : liveStream != null;
     final description = channel?.description.trim() ?? "";
     final followers = channel == null
         ? null
@@ -269,6 +294,7 @@ class _ChannelHeader extends StatelessWidget {
                   size: 70,
                   imageUrl: avatarImageUrl,
                   isLive: isLive,
+                  onTap: onProfileTap,
                 ),
                 const SizedBox(width: AppSpacing.md),
                 Expanded(
@@ -354,6 +380,7 @@ class _ChannelHeader extends StatelessWidget {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<TwitchChannelDetails?>("channel", channel));
     properties.add(DiagnosticsProperty<ChannelPreview>("initialChannel", initialChannel));
+    properties.add(ObjectFlagProperty<VoidCallback?>.has("onProfileTap", onProfileTap));
   }
 }
 
@@ -363,6 +390,7 @@ class _PlainChannelAvatar extends StatelessWidget {
     required this.size,
     required this.imageUrl,
     required this.isLive,
+    required this.onTap,
     super.key,
   });
 
@@ -370,6 +398,7 @@ class _PlainChannelAvatar extends StatelessWidget {
   final double size;
   final String? imageUrl;
   final bool isLive;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -390,7 +419,7 @@ class _PlainChannelAvatar extends StatelessWidget {
     );
     final url = imageUrl;
 
-    return SizedBox.square(
+    final avatar = SizedBox.square(
       dimension: size,
       child: Stack(
         clipBehavior: Clip.none,
@@ -411,6 +440,21 @@ class _PlainChannelAvatar extends StatelessWidget {
         ],
       ),
     );
+
+    final handleTap = onTap;
+    if (handleTap == null) {
+      return avatar;
+    }
+
+    return Semantics(
+      button: true,
+      label: "Watch live stream",
+      child: InkResponse(
+        onTap: handleTap,
+        customBorder: const CircleBorder(),
+        child: avatar,
+      ),
+    );
   }
 
   @override
@@ -420,6 +464,7 @@ class _PlainChannelAvatar extends StatelessWidget {
     properties.add(DoubleProperty("size", size));
     properties.add(StringProperty("imageUrl", imageUrl));
     properties.add(DiagnosticsProperty<bool>("isLive", isLive));
+    properties.add(ObjectFlagProperty<VoidCallback?>.has("onTap", onTap));
   }
 }
 
@@ -656,6 +701,45 @@ String _displayName(
   }
   final initialName = initialChannel.displayName.trim();
   return initialName.isEmpty ? initialChannel.login : initialName;
+}
+
+StreamChannel? _livePlayerChannel(
+  TwitchChannelDetails? channel,
+  ChannelPreview initialChannel,
+) {
+  final liveStream = channel?.liveStream;
+  if (channel == null || liveStream == null) {
+    return null;
+  }
+  final login = channel.login.trim();
+  if (login.isEmpty) {
+    return null;
+  }
+
+  final id = channel.id.trim();
+  final name = _displayName(channel, initialChannel);
+  final streamId = liveStream.id.trim();
+  final title = liveStream.title.trim();
+  final category = liveStream.category.trim();
+  final viewerCount = liveStream.viewerCount;
+
+  return StreamChannel(
+    id: id,
+    login: login,
+    name: name,
+    initials: initialsForName(name),
+    title: title.isEmpty ? "Live now" : title,
+    category: category.isEmpty ? "Live" : category,
+    viewers: formatCompactCount(viewerCount),
+    avatarColors: colorsForText(id.isEmpty ? login : id),
+    thumbnailColors: colorsForText(
+      streamId.isEmpty ? (id.isEmpty ? login : id) : streamId,
+      count: 3,
+    ),
+    avatarImageUrl: channel.profileImageUrl ?? initialChannel.avatarImageUrl,
+    thumbnailUrl: twitchThumbnailUrl(liveStream.thumbnailUrl),
+    startedAt: liveStream.startedAt,
+  );
 }
 
 String _durationText(Duration duration) {

@@ -12,6 +12,11 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
+        flutterEngine.platformViewsController.registry.registerViewFactory(
+            "flow/twitch_player",
+            TwitchPlayerViewFactory(flutterEngine.dartExecutor.binaryMessenger),
+        )
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "flow/cookie_extractor")
             .setMethodCallHandler { call, result ->
                 if (call.method == "extractTwitchAuthToken") {
