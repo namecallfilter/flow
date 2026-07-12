@@ -48,7 +48,6 @@ class TwitchEmsgMetadataBridgeTest {
         session.captureServerTimeEpochSeconds(SERVER_NOW_SECONDS)
         session.handleMetadata(checkNotNull(metadata))
 
-        assertEquals(2_100L, session.displayedLatencyMs)
         assertEquals(listOf(2_100L), accepted)
         assertEquals(1, logs.count { it.contains("bridging Twitch EMSG") })
     }

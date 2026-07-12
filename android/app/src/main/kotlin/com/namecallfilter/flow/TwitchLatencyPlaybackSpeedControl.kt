@@ -168,14 +168,6 @@ internal class TwitchLatencyPlaybackSpeedControl(
     }
 
     @Synchronized
-    @Suppress("UNUSED_PARAMETER")
-    fun setPlaybackActive(isActive: Boolean) {
-        // Kept as a compatibility hook for player callbacks. Media3 already
-        // invokes getAdjustedPlaybackSpeed only for eligible READY live
-        // playback, while Player.isPlaying callbacks can arrive one loop late.
-    }
-
-    @Synchronized
     override fun setLiveConfiguration(liveConfiguration: MediaItem.LiveConfiguration) = Unit
 
     @Synchronized

@@ -25,7 +25,6 @@ class TwitchLatencySessionTest {
 
         assertEquals(250L, session.serverOffsetMs)
         assertEquals(1_699_999_998_150L, session.lastTranscR)
-        assertEquals(2_100L, session.displayedLatencyMs)
         assertEquals(listOf(2_100L), accepted)
     }
 
@@ -46,7 +45,6 @@ class TwitchLatencySessionTest {
         session.handleSegmentMetadataValue("{\"transc_r\":\"bad\"}")
 
         assertEquals(1_699_999_998_000L, session.lastTranscR)
-        assertEquals(2_000L, session.displayedLatencyMs)
         assertEquals(listOf(2_000L), accepted)
     }
 
@@ -56,7 +54,6 @@ class TwitchLatencySessionTest {
 
         assertNull(session.serverOffsetMs)
         assertNull(session.lastTranscR)
-        assertNull(session.displayedLatencyMs)
     }
 
     @Test
@@ -86,7 +83,7 @@ class TwitchLatencySessionTest {
                 ),
             ),
         )
-        assertNull(session.displayedLatencyMs)
+        assertEquals(emptyList<Long>(), accepted)
 
         session.handleMetadata(
             Metadata(
@@ -100,7 +97,6 @@ class TwitchLatencySessionTest {
             ),
         )
 
-        assertEquals(2_000L, session.displayedLatencyMs)
         assertEquals(listOf(2_000L), accepted)
     }
 

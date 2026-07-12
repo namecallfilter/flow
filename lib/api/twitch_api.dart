@@ -607,19 +607,7 @@ class TwitchApiClient {
       throw TwitchApiException("Channel login is required.");
     }
 
-    final data = await _query(
-      () => _playbackGraphQlClient.query$FlowPlaybackAccessToken(
-        Options$Query$FlowPlaybackAccessToken(
-          variables: Variables$Query$FlowPlaybackAccessToken(
-            login: normalizedLogin,
-            platform: "web",
-            playerType: "site",
-          ),
-          fetchPolicy: graphql.FetchPolicy.noCache,
-        ),
-      ),
-      "FlowPlaybackAccessToken",
-    );
+    final data = await _fetchPlaybackAccessToken(normalizedLogin);
     final access = data.streamPlaybackAccessToken;
     final authorization = access?.authorization;
     if (authorization?.isForbidden == true) {
@@ -755,8 +743,29 @@ class TwitchApiClient {
     return _tokenGraphQlClient;
   }
 
-  graphql.GraphQLClient get _playbackGraphQlClient =>
-      _nonEmptyValue(gqlAccessToken) == null ? _graphQlClient : _tokenGraphQlClient;
+  Future<Query$FlowPlaybackAccessToken> _fetchPlaybackAccessToken(String login) async {
+    final options = Options$Query$FlowPlaybackAccessToken(
+      variables: Variables$Query$FlowPlaybackAccessToken(
+        login: login,
+        platform: "web",
+        playerType: "site",
+      ),
+      fetchPolicy: graphql.FetchPolicy.noCache,
+    );
+    Future<Query$FlowPlaybackAccessToken> query(graphql.GraphQLClient client) => _query(
+      () => client.query$FlowPlaybackAccessToken(options),
+      "FlowPlaybackAccessToken",
+    );
+
+    if (_nonEmptyValue(gqlAccessToken) == null) {
+      return query(_graphQlClient);
+    }
+    try {
+      return await query(_tokenGraphQlClient);
+    } on TwitchApiException {
+      return query(_graphQlClient);
+    }
+  }
 
   Map<String, String> _graphQlHeaders({required bool includeToken}) {
     final headers = {

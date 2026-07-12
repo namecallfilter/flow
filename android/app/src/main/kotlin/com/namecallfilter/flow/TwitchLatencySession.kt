@@ -17,16 +17,12 @@ internal class TwitchLatencySession(
 ) {
     private val serverOffset = AtomicLong(UNSET_VALUE)
     private val transcR = AtomicReference<Long?>(null)
-    private val displayedLatency = AtomicReference<Long?>(null)
 
     internal val serverOffsetMs: Long?
         get() = serverOffset.get().takeUnless { it == UNSET_VALUE }
 
     internal val lastTranscR: Long?
         get() = transcR.get()
-
-    internal val displayedLatencyMs: Long?
-        get() = displayedLatency.get()
 
     fun captureServerTimeEpochSeconds(serverTimeSeconds: Double) {
         if (
@@ -93,7 +89,6 @@ internal class TwitchLatencySession(
         // Resume/jump freshness barriers must be anchored to accepted metadata.
         // A rejected future or otherwise invalid value must not poison them.
         transcR.set(parsedTranscRMs)
-        displayedLatency.set(latencyMs)
         logger("latency accepted=${latencyMs}ms")
         onAcceptedLatency(latencyMs)
     }

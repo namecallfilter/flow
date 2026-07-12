@@ -11,7 +11,6 @@ internal data class TwitchAdCue(
     val durationMs: Long,
     val podPosition: Int,
     val podLength: Int,
-    val rollType: String?,
     val podId: String = id,
     val podFilledDurationMs: Long? = null,
 ) {
@@ -20,12 +19,8 @@ internal data class TwitchAdCue(
 }
 
 internal data class TwitchAdProgress(
-    val cue: TwitchAdCue,
     val current: Int,
     val total: Int,
-    val currentDurationMs: Long,
-    val currentRemainingMs: Long,
-    val podDurationMs: Long,
     val podRemainingMs: Long,
 )
 
@@ -86,7 +81,6 @@ internal fun parseTwitchAdCue(tag: String): TwitchAdCue? {
         durationMs = durationMs,
         podPosition = podPosition,
         podLength = podLength,
-        rollType = attributes["X-TV-TWITCH-AD-ROLL-TYPE"]?.trim()?.takeIf(String::isNotEmpty),
         podId = podId,
         podFilledDurationMs = secondsToMilliseconds(
             attributes["X-TV-TWITCH-AD-POD-FILLED-DURATION"],
@@ -133,12 +127,8 @@ internal fun twitchAdProgress(
         if (currentRemainingMs > 0) maxOf(1L, rawPodRemainingMs) else rawPodRemainingMs,
     )
     return TwitchAdProgress(
-        cue = activeCue,
         current = activeCue.podPosition + 1,
         total = total,
-        currentDurationMs = activeCue.durationMs,
-        currentRemainingMs = currentRemainingMs,
-        podDurationMs = podDurationMs,
         podRemainingMs = podRemainingMs,
     )
 }
@@ -183,6 +173,9 @@ internal class StitchedAdLatencyFallback {
 
     /** Returns true when a latched fallback was released. */
     fun onAcceptedPrimaryLatency(): Boolean {
+        if (cueActive) {
+            return false
+        }
         val wasActive = active
         active = false
         return wasActive

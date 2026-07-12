@@ -32,7 +32,6 @@ internal data class LiveLatencyCorrectionDecision(
     val outcome: LiveLatencyCorrectionOutcome,
     val reason: LiveLatencyCorrectionReason? = null,
     val seekPositionMs: Long? = null,
-    val reachesTarget: Boolean = false,
     val seekAttempt: Int = 0,
 )
 
@@ -52,9 +51,6 @@ internal class LiveLatencyCorrectionCoordinator(
 
     val hasPendingRequest: Boolean
         get() = request != null
-
-    val pendingReason: LiveLatencyCorrectionReason?
-        get() = request?.reason
 
     fun reset() {
         request = null
@@ -148,7 +144,6 @@ internal class LiveLatencyCorrectionCoordinator(
                         outcome = LiveLatencyCorrectionOutcome.SEEK,
                         reason = currentRequest.reason,
                         seekPositionMs = plan.seekPositionMs,
-                        reachesTarget = plan.reachesTarget,
                         seekAttempt = nextAttempt,
                     )
                 }
@@ -174,7 +169,6 @@ internal enum class LiveLatencyCorrectionPlanOutcome {
 internal data class LiveLatencyCorrectionPlan(
     val outcome: LiveLatencyCorrectionPlanOutcome,
     val seekPositionMs: Long? = null,
-    val reachesTarget: Boolean = false,
 )
 
 /**
@@ -252,7 +246,6 @@ internal fun planLiveLatencyCorrection(
         return LiveLatencyCorrectionPlan(
             outcome = LiveLatencyCorrectionPlanOutcome.SEEK,
             seekPositionMs = desiredPositionMs,
-            reachesTarget = true,
         )
     }
 
@@ -281,7 +274,6 @@ internal fun planLiveLatencyCorrection(
     return LiveLatencyCorrectionPlan(
         outcome = LiveLatencyCorrectionPlanOutcome.SEEK,
         seekPositionMs = safeReachMs,
-        reachesTarget = false,
     )
 }
 

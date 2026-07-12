@@ -15,17 +15,13 @@ class TwitchAdEvent extends TwitchPlayerEvent {
     required this.active,
     required this.current,
     required this.total,
-    required this.durationMs,
     required this.remainingMs,
-    this.rollType,
   });
 
   final bool active;
   final int current;
   final int total;
-  final int durationMs;
   final int remainingMs;
-  final String? rollType;
 }
 
 class TwitchPlaybackStateEvent extends TwitchPlayerEvent {
@@ -44,18 +40,10 @@ class TwitchQualityOption {
   const TwitchQualityOption({
     required this.id,
     required this.label,
-    required this.width,
-    required this.height,
-    required this.frameRate,
-    required this.bitrate,
   });
 
   final String id;
   final String label;
-  final int width;
-  final int height;
-  final double? frameRate;
-  final int? bitrate;
 }
 
 class TwitchQualitiesEvent extends TwitchPlayerEvent {
@@ -77,8 +65,6 @@ class TwitchPlayerErrorEvent extends TwitchPlayerEvent {
 abstract interface class TwitchPlayerController {
   Stream<TwitchPlayerEvent> get events;
 
-  Future<void> load(Uri uri);
-
   Future<void> play();
 
   Future<void> pause();
@@ -97,24 +83,17 @@ class MethodChannelTwitchPlayerController implements TwitchPlayerController {
 
   final MethodChannel _methodChannel;
   final EventChannel _eventChannel;
+  late final Stream<TwitchPlayerEvent> _events = _eventChannel
+      .receiveBroadcastStream()
+      .map(_decodeEvent)
+      .where((event) => event != null)
+      .cast<TwitchPlayerEvent>();
 
   @override
-  Stream<TwitchPlayerEvent> get events => _events();
-
-  Stream<TwitchPlayerEvent> _events() async* {
-    await for (final rawEvent in _eventChannel.receiveBroadcastStream()) {
-      final event = _decodeEvent(rawEvent);
-      if (event != null) {
-        yield event;
-      }
-    }
-  }
+  Stream<TwitchPlayerEvent> get events => _events;
 
   @override
   Future<void> jumpToLive() => _methodChannel.invokeMethod<void>("jumpToLive");
-
-  @override
-  Future<void> load(Uri uri) => _methodChannel.invokeMethod<void>("load", uri.toString());
 
   @override
   Future<void> pause() => _methodChannel.invokeMethod<void>("pause");
@@ -139,14 +118,11 @@ TwitchPlayerEvent? _decodeEvent(Object? rawEvent) {
       final latency = rawEvent["latencyMs"];
       return TwitchLatencyEvent(latency is num ? latency.round() : null);
     case "ad":
-      final rawRollType = rawEvent["rollType"]?.toString().trim();
       return TwitchAdEvent(
         active: rawEvent["active"] == true,
         current: (rawEvent["current"] as num?)?.round() ?? 0,
         total: (rawEvent["total"] as num?)?.round() ?? 0,
-        durationMs: (rawEvent["durationMs"] as num?)?.round() ?? 0,
         remainingMs: (rawEvent["remainingMs"] as num?)?.round() ?? 0,
-        rollType: rawRollType == null || rawRollType.isEmpty ? null : rawRollType,
       );
     case "state":
       return TwitchPlaybackStateEvent(
@@ -164,18 +140,13 @@ TwitchPlayerEvent? _decodeEvent(Object? rawEvent) {
           }
           final id = rawQuality["id"]?.toString() ?? "";
           final label = rawQuality["label"]?.toString() ?? "";
-          final height = (rawQuality["height"] as num?)?.round() ?? 0;
-          if (id.isEmpty || label.isEmpty || height <= 0) {
+          if (id.isEmpty || label.isEmpty) {
             continue;
           }
           qualities.add(
             TwitchQualityOption(
               id: id,
               label: label,
-              width: (rawQuality["width"] as num?)?.round() ?? 0,
-              height: height,
-              frameRate: (rawQuality["fps"] as num?)?.toDouble(),
-              bitrate: (rawQuality["bitrate"] as num?)?.round(),
             ),
           );
         }

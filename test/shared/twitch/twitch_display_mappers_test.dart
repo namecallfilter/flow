@@ -72,7 +72,7 @@ void main() {
     });
   });
 
-  test("preserves numeric viewers and start time for player metadata", () {
+  test("preserves stream start time for player metadata", () {
     final startedAt = DateTime(2026, 7, 9, 20, 30);
 
     final channel = streamChannelFromStream(
@@ -88,7 +88,6 @@ void main() {
       ),
     );
 
-    expect(channel.viewerCount, 1234);
     expect(channel.startedAt, startedAt);
   });
 }

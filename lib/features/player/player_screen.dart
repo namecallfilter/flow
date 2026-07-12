@@ -127,7 +127,13 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   bool _viewerRefreshInFlight = false;
   bool _appIsResumed = true;
   bool _openingDestination = false;
+  bool _playerForcedLandscape = false;
   int _loadGeneration = 0;
+  int _playbackSessionGeneration = 0;
+  Future<void> _displayModeTail = Future<void>.value();
+
+  bool get _playbackSupported =>
+      widget.playerSurfaceBuilder != null || Media3PlayerView.isSupported;
 
   @override
   void initState() {
@@ -145,26 +151,32 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         unawaited(_refreshViewerCount());
       }
     });
-    unawaited(_loadPlaybackUri());
+    if (_playbackSupported) {
+      unawaited(_loadPlaybackUri());
+    } else {
+      _isBuffering = false;
+      _playWhenReady = false;
+    }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
       _appIsResumed = false;
+      if (_playWhenReady) {
+        _wasPlayingBeforeBackground = true;
+      }
       final controller = _playerController;
       if (controller == null) {
         return;
-      }
-      if (_playWhenReady) {
-        _wasPlayingBeforeBackground = true;
       }
       unawaited(controller.pause());
     } else if (state == AppLifecycleState.resumed) {
       _appIsResumed = true;
       unawaited(_refreshViewerCount());
-      if (_wasPlayingBeforeBackground && _playerController != null) {
-        _wasPlayingBeforeBackground = false;
+      final resumePlayback = _wasPlayingBeforeBackground;
+      _wasPlayingBeforeBackground = false;
+      if (resumePlayback && !_openingDestination && _playerController != null) {
         unawaited(_playerController!.play());
       }
     }
@@ -178,11 +190,14 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     _viewerTimer?.cancel();
     unawaited(_playerEvents?.cancel());
     _qualitySettings.dispose();
-    unawaited(widget.displayModeController.restore());
+    unawaited(_queueDisplayMode(widget.displayModeController.restore));
     super.dispose();
   }
 
   Future<void> _loadPlaybackUri({bool refresh = false}) async {
+    if (!_playbackSupported) {
+      return;
+    }
     final generation = ++_loadGeneration;
     if (refresh) {
       _qualitySettings.value = const _QualitySettingsState(
@@ -207,13 +222,14 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         return;
       }
 
-      if (refresh && _playerController != null) {
-        await _playerController!.load(uri);
-      }
-      if (!mounted || generation != _loadGeneration) {
-        return;
-      }
-      setState(() => _playbackUri = uri);
+      final previousEvents = _playerEvents;
+      _playerEvents = null;
+      _playerController = null;
+      unawaited(previousEvents?.cancel());
+      setState(() {
+        _playbackUri = uri;
+        _playbackSessionGeneration++;
+      });
     } on Object catch (error) {
       if (!mounted || generation != _loadGeneration) {
         return;
@@ -255,7 +271,13 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     return page.data.isEmpty ? null : page.data.first.viewerCount;
   }
 
-  void _handleControllerCreated(TwitchPlayerController controller) {
+  void _handleControllerCreated(
+    TwitchPlayerController controller,
+    int playbackSessionGeneration,
+  ) {
+    if (!mounted || playbackSessionGeneration != _playbackSessionGeneration) {
+      return;
+    }
     unawaited(_playerEvents?.cancel());
     _playerController = controller;
     _playerEvents = controller.events.listen(
@@ -271,7 +293,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         }
       },
     );
-    if (_openingDestination) {
+    if (_openingDestination || !_appIsResumed) {
       unawaited(controller.pause());
     }
   }
@@ -349,9 +371,22 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     _scheduleControlsHide();
   }
 
+  Future<void> _queueDisplayMode(Future<void> Function() operation) {
+    final result = _displayModeTail.then((_) => operation());
+    _displayModeTail = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return result;
+  }
+
   Future<void> _toggleLandscape({required bool isLandscape}) async {
     setState(() => _controlsVisible = true);
-    await widget.displayModeController.setLandscape(landscape: !isLandscape);
+    final landscape = _playerForcedLandscape ? false : !isLandscape;
+    _playerForcedLandscape = landscape;
+    await _queueDisplayMode(
+      () => widget.displayModeController.setLandscape(landscape: landscape),
+    );
   }
 
   Future<void> _showQualitySettings() async {
@@ -467,9 +502,13 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     _openingDestination = true;
     _controlsTimer?.cancel();
     final resumeOnReturn = _playWhenReady;
+    final restoreLandscapeOnReturn = _playerForcedLandscape;
     try {
       if (resumeOnReturn) {
         await _playerController?.pause();
+      }
+      if (restoreLandscapeOnReturn) {
+        await _queueDisplayMode(widget.displayModeController.restore);
       }
       if (!mounted) {
         return;
@@ -477,8 +516,17 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       await open();
     } finally {
       _openingDestination = false;
+      if (mounted && restoreLandscapeOnReturn) {
+        await _queueDisplayMode(
+          () => widget.displayModeController.setLandscape(landscape: true),
+        );
+      }
       if (mounted && resumeOnReturn) {
-        await _playerController?.play();
+        if (_appIsResumed) {
+          await _playerController?.play();
+        } else {
+          _wasPlayingBeforeBackground = true;
+        }
       }
     }
   }
@@ -493,14 +541,19 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   Widget build(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
     final isLandscape = mediaQuery.size.width > mediaQuery.size.height;
+    final playbackSessionGeneration = _playbackSessionGeneration;
     final viewport = _PlayerViewport(
       channel: widget.channel,
       playbackUri: _playbackUri,
+      playbackSessionGeneration: playbackSessionGeneration,
+      playbackSupported: _playbackSupported,
       playerSurfaceBuilder: widget.playerSurfaceBuilder,
-      onControllerCreated: _handleControllerCreated,
+      onControllerCreated: (controller) => _handleControllerCreated(
+        controller,
+        playbackSessionGeneration,
+      ),
       isLandscape: isLandscape,
       controlsVisible: _controlsVisible,
-      isPlaying: _isPlaying,
       isBuffering: _isBuffering,
       playWhenReady: _playWhenReady,
       latencyMs: _latencyMs,
@@ -560,11 +613,12 @@ class _PlayerViewport extends StatelessWidget {
   const _PlayerViewport({
     required this.channel,
     required this.playbackUri,
+    required this.playbackSessionGeneration,
+    required this.playbackSupported,
     required this.playerSurfaceBuilder,
     required this.onControllerCreated,
     required this.isLandscape,
     required this.controlsVisible,
-    required this.isPlaying,
     required this.isBuffering,
     required this.playWhenReady,
     required this.latencyMs,
@@ -585,11 +639,12 @@ class _PlayerViewport extends StatelessWidget {
 
   final StreamChannel channel;
   final Uri? playbackUri;
+  final int playbackSessionGeneration;
+  final bool playbackSupported;
   final PlayerSurfaceBuilder? playerSurfaceBuilder;
   final ValueChanged<TwitchPlayerController> onControllerCreated;
   final bool isLandscape;
   final bool controlsVisible;
-  final bool isPlaying;
   final bool isBuffering;
   final bool playWhenReady;
   final int? latencyMs;
@@ -623,9 +678,19 @@ class _PlayerViewport extends StatelessWidget {
       child: Stack(
         fit: StackFit.expand,
         children: [
-          if (playbackUri case final uri?)
+          if (!playbackSupported)
+            const ColoredBox(
+              color: Colors.black,
+              child: Center(
+                child: Text(
+                  Media3PlayerView.unsupportedMessage,
+                  style: TextStyle(color: Colors.white70),
+                ),
+              ),
+            )
+          else if (playbackUri case final uri?)
             KeyedSubtree(
-              key: const ValueKey("player_media_surface"),
+              key: ValueKey("player_media_surface_$playbackSessionGeneration"),
               child: playerSurfaceBuilder == null
                   ? Media3PlayerView(
                       uri: uri,
@@ -687,20 +752,21 @@ class _PlayerViewport extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (errorMessage case final message?)
-                    Center(
-                      child: _PlayerError(message: message, onRetry: onRefresh),
-                    )
-                  else
-                    Center(
-                      key: const ValueKey("player_center_control"),
-                      child: _CenterPlaybackControl(
-                        playWhenReady: playWhenReady,
-                        isBuffering: isBuffering,
-                        visible: controlsVisible,
-                        onPressed: onTogglePlayback,
+                  if (playbackSupported)
+                    if (errorMessage case final message?)
+                      Center(
+                        child: _PlayerError(message: message, onRetry: onRefresh),
+                      )
+                    else
+                      Center(
+                        key: const ValueKey("player_center_control"),
+                        child: _CenterPlaybackControl(
+                          playWhenReady: playWhenReady,
+                          isBuffering: isBuffering,
+                          visible: controlsVisible,
+                          onPressed: onTogglePlayback,
+                        ),
                       ),
-                    ),
                 ],
               ),
             ),
@@ -730,6 +796,14 @@ class _PlayerViewport extends StatelessWidget {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<StreamChannel>("channel", channel));
     properties.add(DiagnosticsProperty<Uri?>("playbackUri", playbackUri));
+    properties.add(IntProperty("playbackSessionGeneration", playbackSessionGeneration));
+    properties.add(
+      FlagProperty(
+        "playbackSupported",
+        value: playbackSupported,
+        ifTrue: "playback supported",
+      ),
+    );
     properties.add(
       ObjectFlagProperty<PlayerSurfaceBuilder?>.has(
         "playerSurfaceBuilder",
@@ -746,7 +820,6 @@ class _PlayerViewport extends StatelessWidget {
     properties.add(
       FlagProperty("controlsVisible", value: controlsVisible, ifTrue: "controls visible"),
     );
-    properties.add(FlagProperty("isPlaying", value: isPlaying, ifTrue: "playing"));
     properties.add(FlagProperty("isBuffering", value: isBuffering, ifTrue: "buffering"));
     properties.add(
       FlagProperty("playWhenReady", value: playWhenReady, ifTrue: "play requested"),

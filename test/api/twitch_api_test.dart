@@ -126,6 +126,44 @@ void main() {
     expect(int.tryParse(uri.queryParameters["p"] ?? ""), isNotNull);
     expect(uri.queryParameters["supported_codecs"], "h264");
   });
+
+  test("retries a failed authenticated playback-token query anonymously", () async {
+    final authorizationHeaders = <String?>[];
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      gqlAccessToken: "stale-web-token",
+      httpClient: MockClient((request) async {
+        final authorization = request.headers["Authorization"];
+        authorizationHeaders.add(authorization);
+        if (authorization != null) {
+          return _jsonResponse({
+            "errors": [
+              {"message": "Unauthorized"},
+            ],
+          });
+        }
+        return _jsonResponse({
+          "data": {
+            "streamPlaybackAccessToken": {
+              "value": "anonymous-token",
+              "signature": "anonymous-signature",
+              "authorization": {
+                "isForbidden": false,
+                "forbiddenReasonCode": null,
+              },
+            },
+          },
+        });
+      }),
+    );
+
+    final uri = await client.fetchLivePlaybackUri("publicchannel");
+
+    expect(authorizationHeaders, ["OAuth stale-web-token", null]);
+    expect(uri.queryParameters["sig"], "anonymous-signature");
+    expect(uri.queryParameters["token"], "anonymous-token");
+  });
 }
 
 http.Response _jsonResponse(Map<String, Object?> body) => http.Response(

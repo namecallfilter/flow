@@ -110,10 +110,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
     builder: (_) {
       final theme = Theme.of(context);
       final channel = _store.channel;
-      final livePlayerChannel = _livePlayerChannel(
-        channel,
-        widget.initialChannel,
-      );
+      final livePlayerChannel = _livePlayerChannel(channel, widget.initialChannel);
       final bottomScrollPadding = 24 + MediaQuery.of(context).padding.bottom;
 
       return Scaffold(
@@ -711,22 +708,20 @@ StreamChannel? _livePlayerChannel(
   ChannelPreview initialChannel,
 ) {
   final liveStream = channel?.liveStream;
-  if (channel != null && liveStream == null) {
+  if (channel == null || liveStream == null) {
     return null;
   }
-  if (channel == null && !initialChannel.isLive) {
+  final login = channel.login.trim();
+  if (login.isEmpty) {
     return null;
   }
 
-  final id = channel?.id.trim() ?? "";
-  final login = channel?.login.trim().isNotEmpty == true
-      ? channel!.login.trim()
-      : initialChannel.login.trim();
+  final id = channel.id.trim();
   final name = _displayName(channel, initialChannel);
-  final streamId = liveStream?.id.trim() ?? "";
-  final title = liveStream?.title.trim() ?? "";
-  final category = liveStream?.category.trim() ?? "";
-  final viewerCount = liveStream?.viewerCount;
+  final streamId = liveStream.id.trim();
+  final title = liveStream.title.trim();
+  final category = liveStream.category.trim();
+  final viewerCount = liveStream.viewerCount;
 
   return StreamChannel(
     id: id,
@@ -735,16 +730,15 @@ StreamChannel? _livePlayerChannel(
     initials: initialsForName(name),
     title: title.isEmpty ? "Live now" : title,
     category: category.isEmpty ? "Live" : category,
-    viewers: viewerCount == null ? "--" : formatCompactCount(viewerCount),
+    viewers: formatCompactCount(viewerCount),
     avatarColors: colorsForText(id.isEmpty ? login : id),
     thumbnailColors: colorsForText(
       streamId.isEmpty ? (id.isEmpty ? login : id) : streamId,
       count: 3,
     ),
-    avatarImageUrl: channel?.profileImageUrl ?? initialChannel.avatarImageUrl,
-    thumbnailUrl: twitchThumbnailUrl(liveStream?.thumbnailUrl),
-    viewerCount: viewerCount ?? 0,
-    startedAt: liveStream?.startedAt,
+    avatarImageUrl: channel.profileImageUrl ?? initialChannel.avatarImageUrl,
+    thumbnailUrl: twitchThumbnailUrl(liveStream.thumbnailUrl),
+    startedAt: liveStream.startedAt,
   );
 }
 

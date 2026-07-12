@@ -213,13 +213,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
   }
 
   void _openPlayer(StreamChannel channel) {
-    unawaited(
-      Navigator.of(context, rootNavigator: true).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => StreamPlayerScreen(apiCache: _apiCache, channel: channel),
-        ),
-      ),
-    );
+    _openStreamPlayer(context, _apiCache, channel);
   }
 
   void _openSearch() {
@@ -517,16 +511,7 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
       avatarImageUrl: channel.thumbnailUrl,
       startedAt: channel.startedAt,
     );
-    unawaited(
-      Navigator.of(context, rootNavigator: true).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => StreamPlayerScreen(
-            apiCache: widget.apiCache,
-            channel: streamChannel,
-          ),
-        ),
-      ),
-    );
+    _openStreamPlayer(context, widget.apiCache, streamChannel);
   }
 }
 
@@ -1149,16 +1134,7 @@ class _CategoryStreamsScreenState extends State<CategoryStreamsScreen> {
   }
 
   void _openPlayer(StreamChannel channel) {
-    unawaited(
-      Navigator.of(context, rootNavigator: true).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => StreamPlayerScreen(
-            apiCache: widget.apiCache,
-            channel: channel,
-          ),
-        ),
-      ),
-    );
+    _openStreamPlayer(context, widget.apiCache, channel);
   }
 
   @override
@@ -1515,6 +1491,23 @@ ChannelPreview _channelPreviewFromStreamChannel(StreamChannel channel) => Channe
   avatarImageUrl: channel.avatarImageUrl,
   isLive: true,
 );
+
+void _openStreamPlayer(
+  BuildContext context,
+  TwitchApiCache apiCache,
+  StreamChannel channel,
+) {
+  if (channel.login.trim().isEmpty) {
+    return;
+  }
+  unawaited(
+    Navigator.of(context, rootNavigator: true).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => StreamPlayerScreen(apiCache: apiCache, channel: channel),
+      ),
+    ),
+  );
+}
 
 class _CategoryGrid extends StatelessWidget {
   const _CategoryGrid({

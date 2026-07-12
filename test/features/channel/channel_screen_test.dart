@@ -1,3 +1,4 @@
+import "dart:async";
 import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
@@ -148,12 +149,44 @@ void main() {
     expect(player.channel.name, "Jason");
     expect(player.channel.title, "Live with chat");
     expect(player.channel.category, "Just Chatting");
-    expect(player.channel.viewerCount, 26300);
     expect(player.channel.viewers, "26.3K");
     expect(
       player.channel.startedAt?.toUtc(),
       DateTime.parse("2026-07-04T01:00:00Z"),
     );
+  });
+
+  testWidgets("does not open stale preview playback before channel details load", (
+    tester,
+  ) async {
+    final response = Completer<http.Response>();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: ChannelScreen(
+          apiCache: TwitchApiCache(
+            clientLoader: () async => TwitchApiClient(
+              clientId: "client-123",
+              accessToken: "token-123",
+              httpClient: MockClient((_) => response.future),
+            ),
+          ),
+          initialChannel: const ChannelPreview(
+            login: "jason",
+            displayName: "Jason",
+            isLive: true,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey("channel_profile_avatar")));
+    await tester.pump();
+    expect(find.byType(StreamPlayerScreen), findsNothing);
+
+    response.complete(_channelDetailsResponse(isLive: false));
+    await tester.pumpAndSettle();
   });
 
   testWidgets("does not open the player from an offline channel avatar", (

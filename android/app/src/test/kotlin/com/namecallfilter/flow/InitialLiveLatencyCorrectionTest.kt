@@ -18,7 +18,6 @@ class InitialLiveLatencyCorrectionTest {
 
         assertEquals(LiveLatencyCorrectionPlanOutcome.SEEK, plan.outcome)
         assertEquals(13_350L, plan.seekPositionMs)
-        assertTrue(plan.reachesTarget)
     }
 
     @Test
@@ -47,21 +46,6 @@ class InitialLiveLatencyCorrectionTest {
 
         assertEquals(LiveLatencyCorrectionPlanOutcome.SEEK, plan.outcome)
         assertEquals(10_500L, plan.seekPositionMs)
-        assertFalse(plan.reachesTarget)
-    }
-
-    @Test
-    fun partialCorrectionNeverAdvancesPastActuallyBufferedMedia() {
-        val plan = plan(
-            measuredLatencyMs = 4_500L,
-            currentPositionMs = 10_000L,
-            bufferedPositionMs = 12_000L,
-            windowDurationMs = 14_000L,
-        )
-
-        assertEquals(LiveLatencyCorrectionPlanOutcome.SEEK, plan.outcome)
-        assertEquals(10_500L, plan.seekPositionMs)
-        assertFalse(plan.reachesTarget)
     }
 
     @Test
@@ -75,7 +59,6 @@ class InitialLiveLatencyCorrectionTest {
 
         assertEquals(LiveLatencyCorrectionPlanOutcome.SEEK, plan.outcome)
         assertEquals(11_500L, plan.seekPositionMs)
-        assertFalse(plan.reachesTarget)
     }
 
     @Test
@@ -102,7 +85,6 @@ class InitialLiveLatencyCorrectionTest {
 
         assertEquals(LiveLatencyCorrectionPlanOutcome.SEEK, plan.outcome)
         assertEquals(26_500L, plan.seekPositionMs)
-        assertFalse(plan.reachesTarget)
     }
 
     @Test

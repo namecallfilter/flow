@@ -8,6 +8,7 @@ import "package:flow/features/player/media3_player_controller.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flow/shared/widgets/avatar_ring.dart";
+import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:http/http.dart" as http;
@@ -25,11 +26,13 @@ void main() {
     final player = _FakePlayerController();
     final displayMode = _FakeDisplayModeController();
     var playbackLoads = 0;
+    var surfaceCreations = 0;
 
     await tester.pumpWidget(
       _playerApp(
         player: player,
         displayMode: displayMode,
+        onSurfaceCreated: () => surfaceCreations++,
         playbackUriLoader: (_) async {
           playbackLoads++;
           return Uri.parse("https://example.com/live-$playbackLoads.m3u8");
@@ -63,11 +66,92 @@ void main() {
     await tester.pump();
     expect(find.text("--"), findsOneWidget);
     expect(playbackLoads, 2);
-    expect(player._loadedUris.single.path, "/live-2.m3u8");
+    expect(surfaceCreations, 2);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
     expect(displayMode._restoreCount, 1);
+  });
+
+  testWidgets("shows unsupported playback without loading or buffering forever", (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    var playbackLoads = 0;
+
+    try {
+      await tester.pumpWidget(
+        _playerApp(
+          player: _FakePlayerController(),
+          useDefaultPlayerSurface: true,
+          playbackUriLoader: (_) async {
+            playbackLoads++;
+            return Uri.parse("https://example.com/unused.m3u8");
+          },
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text("Playback is available on Android."), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(playbackLoads, 0);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets("refresh replaces a surface before its controller attaches", (
+    tester,
+  ) async {
+    final currentPlayer = _FakePlayerController();
+    final stalePlayer = _FakePlayerController();
+    final sessions = <({Uri uri, ValueChanged<TwitchPlayerController> attachController})>[];
+    var playbackLoads = 0;
+
+    await tester.pumpWidget(
+      _playerApp(
+        player: currentPlayer,
+        playbackUriLoader: (_) async {
+          playbackLoads++;
+          return Uri.parse("https://example.com/live-$playbackLoads.m3u8");
+        },
+        playerSurfaceBuilder: (context, uri, onControllerCreated) => _DeferredPlayerSurface(
+          uri: uri,
+          onControllerCreated: onControllerCreated,
+          onSurfaceCreated: (createdUri, attachController) {
+            sessions.add((
+              uri: createdUri,
+              attachController: attachController,
+            ));
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(sessions.map((session) => session.uri.path), ["/live-1.m3u8"]);
+
+    await tester.tap(find.byKey(const ValueKey("player_refresh_button")));
+    await tester.pump();
+    expect(
+      sessions.map((session) => session.uri.path),
+      ["/live-1.m3u8", "/live-2.m3u8"],
+    );
+
+    sessions.first.attachController(stalePlayer);
+    sessions.last.attachController(currentPlayer);
+    currentPlayer.emit(
+      const TwitchPlaybackStateEvent(
+        isPlaying: false,
+        isBuffering: false,
+        playWhenReady: false,
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey("player_play_pause_button")));
+
+    expect(stalePlayer._toggleCount, 0);
+    expect(currentPlayer._toggleCount, 1);
   });
 
   testWidgets("uses a 16:9 portrait viewport with aligned symmetric overlays", (
@@ -173,7 +257,6 @@ void main() {
 
     expect(surfaceCreations, 1);
     expect(playbackLoads, 1);
-    expect(player._loadedUris, isEmpty);
     expect(find.byKey(const ValueKey("player_chrome_landscape")), findsOneWidget);
   });
 
@@ -244,10 +327,6 @@ void main() {
           TwitchQualityOption(
             id: "video:720",
             label: "720p60",
-            width: 1280,
-            height: 720,
-            frameRate: 60,
-            bitrate: 4500000,
           ),
         ],
       ),
@@ -435,18 +514,10 @@ void main() {
           TwitchQualityOption(
             id: "video:1080",
             label: "1080p60",
-            width: 1920,
-            height: 1080,
-            frameRate: 60,
-            bitrate: 6000000,
           ),
           TwitchQualityOption(
             id: "video:720",
             label: "720p60",
-            width: 1280,
-            height: 720,
-            frameRate: 60,
-            bitrate: 4500000,
           ),
         ],
       ),
@@ -504,6 +575,102 @@ void main() {
     await tester.pageBack();
     await _pumpNavigation(tester);
     expect(player._playCount, 1);
+  });
+
+  testWidgets("does not resume beneath an open destination after lifecycle changes", (
+    tester,
+  ) async {
+    final player = _FakePlayerController();
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        apiCache: _navigationApiCache(),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey("player_profile_button")));
+    await _pumpNavigation(tester);
+    expect(find.byKey(const ValueKey("channel_page_creator")), findsOneWidget);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(player._playCount, 0);
+
+    await tester.pageBack();
+    await _pumpNavigation(tester);
+    expect(player._playCount, 1);
+  });
+
+  testWidgets("restores forced landscape around a destination", (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final player = _FakePlayerController();
+    final displayMode = _FakeDisplayModeController();
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        displayMode: displayMode,
+        apiCache: _navigationApiCache(),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey("player_orientation_button")));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey("player_profile_button")));
+    await _pumpNavigation(tester);
+
+    expect(find.byKey(const ValueKey("channel_page_creator")), findsOneWidget);
+    expect(displayMode._operations, ["landscape:true", "restore"]);
+    expect(player._playCount, 0);
+
+    await tester.pageBack();
+    await _pumpNavigation(tester);
+    expect(
+      displayMode._operations,
+      ["landscape:true", "restore", "landscape:true"],
+    );
+    expect(player._playCount, 1);
+  });
+
+  testWidgets("dispose restores display mode after a pending transition", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final displayMode = _BlockingDisplayModeController();
+    await tester.pumpWidget(
+      _playerApp(
+        player: _FakePlayerController(),
+        displayMode: displayMode,
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(const ValueKey("player_orientation_button")));
+    await tester.pump();
+    expect(displayMode._operations, ["landscape:true:start"]);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    expect(displayMode._operations, ["landscape:true:start"]);
+
+    displayMode.completeLandscapeTransition();
+    await tester.pump();
+    await tester.pump();
+    expect(
+      displayMode._operations,
+      ["landscape:true:start", "landscape:true:end", "restore"],
+    );
   });
 
   testWidgets("opens the exact category from the player metadata", (
@@ -638,7 +805,6 @@ void main() {
     expect(find.text("20K"), findsOneWidget);
     expect(viewerLoads, 2);
     expect(playbackLoads, 1);
-    expect(player._loadedUris, isEmpty);
   });
 
   testWidgets("keeps stitched-ad progress visible through updates and rotation", (
@@ -659,9 +825,7 @@ void main() {
         active: true,
         current: 1,
         total: 3,
-        durationMs: 30000,
         remainingMs: 24000,
-        rollType: "preroll",
       ),
     );
     await tester.pump();
@@ -729,9 +893,7 @@ void main() {
         active: true,
         current: 2,
         total: 3,
-        durationMs: 30000,
         remainingMs: 12000,
-        rollType: "midroll",
       ),
     );
     await tester.pump();
@@ -752,7 +914,6 @@ void main() {
         active: true,
         current: 0,
         total: 0,
-        durationMs: 6000,
         remainingMs: 6000,
       ),
     );
@@ -768,7 +929,6 @@ void main() {
         active: true,
         current: 3,
         total: 3,
-        durationMs: 6000,
         remainingMs: 4000,
       ),
     );
@@ -779,7 +939,6 @@ void main() {
         active: false,
         current: 0,
         total: 0,
-        durationMs: 0,
         remainingMs: 0,
       ),
     );
@@ -853,6 +1012,8 @@ Widget _playerApp({
   PlaybackUriLoader? playbackUriLoader,
   ViewerCountLoader? viewerCountLoader,
   VoidCallback? onSurfaceCreated,
+  PlayerSurfaceBuilder? playerSurfaceBuilder,
+  bool useDefaultPlayerSurface = false,
 }) => MaterialApp(
   theme: buildFlowTheme(Brightness.dark),
   home: StreamPlayerScreen(
@@ -872,7 +1033,6 @@ Widget _playerApp({
       title: "A precise stream title",
       category: "Just Chatting",
       viewers: "12.3K",
-      viewerCount: 12345,
       startedAt: DateTime(2026, 7, 9, 19),
       avatarColors: const [Colors.purple, Colors.pink],
       thumbnailColors: const [Colors.black, Colors.grey],
@@ -881,11 +1041,14 @@ Widget _playerApp({
     viewerCountLoader: viewerCountLoader ?? (_) async => null,
     displayModeController: displayMode ?? _FakeDisplayModeController(),
     clock: () => DateTime(2026, 7, 9, 20, 2, 3),
-    playerSurfaceBuilder: (context, uri, onControllerCreated) => _FakePlayerSurface(
-      player: player,
-      onControllerCreated: onControllerCreated,
-      onSurfaceCreated: onSurfaceCreated,
-    ),
+    playerSurfaceBuilder: useDefaultPlayerSurface
+        ? null
+        : playerSurfaceBuilder ??
+              (context, uri, onControllerCreated) => _FakePlayerSurface(
+                player: player,
+                onControllerCreated: onControllerCreated,
+                onSurfaceCreated: onSurfaceCreated,
+              ),
   ),
 );
 
@@ -985,9 +1148,52 @@ class _FakePlayerSurfaceState extends State<_FakePlayerSurface> {
   Widget build(BuildContext context) => const ColoredBox(color: Colors.black);
 }
 
+class _DeferredPlayerSurface extends StatefulWidget {
+  const _DeferredPlayerSurface({
+    required this.uri,
+    required this.onControllerCreated,
+    required this.onSurfaceCreated,
+  });
+
+  final Uri uri;
+  final ValueChanged<TwitchPlayerController> onControllerCreated;
+  final void Function(Uri, ValueChanged<TwitchPlayerController>) onSurfaceCreated;
+
+  @override
+  State<_DeferredPlayerSurface> createState() => _DeferredPlayerSurfaceState();
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(DiagnosticsProperty<Uri>("uri", uri));
+    properties.add(
+      ObjectFlagProperty<ValueChanged<TwitchPlayerController>>.has(
+        "onControllerCreated",
+        onControllerCreated,
+      ),
+    );
+    properties.add(
+      ObjectFlagProperty<void Function(Uri, ValueChanged<TwitchPlayerController>)>.has(
+        "onSurfaceCreated",
+        onSurfaceCreated,
+      ),
+    );
+  }
+}
+
+class _DeferredPlayerSurfaceState extends State<_DeferredPlayerSurface> {
+  @override
+  void initState() {
+    super.initState();
+    widget.onSurfaceCreated(widget.uri, widget.onControllerCreated);
+  }
+
+  @override
+  Widget build(BuildContext context) => const ColoredBox(color: Colors.black);
+}
+
 class _FakePlayerController implements TwitchPlayerController {
   final _events = StreamController<TwitchPlayerEvent>.broadcast();
-  final _loadedUris = <Uri>[];
   int _jumpToLiveCount = 0;
   int _toggleCount = 0;
   int _pauseCount = 0;
@@ -1001,11 +1207,6 @@ class _FakePlayerController implements TwitchPlayerController {
   @override
   Future<void> jumpToLive() async {
     _jumpToLiveCount++;
-  }
-
-  @override
-  Future<void> load(Uri uri) async {
-    _loadedUris.add(uri);
   }
 
   @override
@@ -1033,15 +1234,37 @@ class _FakePlayerController implements TwitchPlayerController {
 
 class _FakeDisplayModeController implements PlayerDisplayModeController {
   final _landscapeRequests = <bool>[];
+  final _operations = <String>[];
   int _restoreCount = 0;
 
   @override
   Future<void> restore() async {
     _restoreCount++;
+    _operations.add("restore");
   }
 
   @override
   Future<void> setLandscape({required bool landscape}) async {
     _landscapeRequests.add(landscape);
+    _operations.add("landscape:$landscape");
+  }
+}
+
+class _BlockingDisplayModeController implements PlayerDisplayModeController {
+  final _landscapeTransition = Completer<void>();
+  final _operations = <String>[];
+
+  void completeLandscapeTransition() => _landscapeTransition.complete();
+
+  @override
+  Future<void> restore() async {
+    _operations.add("restore");
+  }
+
+  @override
+  Future<void> setLandscape({required bool landscape}) async {
+    _operations.add("landscape:$landscape:start");
+    await _landscapeTransition.future;
+    _operations.add("landscape:$landscape:end");
   }
 }

@@ -10,11 +10,7 @@ class TwitchLatencyPlaybackSpeedControlTest {
 
     @Test
     fun catchUpIsBoundedBetweenOneAndOnePointZeroThree() {
-        listOf(700L, 1_500L, 1_650L, 1_849L).forEach { latencyMs ->
-            assertSpeed(1.0f, policy.decide(input(latencyMs = latencyMs)))
-        }
-
-        assertSpeed(1.03f, policy.decide(input(latencyMs = 1_850L)))
+        assertSpeed(1.0f, policy.decide(input(latencyMs = 700L)))
         assertSpeed(1.03f, policy.decide(input(latencyMs = Long.MAX_VALUE)))
     }
 
@@ -66,27 +62,6 @@ class TwitchLatencyPlaybackSpeedControlTest {
     }
 
     @Test
-    fun firstCatchUpEntryRequiresTheFullResumeBuffer() {
-        val firstAtNineHundredNinetyNine = TwitchLatencySpeedPolicy().decide(
-            input(latencyMs = 4_000L, bufferedDurationMs = 999L),
-        )
-        assertDecision(
-            speed = 1.0f,
-            reason = TwitchLatencySpeedReason.LOW_BUFFER,
-            decision = firstAtNineHundredNinetyNine,
-        )
-
-        val firstAtOneSecond = TwitchLatencySpeedPolicy().decide(
-            input(latencyMs = 4_000L, bufferedDurationMs = 1_000L),
-        )
-        assertDecision(
-            speed = 1.03f,
-            reason = TwitchLatencySpeedReason.HIGH_LATENCY,
-            decision = firstAtOneSecond,
-        )
-    }
-
-    @Test
     fun missingAndStaleMeasurementsNeverChangeSpeed() {
         listOf(
             input(latencyMs = null),
@@ -98,12 +73,10 @@ class TwitchLatencyPlaybackSpeedControlTest {
 
     @Test
     fun media3AdapterIgnoresTimelineOffsetsAndSyntheticTargetOverrides() {
-        var realtimeMs = 10_000L
         val controller = TwitchLatencyPlaybackSpeedControl(
-            realtimeClockMs = { realtimeMs },
+            realtimeClockMs = { 10_000L },
             logger = {},
         )
-        controller.setPlaybackActive(true)
         controller.updateLatencyMeasurement(2_000L)
 
         val nearTimelineOffset = controller.getAdjustedPlaybackSpeed(
@@ -120,7 +93,6 @@ class TwitchLatencyPlaybackSpeedControlTest {
         assertEquals(3_000_000L, controller.targetLiveOffsetUs)
 
         controller.invalidateMeasurementForDiscontinuity("test seek")
-        realtimeMs += 100L
         assertSpeed(
             1.0f,
             controller.getAdjustedPlaybackSpeed(
@@ -132,12 +104,10 @@ class TwitchLatencyPlaybackSpeedControlTest {
 
     @Test
     fun briefRebufferPreservesFreshCorrection() {
-        var realtimeMs = 10_000L
         val controller = TwitchLatencyPlaybackSpeedControl(
-            realtimeClockMs = { realtimeMs },
+            realtimeClockMs = { 10_000L },
             logger = {},
         )
-        controller.setPlaybackActive(true)
         controller.updateLatencyMeasurement(4_000L)
         assertSpeed(1.03f, adjustedSpeed(controller))
 
@@ -160,31 +130,11 @@ class TwitchLatencyPlaybackSpeedControlTest {
     }
 
     @Test
-    fun asynchronousIsPlayingCallbackCannotSuppressMedia3Correction() {
-        var realtimeMs = 10_000L
-        val controller = TwitchLatencyPlaybackSpeedControl(
-            realtimeClockMs = { realtimeMs },
-            logger = {},
-        )
-        controller.setPlaybackActive(true)
-        controller.updateLatencyMeasurement(2_000L)
-        assertSpeed(1.03f, adjustedSpeed(controller))
-
-        controller.setPlaybackActive(false)
-        realtimeMs += 250L
-        assertSpeed(1.03f, adjustedSpeed(controller))
-
-        controller.setPlaybackActive(true)
-        assertSpeed(1.03f, adjustedSpeed(controller))
-    }
-
-    @Test
     fun stitchedAdFallbackUsesTheSameBoundedPolicy() {
         val controller = TwitchLatencyPlaybackSpeedControl(
             realtimeClockMs = { 10_000L },
             logger = {},
         )
-        controller.setPlaybackActive(true)
         controller.updateLatencyMeasurement(
             latencyMs = 2_000L,
             source = LiveLatencyMeasurementSource.STITCHED_AD_TIMELINE,

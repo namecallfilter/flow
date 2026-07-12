@@ -14,14 +14,18 @@ class Media3PlayerView extends StatelessWidget {
   final Uri uri;
   final ValueChanged<TwitchPlayerController> onControllerCreated;
 
+  static const unsupportedMessage = "Playback is available on Android.";
+
+  static bool get isSupported => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
   @override
   Widget build(BuildContext context) {
-    if (defaultTargetPlatform != TargetPlatform.android) {
+    if (!isSupported) {
       return const ColoredBox(
         color: Colors.black,
         child: Center(
           child: Text(
-            "Playback is available on Android.",
+            unsupportedMessage,
             style: TextStyle(color: Colors.white70),
           ),
         ),

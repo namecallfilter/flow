@@ -83,32 +83,31 @@ internal class TwitchPlayerView(
     }
     private val playbackListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
-            liveSpeedControl.setPlaybackActive(player.isPlaying)
-            if (
-                playbackState == Player.STATE_BUFFERING &&
-                hasRenderedFirstFrame &&
-                player.playWhenReady
-            ) {
-                Log.d(
-                    LOG_TAG,
-                    "rebuffer buffered=${player.totalBufferedDuration}ms " +
-                        "media3LiveOffset=${player.currentLiveOffset}ms " +
-                        "measuredLatency=${latestLatencyMs}ms; " +
-                        "see speed-control decision for adjusted speed",
-                )
+            if (playbackState == Player.STATE_BUFFERING) {
+                latestCorrectionMeasurement = null
+                if (hasRenderedFirstFrame && player.playWhenReady) {
+                    Log.d(
+                        LOG_TAG,
+                        "rebuffer buffered=${player.totalBufferedDuration}ms " +
+                            "media3LiveOffset=${player.currentLiveOffset}ms " +
+                            "measuredLatency=${latestLatencyMs}ms; " +
+                            "see speed-control decision for adjusted speed",
+                    )
+                }
             }
             maybeApplyPendingLatencyCorrection()
             emitState()
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
-            liveSpeedControl.setPlaybackActive(isPlaying)
             maybeApplyPendingLatencyCorrection()
             emitState()
         }
 
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-            liveSpeedControl.setPlaybackActive(player.isPlaying)
+            if (!playWhenReady) {
+                latestCorrectionMeasurement = null
+            }
             maybeApplyPendingLatencyCorrection()
             emitState()
         }
@@ -164,8 +163,8 @@ internal class TwitchPlayerView(
             object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
                     eventSink = events
-                    emitLatency(latestLatencyMs)
                     emitState()
+                    emitLatency(latestLatencyMs)
                     emitQualities()
                     emit(latestAdEvent)
                     latestError?.let(::emitError)
@@ -178,16 +177,6 @@ internal class TwitchPlayerView(
         )
         methodChannel.setMethodCallHandler { call, result ->
             when (call.method) {
-                "load" -> {
-                    val url = call.arguments as? String
-                    if (url.isNullOrBlank()) {
-                        result.error("invalid_url", "A Twitch HLS URL is required.", null)
-                    } else {
-                        load(url)
-                        result.success(null)
-                    }
-                }
-
                 "play" -> {
                     resumeAtLiveEdge()
                     result.success(null)
@@ -252,10 +241,7 @@ internal class TwitchPlayerView(
         stitchedAdLatencyFallback.reset()
         qualityOverrides.clear()
         selectedQualityId = AUTO_QUALITY_ID
-        player.trackSelectionParameters = player.trackSelectionParameters
-            .buildUpon()
-            .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
-            .build()
+        clearVideoTrackOverride()
         hasRenderedFirstFrame = false
         latestCorrectionMeasurement = null
         correctionMeasurementSequence = 0L
@@ -268,7 +254,7 @@ internal class TwitchPlayerView(
         logLatencyCorrectionArmed(LiveLatencyCorrectionReason.STARTUP, null)
         emitLatency(null)
         emitQualities()
-        emitAd(null, null)
+        emitAd(null)
 
         metadataListener?.let(player::removeListener)
         lateinit var session: TwitchLatencySession
@@ -303,7 +289,6 @@ internal class TwitchPlayerView(
         }.also(player::addListener)
 
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setAllowCrossProtocolRedirects(true)
             .setUserAgent(USER_AGENT)
         val dataSourceFactory = DefaultDataSource.Factory(playerView.context, httpDataSourceFactory)
         val mediaSource = HlsMediaSource.Factory(dataSourceFactory)
@@ -545,11 +530,7 @@ internal class TwitchPlayerView(
         }
         val progress = twitchAdProgress(adCues.values, playbackEpochMs)
         stitchedAdLatencyFallback.onAdProgress(progress != null)
-        if (progress == null) {
-            emitAd(null, null)
-        } else {
-            emitAd(progress.cue, progress)
-        }
+        emitAd(progress)
 
         val primaryLatencyIsFresh = lastPrimaryLatencyRealtimeMs?.let { measuredAtMs ->
             SystemClock.elapsedRealtime() - measuredAtMs <= PRIMARY_LATENCY_FRESHNESS_MS
@@ -612,24 +593,24 @@ internal class TwitchPlayerView(
                 )
             }
         }
-        latestQualities = qualities
-            .distinctBy { listOf(it["height"], it["fps"], it["bitrate"]) }
-            .sortedWith(
-                compareByDescending<Map<String, Any?>> { it["height"] as? Int ?: 0 }
-                    .thenByDescending { (it["fps"] as? Number)?.toDouble() ?: 0.0 },
-            )
-        if (selectedQualityId != AUTO_QUALITY_ID && !qualityOverrides.containsKey(selectedQualityId)) {
+        val visibleQualities = deduplicateQualities(qualities, selectedQualityId)
+        val selectedQualityIsVisible = visibleQualities.any { it["id"] == selectedQualityId }
+        if (selectedQualityId != AUTO_QUALITY_ID && !selectedQualityIsVisible) {
+            clearVideoTrackOverride()
             selectedQualityId = AUTO_QUALITY_ID
+        }
+        latestQualities = visibleQualities.map { quality ->
+            mapOf(
+                "id" to quality["id"],
+                "label" to quality["label"],
+            )
         }
         emitQualities()
     }
 
     private fun setQuality(id: String?, result: MethodChannel.Result) {
         if (id == AUTO_QUALITY_ID) {
-            player.trackSelectionParameters = player.trackSelectionParameters
-                .buildUpon()
-                .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
-                .build()
+            clearVideoTrackOverride()
             selectedQualityId = AUTO_QUALITY_ID
             emitQualities()
             result.success(null)
@@ -649,6 +630,13 @@ internal class TwitchPlayerView(
         selectedQualityId = id
         emitQualities()
         result.success(null)
+    }
+
+    private fun clearVideoTrackOverride() {
+        player.trackSelectionParameters = player.trackSelectionParameters
+            .buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+            .build()
     }
 
     private fun qualityLabel(format: Format): String {
@@ -692,8 +680,8 @@ internal class TwitchPlayerView(
         )
     }
 
-    private fun emitAd(cue: TwitchAdCue?, progress: TwitchAdProgress?) {
-        val event = if (cue == null || progress == null) {
+    private fun emitAd(progress: TwitchAdProgress?) {
+        val event = if (progress == null) {
             inactiveAdEvent()
         } else {
             mapOf(
@@ -701,13 +689,7 @@ internal class TwitchPlayerView(
                 "active" to true,
                 "current" to progress.current,
                 "total" to progress.total,
-                // Keep the existing fields pod-wide so older Flutter clients
-                // immediately show the complete break countdown.
-                "durationMs" to progress.podDurationMs,
                 "remainingMs" to progress.podRemainingMs,
-                "currentDurationMs" to progress.currentDurationMs,
-                "currentRemainingMs" to progress.currentRemainingMs,
-                "rollType" to cue.rollType,
             )
         }
         if (event == latestAdEvent) {
@@ -761,6 +743,17 @@ internal class TwitchPlayerView(
         const val MAX_CORRECTION_SEEK_ATTEMPTS = 3
     }
 }
+
+internal fun deduplicateQualities(
+    qualities: List<Map<String, Any?>>,
+    selectedQualityId: String,
+): List<Map<String, Any?>> = qualities
+    .sortedBy { if (it["id"] == selectedQualityId) 0 else 1 }
+    .distinctBy { listOf(it["height"], it["fps"], it["bitrate"]) }
+    .sortedWith(
+        compareByDescending<Map<String, Any?>> { it["height"] as? Int ?: 0 }
+            .thenByDescending { (it["fps"] as? Number)?.toDouble() ?: 0.0 },
+    )
 
 private fun inactiveAdEvent(): Map<String, Any?> = mapOf(
     "type" to "ad",

@@ -24,9 +24,7 @@ import androidx.media3.extractor.metadata.emsg.EventMessageEncoder
 import androidx.media3.extractor.metadata.id3.Id3Decoder
 import androidx.media3.extractor.text.SubtitleParser
 import java.io.EOFException
-import java.io.IOException
 import java.nio.charset.StandardCharsets
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONObject
 
@@ -314,7 +312,6 @@ internal class TwitchEmsgMetadataBridge(
 ) {
     private val loggedRecovery = AtomicBoolean(false)
     private val loggedOversizedPayload = AtomicBoolean(false)
-    private val observedEmsgKeys = ConcurrentHashMap.newKeySet<String>()
 
     fun rewriteSample(sample: ByteArray): ByteArray {
         val eventMessage = try {
@@ -325,7 +322,6 @@ internal class TwitchEmsgMetadataBridge(
         if (eventMessage.wrappedMetadataFormat != null) {
             return sample
         }
-        logObservedEmsg(eventMessage)
         if (eventMessage.schemeIdUri != TWITCH_ID3_SCHEME) {
             return sample
         }
@@ -393,36 +389,12 @@ internal class TwitchEmsgMetadataBridge(
         return payload
     }
 
-    private fun logObservedEmsg(eventMessage: EventMessage) {
-        val scheme = eventMessage.schemeIdUri.take(MAX_LOG_FIELD_LENGTH)
-        val value = eventMessage.value.take(MAX_LOG_FIELD_LENGTH)
-        val key = "$scheme|$value"
-        if (
-            observedEmsgKeys.size >= MAX_OBSERVED_EMSG_LOGS ||
-            !observedEmsgKeys.add(key)
-        ) {
-            return
-        }
-        val prefix = eventMessage.messageData
-            .take(MAX_LOG_PREFIX_BYTES)
-            .joinToString(separator = "") { byte ->
-                "%02x".format(byte.toInt() and 0xFF)
-            }
-        logger(
-            "latency observed EMSG scheme=$scheme value=$value " +
-                "payloadBytes=${eventMessage.messageData.size} prefix=$prefix",
-        )
-    }
-
     internal companion object {
         const val TWITCH_ID3_SCHEME = "urn:twitch:id3"
         const val AOM_ID3_SCHEME = "https://aomedia.org/emsg/ID3"
         const val SEGMENT_METADATA_DESCRIPTION = "segmentmetadata"
         const val TRANSC_R_KEY = "transc_r"
         const val MAX_SEGMENT_METADATA_BYTES = 64 * 1024
-        const val MAX_OBSERVED_EMSG_LOGS = 5
-        const val MAX_LOG_FIELD_LENGTH = 96
-        const val MAX_LOG_PREFIX_BYTES = 8
     }
 }
 

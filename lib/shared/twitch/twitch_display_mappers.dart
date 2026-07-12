@@ -87,7 +87,6 @@ StreamChannel streamChannelFromStream(
     thumbnailColors: colorsForText(stream.id, count: 3),
     avatarImageUrl: avatarImageUrl,
     thumbnailUrl: twitchThumbnailUrl(stream.thumbnailUrl),
-    viewerCount: stream.viewerCount,
     startedAt: stream.startedAt,
   );
 }
