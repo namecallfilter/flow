@@ -23,7 +23,6 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
@@ -299,14 +298,25 @@ internal class TwitchPlayerView(
                 Log.d(LOG_TAG, "ad proxy connection host=$host route=$proxyType")
             }
         }
-        val httpDataSourceFactory: HttpDataSource.Factory = if (proxyClient == null) {
-            DefaultHttpDataSource.Factory().setUserAgent(USER_AGENT)
+        val directDataSourceFactory = DefaultDataSource.Factory(
+            playerView.context,
+            DefaultHttpDataSource.Factory().setUserAgent(USER_AGENT),
+        )
+        val manifestDataSourceFactory = if (proxyClient == null) {
+            directDataSourceFactory
         } else {
-            Log.d(LOG_TAG, "ad proxy active for Twitch playback (${proxyUrls.size} endpoints)")
-            OkHttpDataSource.Factory(proxyClient).setUserAgent(USER_AGENT)
+            Log.d(LOG_TAG, "ad proxy active for Twitch manifests (${proxyUrls.size} endpoints)")
+            DefaultDataSource.Factory(
+                playerView.context,
+                OkHttpDataSource.Factory(proxyClient).setUserAgent(USER_AGENT),
+            )
         }
-        val dataSourceFactory = DefaultDataSource.Factory(playerView.context, httpDataSourceFactory)
-        val mediaSource = HlsMediaSource.Factory(dataSourceFactory)
+        val mediaSource = HlsMediaSource.Factory(
+            ManifestOnlyHlsDataSourceFactory(
+                manifestFactory = manifestDataSourceFactory,
+                directFactory = directDataSourceFactory,
+            ),
+        )
             .setExtractorFactory(TwitchEmsgMetadataBridgeExtractorFactory())
             .setMetadataType(HlsMediaSource.METADATA_TYPE_ID3)
             .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(MINIMUM_LOAD_RETRY_COUNT))

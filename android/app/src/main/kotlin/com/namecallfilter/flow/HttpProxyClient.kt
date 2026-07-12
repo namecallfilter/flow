@@ -100,9 +100,6 @@ internal class OrderedHttpProxySelector(
 
     @Synchronized
     override fun select(uri: URI?): List<Proxy> {
-        if (!shouldProxyTwitchPlayback(uri)) {
-            return listOf(Proxy.NO_PROXY)
-        }
         val available = proxies.filterNot(failed::contains)
         if (available.isNotEmpty()) {
             return available + Proxy.NO_PROXY
@@ -121,11 +118,4 @@ internal class OrderedHttpProxySelector(
     override fun connectFailed(uri: URI?, socketAddress: SocketAddress?, error: IOException?) {
         proxies.firstOrNull { it.address() == socketAddress }?.let(::markFailed)
     }
-}
-
-internal fun shouldProxyTwitchPlayback(uri: URI?): Boolean {
-    val host = uri?.host?.lowercase() ?: return false
-    return host == "usher.ttvnw.net" ||
-        Regex("^[a-z0-9-]+\\.playlist\\.(?:live-video|ttvnw)\\.net$").matches(host) ||
-            Regex("^video-weaver\\.[a-z0-9-]+\\.hls\\.ttvnw\\.net$").matches(host)
 }

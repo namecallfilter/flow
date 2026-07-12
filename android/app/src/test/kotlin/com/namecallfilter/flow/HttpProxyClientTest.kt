@@ -58,25 +58,13 @@ class HttpProxyClientTest {
     }
 
     @Test
-    fun proxiesTwitchPlaybackHostsOnly() {
+    fun proxiesRedirectedManifestHosts() {
         val proxy = parseHttpProxy("http://proxy.example:8080")!!.proxy
         val selector = OrderedHttpProxySelector(listOf(proxy))
 
         assertEquals(
             listOf(proxy, Proxy.NO_PROXY),
-            selector.select(URI("https://video-weaver.sfo05.hls.ttvnw.net/v1/segment.ts")),
-        )
-        assertEquals(
-            listOf(proxy, Proxy.NO_PROXY),
-            selector.select(URI("https://video-weaver.sfo05.hls.ttvnw.net/v1/playlist/index.m3u8")),
-        )
-        assertEquals(
-            listOf(proxy, Proxy.NO_PROXY),
-            selector.select(URI("https://usher.ttvnw.net/api/v2/channel/hls/creator.m3u8")),
-        )
-        assertEquals(
-            listOf(Proxy.NO_PROXY),
-            selector.select(URI("https://example.com/playlist.m3u8")),
+            selector.select(URI("https://redirected-manifest.example/stream")),
         )
     }
 
