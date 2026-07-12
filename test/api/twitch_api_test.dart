@@ -164,6 +164,31 @@ void main() {
     expect(uri.queryParameters["sig"], "anonymous-signature");
     expect(uri.queryParameters["token"], "anonymous-token");
   });
+
+  test("checks an authenticated channel subscription", () async {
+    late http.Request capturedRequest;
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      gqlAccessToken: "web-token-123",
+      httpClient: MockClient((request) async {
+        capturedRequest = request;
+        return _jsonResponse({
+          "data": {
+            "user": {
+              "self": {
+                "subscriptionBenefit": {"id": "sub-1"},
+              },
+            },
+          },
+        });
+      }),
+    );
+
+    expect(await client.fetchChannelSubscriptionStatus("Creator"), isTrue);
+    expect(capturedRequest.headers["Authorization"], "OAuth web-token-123");
+    expect(capturedRequest.body, contains("FlowChannelSubscription"));
+  });
 }
 
 http.Response _jsonResponse(Map<String, Object?> body) => http.Response(

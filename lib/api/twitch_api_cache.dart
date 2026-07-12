@@ -106,6 +106,11 @@ class TwitchApiCache {
     return client.fetchLivePlaybackUri(login);
   }
 
+  Future<bool> fetchChannelSubscriptionStatus(String login) async {
+    final client = await clientLoader();
+    return client.fetchChannelSubscriptionStatus(login);
+  }
+
   Future<TwitchPage<TwitchCategory>> searchCategoriesPage(
     String query, {
     int first = 20,

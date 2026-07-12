@@ -76,6 +76,111 @@ class _SettingsScreenState extends State<SettingsScreen> {
     widget.onThemeModeChanged?.call(themeMode);
   }
 
+  Future<String?> _promptForValue({
+    required String title,
+    required String hint,
+    required String? Function(String value) validator,
+  }) {
+    var inputValue = "";
+    String? errorText;
+    return showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(title),
+          content: TextField(
+            autofocus: true,
+            decoration: InputDecoration(hintText: hint, errorText: errorText),
+            onChanged: (value) {
+              inputValue = value;
+              if (errorText != null) {
+                setDialogState(() => errorText = null);
+              }
+            },
+            onSubmitted: (value) {
+              final error = validator(value);
+              if (error == null) {
+                Navigator.of(context).pop(value);
+              } else {
+                setDialogState(() => errorText = error);
+              }
+            },
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text("Cancel")),
+            FilledButton(
+              onPressed: () {
+                final error = validator(inputValue);
+                if (error == null) {
+                  Navigator.of(context).pop(inputValue);
+                } else {
+                  setDialogState(() => errorText = error);
+                }
+              },
+              child: const Text("Add"),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _addProxyUrl() async {
+    final value = await _promptForValue(
+      title: "Add HTTP proxy",
+      hint: "http://host:port",
+      validator: (value) {
+        final normalized = normalizeAdProxyUrl(value);
+        if (normalized == null) {
+          return "Enter an HTTP proxy URL without a path.";
+        }
+        if (_settingsStore.adProxyUrls.contains(normalized)) {
+          return "That proxy is already in the list.";
+        }
+        return null;
+      },
+    );
+    final normalized = value == null ? null : normalizeAdProxyUrl(value);
+    if (normalized != null) {
+      await _settingsStore.setAdProxyUrls([..._settingsStore.adProxyUrls, normalized]);
+    }
+  }
+
+  Future<void> _addWhitelistedChannel() async {
+    final value = await _promptForValue(
+      title: "Whitelist channel",
+      hint: "channel_login",
+      validator: (value) {
+        final normalized = normalizeChannelLogins([value]);
+        if (normalized.isEmpty) {
+          return "Enter a valid Twitch channel login.";
+        }
+        if (_settingsStore.adProxyEffectiveWhitelistedChannels.contains(normalized.single)) {
+          return "That channel is already whitelisted.";
+        }
+        return null;
+      },
+    );
+    final normalized = value == null ? const <String>[] : normalizeChannelLogins([value]);
+    if (normalized.isNotEmpty) {
+      await _settingsStore.setAdProxyWhitelistedChannels([
+        ..._settingsStore.adProxyWhitelistedChannels,
+        normalized.single,
+      ]);
+    }
+  }
+
+  Future<void> _moveProxy(int index, int offset) async {
+    final urls = _settingsStore.adProxyUrls.toList();
+    final target = index + offset;
+    if (target < 0 || target >= urls.length) {
+      return;
+    }
+    final value = urls.removeAt(index);
+    urls.insert(target, value);
+    await _settingsStore.setAdProxyUrls(urls);
+  }
+
   Future<void> _openRepository(BuildContext context) async {
     final messenger = ScaffoldMessenger.of(context);
     final opener = widget.openExternalUrl ?? ExternalUrlLauncher.open;
@@ -121,6 +226,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   const SizedBox(height: AppSpacing.md),
                   _SettingsGroup(
+                    key: const ValueKey("settings_ad_proxy_group"),
+                    children: [
+                      _AdProxySettings(
+                        enabled: _settingsStore.adProxyEnabled,
+                        proxyUrls: _settingsStore.adProxyUrls,
+                        whitelistedChannels: _settingsStore.adProxyEffectiveWhitelistedChannels,
+                        subscriptionChannels: _settingsStore.adProxySubscriptionChannels,
+                        onEnabledChanged: (enabled) {
+                          unawaited(_settingsStore.setAdProxyEnabled(enabled: enabled));
+                        },
+                        onAddProxy: () => unawaited(_addProxyUrl()),
+                        onRemoveProxy: (index) {
+                          final urls = _settingsStore.adProxyUrls.toList()..removeAt(index);
+                          unawaited(_settingsStore.setAdProxyUrls(urls));
+                        },
+                        onMoveProxy: (index, offset) => unawaited(_moveProxy(index, offset)),
+                        onAddChannel: () => unawaited(_addWhitelistedChannel()),
+                        onRemoveChannel: (channel) {
+                          final channels = _settingsStore.adProxyWhitelistedChannels.toList()
+                            ..remove(channel);
+                          unawaited(_settingsStore.setAdProxyWhitelistedChannels(channels));
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  _SettingsGroup(
                     children: [
                       _SettingsRow(
                         icon: Icons.info_outline,
@@ -147,6 +279,177 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
     },
   );
+}
+
+class _AdProxySettings extends StatelessWidget {
+  const _AdProxySettings({
+    required this.enabled,
+    required this.proxyUrls,
+    required this.whitelistedChannels,
+    required this.subscriptionChannels,
+    required this.onEnabledChanged,
+    required this.onAddProxy,
+    required this.onRemoveProxy,
+    required this.onMoveProxy,
+    required this.onAddChannel,
+    required this.onRemoveChannel,
+  });
+
+  final bool enabled;
+  final List<String> proxyUrls;
+  final List<String> whitelistedChannels;
+  final List<String> subscriptionChannels;
+  final ValueChanged<bool> onEnabledChanged;
+  final VoidCallback onAddProxy;
+  final ValueChanged<int> onRemoveProxy;
+  final void Function(int index, int offset) onMoveProxy;
+  final VoidCallback onAddChannel;
+  final ValueChanged<String> onRemoveChannel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SettingsRow(
+          icon: Icons.shield_outlined,
+          title: "Ad proxying",
+          subtitle: "Route Twitch ad delivery through HTTP proxies.",
+          trailing: Switch(
+            key: const ValueKey("settings_ad_proxy_toggle"),
+            value: enabled,
+            onChanged: onEnabledChanged,
+          ),
+        ),
+        const Divider(height: 1),
+        _SettingsListHeader(title: "Proxies", onAdd: onAddProxy),
+        if (proxyUrls.isEmpty)
+          const _SettingsEmptyList(message: "Add at least one HTTP proxy.")
+        else
+          for (final (index, url) in proxyUrls.indexed)
+            ListTile(
+              key: ValueKey("settings_proxy_$index"),
+              dense: true,
+              title: Text(index == 0 ? "Main" : "Fallback $index"),
+              subtitle: Text(url, maxLines: 1, overflow: TextOverflow.ellipsis),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: "Move up",
+                    onPressed: index == 0 ? null : () => onMoveProxy(index, -1),
+                    icon: const Icon(Icons.arrow_upward),
+                  ),
+                  IconButton(
+                    tooltip: "Move down",
+                    onPressed: index == proxyUrls.length - 1 ? null : () => onMoveProxy(index, 1),
+                    icon: const Icon(Icons.arrow_downward),
+                  ),
+                  IconButton(
+                    tooltip: "Remove proxy",
+                    onPressed: () => onRemoveProxy(index),
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+                ],
+              ),
+            ),
+        Divider(height: 1, color: theme.dividerColor),
+        _SettingsListHeader(title: "Whitelisted channels", onAdd: onAddChannel),
+        if (whitelistedChannels.isEmpty)
+          const _SettingsEmptyList(message: "Subscribed channels are added automatically.")
+        else
+          for (final channel in whitelistedChannels)
+            ListTile(
+              key: ValueKey("settings_whitelisted_$channel"),
+              dense: true,
+              title: Text(channel),
+              subtitle: subscriptionChannels.contains(channel)
+                  ? const Text("Subscribed channel")
+                  : null,
+              trailing: subscriptionChannels.contains(channel)
+                  ? const Tooltip(
+                      message: "Managed automatically",
+                      child: Icon(Icons.lock_outline),
+                    )
+                  : IconButton(
+                      tooltip: "Remove channel",
+                      onPressed: () => onRemoveChannel(channel),
+                      icon: const Icon(Icons.delete_outline),
+                    ),
+            ),
+      ],
+    );
+  }
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(FlagProperty("enabled", value: enabled, ifTrue: "enabled"));
+    properties.add(IterableProperty<String>("proxyUrls", proxyUrls));
+    properties.add(IterableProperty<String>("whitelistedChannels", whitelistedChannels));
+    properties.add(IterableProperty<String>("subscriptionChannels", subscriptionChannels));
+    properties.add(
+      ObjectFlagProperty<ValueChanged<bool>>.has("onEnabledChanged", onEnabledChanged),
+    );
+    properties.add(ObjectFlagProperty<VoidCallback>.has("onAddProxy", onAddProxy));
+    properties.add(ObjectFlagProperty<ValueChanged<int>>.has("onRemoveProxy", onRemoveProxy));
+    properties.add(ObjectFlagProperty<void Function(int, int)>.has("onMoveProxy", onMoveProxy));
+    properties.add(ObjectFlagProperty<VoidCallback>.has("onAddChannel", onAddChannel));
+    properties.add(
+      ObjectFlagProperty<ValueChanged<String>>.has("onRemoveChannel", onRemoveChannel),
+    );
+  }
+}
+
+class _SettingsListHeader extends StatelessWidget {
+  const _SettingsListHeader({required this.title, required this.onAdd});
+
+  final String title;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(left: AppSpacing.lg, right: AppSpacing.sm, top: AppSpacing.sm),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(title, style: Theme.of(context).textTheme.titleSmall),
+        ),
+        IconButton(tooltip: "Add $title", onPressed: onAdd, icon: const Icon(Icons.add)),
+      ],
+    ),
+  );
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(StringProperty("title", title));
+    properties.add(ObjectFlagProperty<VoidCallback>.has("onAdd", onAdd));
+  }
+}
+
+class _SettingsEmptyList extends StatelessWidget {
+  const _SettingsEmptyList({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(AppSpacing.lg, 0, AppSpacing.lg, AppSpacing.md),
+    child: Text(
+      message,
+      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
+      ),
+    ),
+  );
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(StringProperty("message", message));
+  }
 }
 
 class _SettingsTopBar extends StatelessWidget {
@@ -476,6 +779,34 @@ class _MemoryFlowPreferences implements FlowPreferences {
 
   ThemeMode themeMode;
   List<String> searchHistory = const <String>[];
+  bool adProxyEnabled = false;
+  List<String> adProxyUrls = const [];
+  List<String> adProxyWhitelistedChannels = const [];
+
+  @override
+  Future<bool> readAdProxyEnabled() async => adProxyEnabled;
+
+  @override
+  Future<List<String>> readAdProxyUrls() async => adProxyUrls;
+
+  @override
+  Future<List<String>> readAdProxyWhitelistedChannels() async => adProxyWhitelistedChannels;
+
+  @override
+  Future<List<String>> readAdProxySubscriptionChannels() async => const [];
+
+  @override
+  Future<void> saveAdProxyEnabled({required bool enabled}) async => adProxyEnabled = enabled;
+
+  @override
+  Future<void> saveAdProxyUrls(List<String> urls) async => adProxyUrls = List.of(urls);
+
+  @override
+  Future<void> saveAdProxyWhitelistedChannels(List<String> channels) async =>
+      adProxyWhitelistedChannels = List.of(channels);
+
+  @override
+  Future<void> saveAdProxySubscriptionChannels(List<String> channels) async {}
 
   @override
   Future<void> clearBrowseSearchHistory() async {

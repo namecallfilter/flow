@@ -16,6 +16,9 @@ internal class TwitchPlayerViewFactory(
             messenger = messenger,
             viewId = viewId,
             initialUrl = creationParams?.get("url") as? String,
+            proxyUrls = (creationParams?.get("proxyUrls") as? List<*>)
+                ?.filterIsInstance<String>()
+                .orEmpty(),
         )
     }
 }

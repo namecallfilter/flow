@@ -4,6 +4,14 @@ import "package:shared_preferences/shared_preferences.dart";
 abstract interface class FlowPreferences {
   Future<ThemeMode> readThemeMode();
   Future<void> saveThemeMode(ThemeMode mode);
+  Future<bool> readAdProxyEnabled();
+  Future<void> saveAdProxyEnabled({required bool enabled});
+  Future<List<String>> readAdProxyUrls();
+  Future<void> saveAdProxyUrls(List<String> urls);
+  Future<List<String>> readAdProxyWhitelistedChannels();
+  Future<void> saveAdProxyWhitelistedChannels(List<String> channels);
+  Future<List<String>> readAdProxySubscriptionChannels();
+  Future<void> saveAdProxySubscriptionChannels(List<String> channels);
   Future<List<String>> readBrowseSearchHistory();
   Future<void> saveBrowseSearchHistory(List<String> history);
   Future<void> clearBrowseSearchHistory();
@@ -23,9 +31,30 @@ class SharedPreferencesFlowPreferences implements FlowPreferences {
   }) : _store = store ?? SharedPreferencesAsyncFlowPreferencesStore();
 
   static const themeModeKey = "flow_theme_mode";
+  static const adProxyEnabledKey = "ad_proxy_enabled";
+  static const adProxyUrlsKey = "ad_proxy_urls";
+  static const adProxyWhitelistedChannelsKey = "ad_proxy_whitelisted_channels";
+  static const adProxySubscriptionChannelsKey = "ad_proxy_subscription_channels";
   static const browseSearchHistoryKey = "browse_search_history";
 
   final FlowPreferencesStore _store;
+
+  @override
+  Future<bool> readAdProxyEnabled() async => await _store.getString(adProxyEnabledKey) == "true";
+
+  @override
+  Future<List<String>> readAdProxyUrls() async =>
+      normalizeAdProxyUrls(await _store.getStringList(adProxyUrlsKey) ?? const []);
+
+  @override
+  Future<List<String>> readAdProxyWhitelistedChannels() async => normalizeChannelLogins(
+    await _store.getStringList(adProxyWhitelistedChannelsKey) ?? const [],
+  );
+
+  @override
+  Future<List<String>> readAdProxySubscriptionChannels() async => normalizeChannelLogins(
+    await _store.getStringList(adProxySubscriptionChannelsKey) ?? const [],
+  );
 
   @override
   Future<void> clearBrowseSearchHistory() => _store.remove(browseSearchHistoryKey);
@@ -52,6 +81,26 @@ class SharedPreferencesFlowPreferences implements FlowPreferences {
 
     await _store.setStringList(browseSearchHistoryKey, normalizedHistory);
   }
+
+  @override
+  Future<void> saveAdProxyEnabled({required bool enabled}) =>
+      _store.setString(adProxyEnabledKey, enabled.toString());
+
+  @override
+  Future<void> saveAdProxyUrls(List<String> urls) =>
+      _store.setStringList(adProxyUrlsKey, normalizeAdProxyUrls(urls));
+
+  @override
+  Future<void> saveAdProxyWhitelistedChannels(List<String> channels) => _store.setStringList(
+    adProxyWhitelistedChannelsKey,
+    normalizeChannelLogins(channels),
+  );
+
+  @override
+  Future<void> saveAdProxySubscriptionChannels(List<String> channels) => _store.setStringList(
+    adProxySubscriptionChannelsKey,
+    normalizeChannelLogins(channels),
+  );
 
   @override
   Future<void> saveThemeMode(ThemeMode mode) =>
@@ -108,4 +157,44 @@ List<String> normalizeBrowseSearchHistory(Iterable<String> values) {
     }
   }
   return history;
+}
+
+List<String> normalizeAdProxyUrls(Iterable<String> values) {
+  final seen = <String>{};
+  return [
+    for (final rawValue in values)
+      if (normalizeAdProxyUrl(rawValue) case final value?)
+        if (seen.add(value.toLowerCase())) value,
+  ];
+}
+
+String? normalizeAdProxyUrl(String value) {
+  final uri = Uri.tryParse(value.trim());
+  final hasEmptyUsername =
+      uri != null &&
+      uri.authority.contains("@") &&
+      (uri.userInfo.isEmpty || uri.userInfo.split(":").first.isEmpty);
+  if (uri == null ||
+      uri.scheme.toLowerCase() != "http" ||
+      uri.host.isEmpty ||
+      hasEmptyUsername ||
+      uri.path.isNotEmpty && uri.path != "/" ||
+      uri.hasQuery ||
+      uri.hasFragment) {
+    return null;
+  }
+  final port = uri.hasPort ? uri.port : 80;
+  if (port < 1 || port > 65535) {
+    return null;
+  }
+  return uri.replace(scheme: "http", path: "").toString();
+}
+
+List<String> normalizeChannelLogins(Iterable<String> values) {
+  final seen = <String>{};
+  return [
+    for (final rawValue in values)
+      if (rawValue.trim().toLowerCase() case final value)
+        if (RegExp(r"^[a-z0-9_]{1,25}$").hasMatch(value) && seen.add(value)) value,
+  ];
 }

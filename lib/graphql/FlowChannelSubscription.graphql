@@ -1,0 +1,9 @@
+query FlowChannelSubscription($login: String!) {
+  user(login: $login) {
+    self {
+      subscriptionBenefit {
+        id
+      }
+    }
+  }
+}

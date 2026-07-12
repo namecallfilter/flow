@@ -34,6 +34,35 @@ void main() {
 
     expect(await preferences.readBrowseSearchHistory(), isEmpty);
   });
+
+  test("stores only ordered HTTP proxy URLs and valid channel logins", () async {
+    final store = _MemoryPreferencesStore();
+    final preferences = SharedPreferencesFlowPreferences(store: store);
+
+    await preferences.saveAdProxyEnabled(enabled: true);
+    await preferences.saveAdProxyUrls([
+      " http://main.example:8080 ",
+      "https://not-http.example",
+      "http://fallback.example:3128/",
+      "HTTP://MAIN.EXAMPLE:8080",
+      "http://proxy.example/path",
+      "http://proxy.example:99999",
+      "http://:password@proxy.example:8080",
+    ]);
+    await preferences.saveAdProxyWhitelistedChannels([
+      " Creator ",
+      "creator",
+      "other_channel",
+      "invalid-channel",
+    ]);
+
+    expect(await preferences.readAdProxyEnabled(), isTrue);
+    expect(await preferences.readAdProxyUrls(), [
+      "http://main.example:8080",
+      "http://fallback.example:3128",
+    ]);
+    expect(await preferences.readAdProxyWhitelistedChannels(), ["creator", "other_channel"]);
+  });
 }
 
 class _MemoryPreferencesStore implements FlowPreferencesStore {

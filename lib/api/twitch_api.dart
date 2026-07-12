@@ -1,6 +1,7 @@
 import "dart:math" as math;
 
 import "package:flow/graphql/FlowChannelDetails.graphql.dart";
+import "package:flow/graphql/FlowChannelSubscription.graphql.dart";
 import "package:flow/graphql/FlowCurrentUser.graphql.dart";
 import "package:flow/graphql/FlowFollowedLiveUsers.graphql.dart";
 import "package:flow/graphql/FlowFollowedUsers.graphql.dart";
@@ -642,6 +643,26 @@ class TwitchApiClient {
         "type": "any",
       },
     );
+  }
+
+  Future<bool> fetchChannelSubscriptionStatus(String login) async {
+    final normalizedLogin = _nonEmptyValue(login);
+    if (normalizedLogin == null) {
+      throw TwitchApiException("Channel login is required.");
+    }
+
+    final data = await _query(
+      () => _authenticatedGraphQlClient.query$FlowChannelSubscription(
+        Options$Query$FlowChannelSubscription(
+          variables: Variables$Query$FlowChannelSubscription(login: normalizedLogin),
+          fetchPolicy: graphql.FetchPolicy.noCache,
+        ),
+      ),
+      "FlowChannelSubscription",
+    );
+    final user = _mapValue(data.toJson()["user"]);
+    final self = _mapValue(user?["self"]);
+    return _mapValue(self?["subscriptionBenefit"]) != null;
   }
 
   Future<TwitchPage<TwitchFollowedStream>> _fetchGameStreamsPage({

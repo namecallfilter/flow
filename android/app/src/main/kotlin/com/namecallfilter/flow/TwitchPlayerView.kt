@@ -23,6 +23,8 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.HttpDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
@@ -40,6 +42,7 @@ internal class TwitchPlayerView(
     messenger: BinaryMessenger,
     viewId: Int,
     initialUrl: String?,
+    private val proxyUrls: List<String>,
 ) : PlatformView {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val playerView = LayoutInflater.from(context).inflate(
@@ -114,6 +117,7 @@ internal class TwitchPlayerView(
 
         override fun onPlayerError(error: PlaybackException) {
             latestError = error.message ?: "The stream could not be played."
+            Log.e(LOG_TAG, "playback failed", error)
             emitError(latestError!!)
         }
 
@@ -288,8 +292,19 @@ internal class TwitchPlayerView(
             }
         }.also(player::addListener)
 
-        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent(USER_AGENT)
+        val proxyClient = if (proxyUrls.isEmpty()) {
+            null
+        } else {
+            buildHttpProxyClient(proxyUrls) { host, proxyType ->
+                Log.d(LOG_TAG, "ad proxy connection host=$host route=$proxyType")
+            }
+        }
+        val httpDataSourceFactory: HttpDataSource.Factory = if (proxyClient == null) {
+            DefaultHttpDataSource.Factory().setUserAgent(USER_AGENT)
+        } else {
+            Log.d(LOG_TAG, "ad proxy active for Twitch playback (${proxyUrls.size} endpoints)")
+            OkHttpDataSource.Factory(proxyClient).setUserAgent(USER_AGENT)
+        }
         val dataSourceFactory = DefaultDataSource.Factory(playerView.context, httpDataSourceFactory)
         val mediaSource = HlsMediaSource.Factory(dataSourceFactory)
             .setExtractorFactory(TwitchEmsgMetadataBridgeExtractorFactory())

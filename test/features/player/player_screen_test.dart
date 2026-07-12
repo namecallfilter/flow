@@ -6,6 +6,7 @@ import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/player/media3_player_controller.dart";
 import "package:flow/features/player/player_screen.dart";
+import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flow/shared/widgets/avatar_ring.dart";
 import "package:flutter/foundation.dart";
@@ -15,6 +16,41 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  test("subscription sync preserves manual whitelist entries", () async {
+    final preferences = SharedPreferencesFlowPreferences(store: _MemoryPreferencesStore());
+    await preferences.saveAdProxyWhitelistedChannels(["manual"]);
+
+    await syncSubscriptionWhitelist(preferences, login: "Creator", isSubscribed: true);
+    expect(await preferences.readAdProxySubscriptionChannels(), ["creator"]);
+    expect(await preferences.readAdProxyWhitelistedChannels(), ["manual"]);
+
+    await syncSubscriptionWhitelist(preferences, login: "creator", isSubscribed: false);
+    expect(await preferences.readAdProxySubscriptionChannels(), isEmpty);
+    expect(await preferences.readAdProxyWhitelistedChannels(), ["manual"]);
+  });
+
+  testWidgets("uses the active theme behind the video viewport", (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      _playerApp(
+        player: _FakePlayerController(),
+        brightness: Brightness.light,
+      ),
+    );
+    await tester.pump();
+
+    final scaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
+    expect(scaffold.backgroundColor, buildFlowTheme(Brightness.light).scaffoldBackgroundColor);
+    expect(
+      tester.widget<ColoredBox>(find.byKey(const ValueKey("player_viewport"))).color,
+      Colors.black,
+    );
+  });
+
   testWidgets("shows measured latency and keeps playback controls independent", (
     tester,
   ) async {
@@ -1007,6 +1043,7 @@ Future<void> _pumpNavigation(WidgetTester tester) async {
 
 Widget _playerApp({
   required _FakePlayerController player,
+  Brightness brightness = Brightness.dark,
   TwitchApiCache? apiCache,
   PlayerDisplayModeController? displayMode,
   PlaybackUriLoader? playbackUriLoader,
@@ -1015,7 +1052,7 @@ Widget _playerApp({
   PlayerSurfaceBuilder? playerSurfaceBuilder,
   bool useDefaultPlayerSurface = false,
 }) => MaterialApp(
-  theme: buildFlowTheme(Brightness.dark),
+  theme: buildFlowTheme(brightness),
   home: StreamPlayerScreen(
     apiCache:
         apiCache ??
@@ -1267,4 +1304,28 @@ class _BlockingDisplayModeController implements PlayerDisplayModeController {
     await _landscapeTransition.future;
     _operations.add("landscape:$landscape:end");
   }
+}
+
+class _MemoryPreferencesStore implements FlowPreferencesStore {
+  final strings = <String, String>{};
+  final stringLists = <String, List<String>>{};
+
+  @override
+  Future<String?> getString(String key) async => strings[key];
+
+  @override
+  Future<List<String>?> getStringList(String key) async => stringLists[key];
+
+  @override
+  Future<void> remove(String key) async {
+    strings.remove(key);
+    stringLists.remove(key);
+  }
+
+  @override
+  Future<void> setString(String key, String value) async => strings[key] = value;
+
+  @override
+  Future<void> setStringList(String key, List<String> value) async =>
+      stringLists[key] = List.of(value);
 }
