@@ -20,9 +20,11 @@ internal data class HttpProxyConfig(
 internal fun buildHttpProxyClient(
     urls: List<String>,
     onConnect: (host: String, proxyType: Proxy.Type) -> Unit = { _, _ -> },
-): OkHttpClient {
+): OkHttpClient? {
     val configs = urls.mapNotNull(::parseHttpProxy)
-    require(configs.isNotEmpty()) { "At least one valid HTTP proxy is required." }
+    if (configs.isEmpty()) {
+        return null
+    }
     val proxySelector = OrderedHttpProxySelector(
         configs.map(HttpProxyConfig::proxy),
     )

@@ -57,16 +57,19 @@ class _FlowAppState extends State<FlowApp> {
 
   @override
   Widget build(BuildContext context) => Observer(
-    builder: (_) => MaterialApp(
-      title: "Flow",
-      debugShowCheckedModeBanner: false,
-      theme: buildFlowTheme(Brightness.light),
-      darkTheme: buildFlowTheme(Brightness.dark),
-      themeMode: _settingsStore.themeMode,
-      home: FlowTabsScreen(
-        preferences: _preferences,
-        settingsStore: _settingsStore,
-        openExternalUrl: widget.openExternalUrl,
+    builder: (_) => AppSettingsScope(
+      settingsStore: _settingsStore,
+      child: MaterialApp(
+        title: "Flow",
+        debugShowCheckedModeBanner: false,
+        theme: buildFlowTheme(Brightness.light),
+        darkTheme: buildFlowTheme(Brightness.dark),
+        themeMode: _settingsStore.themeMode,
+        home: FlowTabsScreen(
+          preferences: _preferences,
+          settingsStore: _settingsStore,
+          openExternalUrl: widget.openExternalUrl,
+        ),
       ),
     ),
   );

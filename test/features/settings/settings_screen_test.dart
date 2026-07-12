@@ -7,6 +7,23 @@ import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  test("serializes subscription whitelist updates", () async {
+    final preferences = SharedPreferencesFlowPreferences(store: _MemoryPreferencesStore());
+    await preferences.saveAdProxyWhitelistedChannels(["manual"]);
+    final settingsStore = AppSettingsStore(preferences: preferences);
+    await settingsStore.load();
+
+    await Future.wait([
+      settingsStore.syncAdProxySubscriptionChannel(login: "Alpha", isSubscribed: true),
+      settingsStore.syncAdProxySubscriptionChannel(login: "Beta", isSubscribed: true),
+    ]);
+
+    expect(settingsStore.adProxySubscriptionChannels, ["alpha", "beta"]);
+    expect(settingsStore.adProxyEffectiveWhitelistedChannels, ["manual", "alpha", "beta"]);
+    expect(await preferences.readAdProxySubscriptionChannels(), ["alpha", "beta"]);
+    expect(await preferences.readAdProxyWhitelistedChannels(), ["manual"]);
+  });
+
   testWidgets("uses the Settings header spacing", (tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -42,6 +59,28 @@ void main() {
 
     expect(settingsStore.adProxyEnabled, isTrue);
     expect(await preferences.readAdProxyEnabled(), isTrue);
+  });
+
+  testWidgets("shows subscription whitelist updates without reloading settings", (tester) async {
+    final preferences = SharedPreferencesFlowPreferences(store: _MemoryPreferencesStore());
+    final settingsStore = AppSettingsStore(preferences: preferences);
+    await settingsStore.load();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: SettingsScreen(settingsStore: settingsStore),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await settingsStore.syncAdProxySubscriptionChannel(
+      login: "Creator",
+      isSubscribed: true,
+    );
+    await tester.pump();
+
+    expect(find.text("creator"), findsOneWidget);
+    expect(find.text("Subscribed channel"), findsOneWidget);
   });
 
   testWidgets("adds and cancels proxy and whitelist dialogs without errors", (tester) async {

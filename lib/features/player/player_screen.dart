@@ -2,6 +2,7 @@ import "dart:async";
 import "dart:math" as math;
 
 import "package:flow/api/twitch_api_cache.dart";
+import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/spacing.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/browse/browse_screen.dart";
@@ -250,16 +251,38 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   }
 
   Future<List<String>> _loadProxyUrls() async {
-    if (widget.playbackUriLoader != null && widget.preferences == null) {
+    final settingsStore = widget.preferences == null ? AppSettingsScope.maybeOf(context) : null;
+    if (widget.playbackUriLoader != null && widget.preferences == null && settingsStore == null) {
       return const [];
     }
-    final preferences = widget.preferences ?? SharedPreferencesFlowPreferences();
-    if (widget.playbackUriLoader == null) {
-      await _syncSubscriptionWhitelist(preferences);
-    }
     try {
+      if (settingsStore != null) {
+        if (!settingsStore.isLoaded) {
+          await settingsStore.load();
+        }
+        if (!settingsStore.adProxyEnabled) {
+          return const [];
+        }
+        if (widget.playbackUriLoader == null) {
+          await _syncSubscriptionWhitelist(
+            settingsStore.preferences,
+            settingsStore: settingsStore,
+          );
+        }
+        if (settingsStore.adProxyEffectiveWhitelistedChannels.contains(
+          widget.channel.login.trim().toLowerCase(),
+        )) {
+          return const [];
+        }
+        return settingsStore.adProxyUrls.toList();
+      }
+
+      final preferences = widget.preferences ?? SharedPreferencesFlowPreferences();
       if (!await preferences.readAdProxyEnabled()) {
         return const [];
+      }
+      if (widget.playbackUriLoader == null) {
+        await _syncSubscriptionWhitelist(preferences);
       }
       final whitelistedChannels = normalizeChannelLogins([
         ...await preferences.readAdProxyWhitelistedChannels(),
@@ -274,15 +297,25 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     }
   }
 
-  Future<void> _syncSubscriptionWhitelist(FlowPreferences preferences) async {
+  Future<void> _syncSubscriptionWhitelist(
+    FlowPreferences preferences, {
+    AppSettingsStore? settingsStore,
+  }) async {
     try {
       final login = widget.channel.login.trim().toLowerCase();
       final isSubscribed = await widget.apiCache.fetchChannelSubscriptionStatus(login);
-      await syncSubscriptionWhitelist(
-        preferences,
-        login: login,
-        isSubscribed: isSubscribed,
-      );
+      if (settingsStore == null) {
+        await syncSubscriptionWhitelist(
+          preferences,
+          login: login,
+          isSubscribed: isSubscribed,
+        );
+      } else {
+        await settingsStore.syncAdProxySubscriptionChannel(
+          login: login,
+          isSubscribed: isSubscribed,
+        );
+      }
     } on Object {
       // Subscription state is optional; playback should still start if it cannot be checked.
     }
@@ -656,18 +689,31 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   }
 }
 
+Future<void> _subscriptionWhitelistUpdateTail = Future<void>.value();
+
 Future<void> syncSubscriptionWhitelist(
   FlowPreferences preferences, {
   required String login,
   required bool isSubscribed,
-}) async {
-  final normalizedLogin = login.trim().toLowerCase();
-  final channels = await preferences.readAdProxySubscriptionChannels();
-  if (isSubscribed && !channels.contains(normalizedLogin)) {
-    await preferences.saveAdProxySubscriptionChannels([...channels, normalizedLogin]);
-  } else if (!isSubscribed && channels.contains(normalizedLogin)) {
-    await preferences.saveAdProxySubscriptionChannels(channels.toList()..remove(normalizedLogin));
-  }
+}) {
+  final result = _subscriptionWhitelistUpdateTail.then((_) async {
+    final normalized = normalizeChannelLogins([login]);
+    if (normalized.isEmpty) {
+      return;
+    }
+    final normalizedLogin = normalized.single;
+    final channels = await preferences.readAdProxySubscriptionChannels();
+    if (isSubscribed && !channels.contains(normalizedLogin)) {
+      await preferences.saveAdProxySubscriptionChannels([...channels, normalizedLogin]);
+    } else if (!isSubscribed && channels.contains(normalizedLogin)) {
+      await preferences.saveAdProxySubscriptionChannels(channels.toList()..remove(normalizedLogin));
+    }
+  });
+  _subscriptionWhitelistUpdateTail = result.then<void>(
+    (_) {},
+    onError: (Object _, StackTrace _) {},
+  );
+  return result;
 }
 
 class _PlayerViewport extends StatelessWidget {

@@ -3,6 +3,7 @@ import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
+import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/player/media3_player_controller.dart";
 import "package:flow/features/player/player_screen.dart";
@@ -27,6 +28,72 @@ void main() {
     await syncSubscriptionWhitelist(preferences, login: "creator", isSubscribed: false);
     expect(await preferences.readAdProxySubscriptionChannels(), isEmpty);
     expect(await preferences.readAdProxyWhitelistedChannels(), ["manual"]);
+  });
+
+  testWidgets("syncs subscriptions only while ad proxying is enabled", (tester) async {
+    var subscriptionRequests = 0;
+    var playbackRequests = 0;
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(
+        clientId: "client",
+        accessToken: "token",
+        gqlAccessToken: "gql-token",
+        httpClient: MockClient((request) async {
+          final body = jsonDecode(request.body) as Map<String, Object?>;
+          final query = body["query"] as String? ?? "";
+          if (query.contains("FlowChannelSubscription")) {
+            subscriptionRequests++;
+            return _jsonResponse({
+              "data": {
+                "user": {
+                  "self": {
+                    "subscriptionBenefit": {"id": "sub-1"},
+                  },
+                },
+              },
+            });
+          }
+          playbackRequests++;
+          return _jsonResponse({
+            "data": {
+              "streamPlaybackAccessToken": {
+                "value": "{\"expires\":1780000000}",
+                "signature": "signature",
+                "authorization": {
+                  "isForbidden": false,
+                  "forbiddenReasonCode": null,
+                },
+              },
+            },
+          });
+        }),
+      ),
+    );
+    final preferences = SharedPreferencesFlowPreferences(store: _MemoryPreferencesStore());
+    final settingsStore = AppSettingsStore(preferences: preferences);
+    await settingsStore.load();
+
+    await tester.pumpWidget(
+      _playerApp(
+        player: _FakePlayerController(),
+        apiCache: apiCache,
+        settingsStore: settingsStore,
+        useApiPlaybackLoader: true,
+      ),
+    );
+    await _pumpNavigation(tester);
+
+    expect(playbackRequests, 1);
+    expect(subscriptionRequests, 0);
+
+    await settingsStore.setAdProxyEnabled(enabled: true);
+    await tester.tap(find.byKey(const ValueKey("player_refresh_button")));
+    await _pumpNavigation(tester);
+
+    expect(playbackRequests, 2);
+    expect(subscriptionRequests, 1);
+    expect(settingsStore.adProxySubscriptionChannels, ["creator"]);
+    expect(await preferences.readAdProxySubscriptionChannels(), ["creator"]);
   });
 
   testWidgets("uses the active theme behind the video viewport", (tester) async {
@@ -1051,43 +1118,50 @@ Widget _playerApp({
   VoidCallback? onSurfaceCreated,
   PlayerSurfaceBuilder? playerSurfaceBuilder,
   bool useDefaultPlayerSurface = false,
-}) => MaterialApp(
-  theme: buildFlowTheme(brightness),
-  home: StreamPlayerScreen(
-    apiCache:
-        apiCache ??
-        TwitchApiCache(
-          clientLoader: () async => TwitchApiClient(
-            clientId: "client",
-            accessToken: "token",
+  bool useApiPlaybackLoader = false,
+  AppSettingsStore? settingsStore,
+}) {
+  final app = MaterialApp(
+    theme: buildFlowTheme(brightness),
+    home: StreamPlayerScreen(
+      apiCache:
+          apiCache ??
+          TwitchApiCache(
+            clientLoader: () async => TwitchApiClient(
+              clientId: "client",
+              accessToken: "token",
+            ),
           ),
-        ),
-    channel: StreamChannel(
-      id: "creator-1",
-      login: "creator",
-      name: "Creator",
-      initials: "CR",
-      title: "A precise stream title",
-      category: "Just Chatting",
-      viewers: "12.3K",
-      startedAt: DateTime(2026, 7, 9, 19),
-      avatarColors: const [Colors.purple, Colors.pink],
-      thumbnailColors: const [Colors.black, Colors.grey],
+      channel: StreamChannel(
+        id: "creator-1",
+        login: "creator",
+        name: "Creator",
+        initials: "CR",
+        title: "A precise stream title",
+        category: "Just Chatting",
+        viewers: "12.3K",
+        startedAt: DateTime(2026, 7, 9, 19),
+        avatarColors: const [Colors.purple, Colors.pink],
+        thumbnailColors: const [Colors.black, Colors.grey],
+      ),
+      playbackUriLoader: useApiPlaybackLoader
+          ? null
+          : playbackUriLoader ?? (_) async => Uri.parse("https://example.com/live.m3u8"),
+      viewerCountLoader: viewerCountLoader ?? (_) async => null,
+      displayModeController: displayMode ?? _FakeDisplayModeController(),
+      clock: () => DateTime(2026, 7, 9, 20, 2, 3),
+      playerSurfaceBuilder: useDefaultPlayerSurface
+          ? null
+          : playerSurfaceBuilder ??
+                (context, uri, onControllerCreated) => _FakePlayerSurface(
+                  player: player,
+                  onControllerCreated: onControllerCreated,
+                  onSurfaceCreated: onSurfaceCreated,
+                ),
     ),
-    playbackUriLoader: playbackUriLoader ?? (_) async => Uri.parse("https://example.com/live.m3u8"),
-    viewerCountLoader: viewerCountLoader ?? (_) async => null,
-    displayModeController: displayMode ?? _FakeDisplayModeController(),
-    clock: () => DateTime(2026, 7, 9, 20, 2, 3),
-    playerSurfaceBuilder: useDefaultPlayerSurface
-        ? null
-        : playerSurfaceBuilder ??
-              (context, uri, onControllerCreated) => _FakePlayerSurface(
-                player: player,
-                onControllerCreated: onControllerCreated,
-                onSurfaceCreated: onSurfaceCreated,
-              ),
-  ),
-);
+  );
+  return settingsStore == null ? app : AppSettingsScope(settingsStore: settingsStore, child: app);
+}
 
 TwitchApiCache _navigationApiCache() => TwitchApiCache(
   clientLoader: () async => TwitchApiClient(

@@ -31,6 +31,15 @@ class HttpProxyClientTest {
     }
 
     @Test
+    fun skipsProxyClientWhenAllUrlsAreInvalid() {
+        assertNull(
+            buildHttpProxyClient(
+                listOf("https://proxy.example:8080", "not a proxy", "http://proxy.example/path"),
+            ),
+        )
+    }
+
+    @Test
     fun preservesMainAndFallbackOrder() {
         val proxies = listOf(
             parseHttpProxy("http://main.example:8080")!!.proxy,
@@ -107,8 +116,10 @@ class HttpProxyClientTest {
                 }
             }
 
-            val client = buildHttpProxyClient(
-                listOf("http://user:pass@127.0.0.1:${server.localPort}"),
+            val client = requireNotNull(
+                buildHttpProxyClient(
+                    listOf("http://user:pass@127.0.0.1:${server.localPort}"),
+                ),
             )
             client.newCall(
                 Request.Builder()
@@ -162,8 +173,10 @@ class HttpProxyClientTest {
                 }
             }
 
-            val client = buildHttpProxyClient(
-                listOf("http://user:pass@127.0.0.1:${server.localPort}"),
+            val client = requireNotNull(
+                buildHttpProxyClient(
+                    listOf("http://user:pass@127.0.0.1:${server.localPort}"),
+                ),
             )
             val result = runCatching {
                 client.newCall(
