@@ -638,7 +638,6 @@ class TwitchApiClient {
         "player": "twitchweb",
         "p": math.Random().nextInt(10_000_000).toString(),
         "sig": signature,
-        "supported_codecs": "h264",
         "token": token,
         "type": "any",
       },

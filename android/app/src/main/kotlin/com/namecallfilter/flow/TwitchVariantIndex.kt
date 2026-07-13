@@ -52,6 +52,26 @@ internal class TwitchVariantIndex private constructor(
     fun matchProxyVariant(requestUri: URI, proxyIndex: TwitchVariantIndex): TwitchMasterVariant? =
         logicalVariant(requestUri)?.let { matchProxyVariant(it, proxyIndex) }
 
+    fun matchProxyVariants(proxyIndex: TwitchVariantIndex): Map<URI, URI> {
+        val matches = variants
+            .groupBy(TwitchMasterVariant::playlistUri)
+            .values
+            .asSequence()
+            .filter { it.size == 1 }
+            .map { it.single() }
+            .mapNotNull { requested ->
+                matchProxyVariant(requested, proxyIndex)?.let { replacement ->
+                    requested.playlistUri to replacement.playlistUri
+                }
+            }
+            .toList()
+        return matches
+            .groupBy { it.second }
+            .values
+            .filter { it.size == 1 }
+            .associate { it.single() }
+    }
+
     companion object {
         fun parse(masterPlaylist: String, baseUri: URI): TwitchVariantIndex {
             val variants = mutableListOf<TwitchMasterVariant>()

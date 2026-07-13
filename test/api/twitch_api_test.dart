@@ -124,7 +124,7 @@ void main() {
     expect(uri.queryParameters["token"], "{\"expires\":1780000000}");
     expect(uri.queryParameters["fast_bread"], "true");
     expect(int.tryParse(uri.queryParameters["p"] ?? ""), isNotNull);
-    expect(uri.queryParameters["supported_codecs"], "h264");
+    expect(uri.queryParameters["supported_codecs"], isNull);
   });
 
   test("retries a failed authenticated playback-token query anonymously", () async {

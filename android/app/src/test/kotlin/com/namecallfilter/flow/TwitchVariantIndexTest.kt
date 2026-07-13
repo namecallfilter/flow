@@ -54,6 +54,25 @@ class TwitchVariantIndexTest {
     }
 
     @Test
+    fun bulkMatchesRequireOneToOneRenditions() {
+        val request = TwitchVariantIndex.parse(
+            """
+            #EXT-X-STREAM-INF:BANDWIDTH=3000000,RESOLUTION=1280x720,FRAME-RATE=60,CODECS="avc1",STABLE-VARIANT-ID="shared"
+            one.m3u8
+            #EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=640x360,FRAME-RATE=30,CODECS="avc1",STABLE-VARIANT-ID="shared"
+            two.m3u8
+            """.trimIndent(),
+            BASE,
+        )
+        val proxy = TwitchVariantIndex.parse(
+            master("shared", "1280x720", "60", "avc1"),
+            "https://proxy.test/live/",
+        )
+
+        assertTrue(request.matchProxyVariants(proxy).isEmpty())
+    }
+
+    @Test
     fun replacementUriOverlaysOnlyTransientParametersAndPreservesRepeats() {
         assertEquals(
             "https://proxy.test/v.m3u8?token=p&tag=a%2Bb&_HLS_msn=7&_HLS_part=1&_HLS_part=2",

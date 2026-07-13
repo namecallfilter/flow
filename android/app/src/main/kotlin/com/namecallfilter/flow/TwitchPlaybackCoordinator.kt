@@ -26,7 +26,7 @@ internal data class TwitchManifestPayload(
 
 /**
  * Keeps clean playback direct. A proxy is consulted only after a trusted media
- * playlist contains a stitched ad (or a direct manifest request fails).
+ * playlist was fetched directly, parsed successfully, and contains a stitched ad.
  * Ad-bearing playlists are never returned as fallback content.
  */
 internal class TwitchPlaybackSession(
@@ -57,57 +57,43 @@ internal class TwitchPlaybackSession(
         val logicalUri = logicalMediaPlaylistUri(requestedUri)
         val mappedUri = synchronized(stateLock) { replacementUris[logicalUri] }
         var targetUri = mappedUri?.let { mapReplacementUri(it, requestedUri) } ?: requestedUri
-        var directResult = runCatching {
+        var directResponse = try {
             fetch(TwitchManifestRoute.Direct, targetUri.toString())
+        } catch (error: IOException) {
+            if (mappedUri != null) {
+                synchronized(stateLock) {
+                    replacementUris.remove(logicalUri, mappedUri)
+                }
+            }
+            throw error
         }
-        val mappedResponse = directResult.getOrNull()
-        if (
-            mappedUri != null &&
-            (
-                mappedResponse == null ||
-                    containsTwitchStitchedAd(mappedResponse.text) ||
-                    !isUsableTwitchMediaPlaylist(mappedResponse.text)
-            )
-        ) {
+        if (!isUsableTwitchMediaPlaylist(directResponse.text)) {
+            if (mappedUri != null) {
+                synchronized(stateLock) {
+                    replacementUris.remove(logicalUri, mappedUri)
+                }
+            }
+            throw IOException("Direct Twitch media playlist was unusable")
+        }
+        if (mappedUri != null && containsTwitchStitchedAd(directResponse.text)) {
             synchronized(stateLock) {
                 replacementUris.remove(logicalUri, mappedUri)
             }
             // Delta cursors belong to the expired replacement assignment. Use
             // a full direct snapshot to re-establish the current live window.
             targetUri = logicalUri
-            directResult = runCatching {
-                fetch(TwitchManifestRoute.Direct, targetUri.toString())
-            }
+            directResponse = fetch(TwitchManifestRoute.Direct, targetUri.toString())
         }
-        val rawDirectResponse = directResult.getOrNull()
-        val directResponse = rawDirectResponse?.takeIf {
-            isUsableTwitchMediaPlaylist(it.text)
+        if (!isUsableTwitchMediaPlaylist(directResponse.text)) {
+            throw IOException("Direct Twitch media playlist was unusable")
         }
-        rawDirectResponse?.let { response ->
-            val containsAd = containsTwitchStitchedAd(response.text)
-            if (!containsAd && directResponse != null) {
-                return response
-            }
-            onEvent(
-                if (containsAd) {
-                    "stitched ad detected in direct playlist"
-                } else {
-                    "direct playlist was unusable"
-                },
-            )
+        if (!containsTwitchStitchedAd(directResponse.text)) {
+            return directResponse
         }
-        directResult.exceptionOrNull()?.let { error ->
-            if (error !is IOException) {
-                throw error
-            }
-        }
-        var foundUsableAd = directResponse?.let { containsTwitchStitchedAd(it.text) } == true
-        var lastError = directResult.exceptionOrNull() as? IOException
-            ?: if (rawDirectResponse != null && directResponse == null) {
-                IOException("Direct Twitch playlist was unusable")
-            } else {
-                null
-            }
+        onEvent("stitched ad detected in direct playlist")
+
+        var lastError: IOException? = null
+        val requestedVariant = index.logicalVariant(requestedUri)
         repeat(proxyCount) { proxyIndex ->
             val result = runCatching {
                 fetch(TwitchManifestRoute.Proxy(proxyIndex), targetUri.toString())
@@ -123,9 +109,7 @@ internal class TwitchPlaybackSession(
                     onEvent("proxy ${proxyIndex + 1} returned a clean playlist")
                     return response
                 }
-                if (containsAd && isUsable) {
-                    foundUsableAd = true
-                } else if (!isUsable) {
+                if (!isUsable) {
                     lastError = IOException("Proxy returned an unusable Twitch playlist")
                 }
             } else if (result.exceptionOrNull() is IOException) {
@@ -133,39 +117,36 @@ internal class TwitchPlaybackSession(
             } else {
                 throw requireNotNull(result.exceptionOrNull())
             }
+            if (requestedVariant != null) {
+                try {
+                    return resolveReplacement(
+                        requestedUri = requestedUri,
+                        logicalUri = logicalUri,
+                        proxyNumber = proxyIndex,
+                        fetch = fetch,
+                    )
+                } catch (error: IOException) {
+                    lastError = error
+                }
+            }
         }
-        if (!foundUsableAd) {
-            throw lastError.orDefault("No ad proxy could load the Twitch playlist")
-        }
-        if (index.logicalVariant(requestedUri) == null) {
+        if (requestedVariant == null) {
             throw IOException("No clean replacement exists for this Twitch rendition")
         }
-        return resolveReplacement(
-            requestedUri = requestedUri,
-            logicalUri = logicalUri,
-            fetch = fetch,
-        )
+        throw lastError.orDefault("No proxy returned a clean matching Twitch rendition")
     }
 
     private fun resolveRoot(
         fetch: (TwitchManifestRoute, String) -> TwitchManifestPayload,
     ): TwitchManifestPayload {
-        val response = try {
-            fetch(TwitchManifestRoute.Direct, rootUri.toString())
-        } catch (directError: IOException) {
-            var lastError = directError
-            var proxyResponse: TwitchManifestPayload? = null
-            repeat(proxyCount) { proxyIndex ->
-                if (proxyResponse != null) return@repeat
-                try {
-                    proxyResponse = fetch(TwitchManifestRoute.Proxy(proxyIndex), rootUri.toString())
-                } catch (proxyError: IOException) {
-                    lastError = proxyError.apply { addSuppressed(directError) }
-                }
-            }
-            proxyResponse ?: throw lastError
-        }
+        val response = fetch(TwitchManifestRoute.Direct, rootUri.toString())
         val index = TwitchVariantIndex.parse(response.text, response.finalUri)
+        if (
+            response.text.lineSequence().firstOrNull()?.trim()?.equals("#EXTM3U", ignoreCase = true) != true ||
+            index.variants.isEmpty()
+        ) {
+            throw IOException("Direct Twitch master playlist was unusable")
+        }
         synchronized(stateLock) {
             directIndex = index
             replacementUris.clear()
@@ -176,20 +157,19 @@ internal class TwitchPlaybackSession(
     private fun resolveReplacement(
         requestedUri: URI,
         logicalUri: URI,
+        proxyNumber: Int,
         fetch: (TwitchManifestRoute, String) -> TwitchManifestPayload,
     ): TwitchManifestPayload = synchronized(replacementLock) {
         val index = synchronized(stateLock) { directIndex }
             ?: throw IOException("Twitch master playlist is unavailable")
 
-        var lastError: IOException? = null
         synchronized(stateLock) { replacementUris[logicalUri] }?.let { existing ->
             val existingResponse = try {
                 fetch(
                     TwitchManifestRoute.Direct,
                     mapReplacementUri(existing, requestedUri).toString(),
                 )
-            } catch (error: IOException) {
-                lastError = error
+            } catch (_: IOException) {
                 null
             }
             if (
@@ -204,33 +184,31 @@ internal class TwitchPlaybackSession(
             }
         }
 
-        repeat(proxyCount) { proxyNumber ->
-            val route = TwitchManifestRoute.Proxy(proxyNumber)
-            try {
-                val proxyMaster = fetch(route, rootUri.toString())
-                val proxyIndex = TwitchVariantIndex.parse(proxyMaster.text, proxyMaster.finalUri)
-                val replacement = index.matchProxyVariant(requestedUri, proxyIndex)
-                    ?: throw IOException("Proxy did not provide the requested Twitch rendition")
-                // A new assignment must start with a full snapshot. LL-HLS
-                // cursors from the old assignment are used only on later loads.
-                val replacementResponse = fetch(route, replacement.playlistUri.toString())
-                if (containsTwitchStitchedAd(replacementResponse.text)) {
-                    throw IOException("Proxy returned another stitched-ad playlist")
-                }
-                if (!isUsableTwitchMediaPlaylist(replacementResponse.text)) {
-                    throw IOException("Proxy returned an unusable Twitch playlist")
-                }
-                synchronized(stateLock) {
-                    replacementUris[logicalUri] = replacement.playlistUri
-                }
-                onEvent("proxy ${proxyNumber + 1} supplied a clean replacement assignment")
-                return@synchronized replacementResponse
-            } catch (error: IOException) {
-                onEvent("proxy ${proxyNumber + 1} could not supply a replacement assignment")
-                lastError = error
+        val route = TwitchManifestRoute.Proxy(proxyNumber)
+        try {
+            val proxyMaster = fetch(route, rootUri.toString())
+            val proxyIndex = TwitchVariantIndex.parse(proxyMaster.text, proxyMaster.finalUri)
+            val replacements = index.matchProxyVariants(proxyIndex)
+            val replacementUri = replacements[logicalUri]
+                ?: throw IOException("Proxy did not provide the requested Twitch rendition")
+            // A new assignment must start with a full snapshot. LL-HLS
+            // cursors from the old assignment are used only on later loads.
+            val replacementResponse = fetch(route, replacementUri.toString())
+            if (containsTwitchStitchedAd(replacementResponse.text)) {
+                throw IOException("Proxy returned another stitched-ad playlist")
             }
+            if (!isUsableTwitchMediaPlaylist(replacementResponse.text)) {
+                throw IOException("Proxy returned an unusable Twitch playlist")
+            }
+            synchronized(stateLock) {
+                replacementUris.putAll(replacements)
+            }
+            onEvent("proxy ${proxyNumber + 1} supplied a clean replacement assignment")
+            replacementResponse
+        } catch (error: IOException) {
+            onEvent("proxy ${proxyNumber + 1} could not supply a replacement assignment")
+            throw error
         }
-        throw lastError.orDefault("No proxy returned a clean matching Twitch rendition")
     }
 }
 
@@ -275,12 +253,11 @@ internal class TwitchPlaybackCoordinator(
 private fun IOException?.orDefault(message: String): IOException = this ?: IOException(message)
 
 internal fun containsTwitchStitchedAd(playlist: String): Boolean = playlist.lineSequence().any { line ->
-    if (!line.startsWith("#EXT-X-DATERANGE:", ignoreCase = true)) {
+    if (!line.startsWith("#EXT-X-DATERANGE:")) {
         return@any false
     }
     val attributes = parseHlsAttributeList(line)
-    attributes["ID"]?.startsWith("stitched-ad-", ignoreCase = true) == true ||
-        attributes["CLASS"].equals("twitch-stitched-ad", ignoreCase = true)
+    attributes["CLASS"] == "twitch-stitched-ad"
 }
 
 private fun isUsableTwitchMediaPlaylist(playlist: String): Boolean {

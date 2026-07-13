@@ -234,6 +234,7 @@ internal class TwitchPlayerView(
     }
 
     private fun load(url: String) {
+        val playbackUrl = withDeviceSupportedTwitchCodecs(url)
         val generation = ++sessionGeneration
         liveSpeedControl.reset()
         latencyCorrection.reset()
@@ -319,7 +320,7 @@ internal class TwitchPlayerView(
             Log.d(LOG_TAG, "adaptive ad proxy active (${proxyUrls.size} endpoints)")
             AdaptiveTwitchHlsDataSourceFactory(
                 manifestResolver = TwitchPlaybackCoordinator(
-                    rootUsherUri = url,
+                    rootUsherUri = playbackUrl,
                     directFactory = directDataSourceFactory,
                     proxyFactories = proxyDataSourceFactories,
                     onEvent = { message -> Log.d(LOG_TAG, "adaptive ad proxy: $message") },
@@ -347,7 +348,7 @@ internal class TwitchPlayerView(
             )
             .createMediaSource(
                 MediaItem.Builder()
-                    .setUri(Uri.parse(url))
+                    .setUri(Uri.parse(playbackUrl))
                     .setMimeType(MimeTypes.APPLICATION_M3U8)
                     .setLiveConfiguration(
                         MediaItem.LiveConfiguration.Builder()

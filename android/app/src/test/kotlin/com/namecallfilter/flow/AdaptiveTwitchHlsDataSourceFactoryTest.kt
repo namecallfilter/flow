@@ -22,8 +22,9 @@ class AdaptiveTwitchHlsDataSourceFactoryTest {
     }
 
     @Test
-    fun mediaAndKeysRemainDirect() {
+    fun mediaInitKeysAndUnknownTypesRemainDirect() {
         assertSame(directDataSource, factory.createDataSource(C.DATA_TYPE_MEDIA))
+        assertSame(directDataSource, factory.createDataSource(C.DATA_TYPE_MEDIA_INITIALIZATION))
         assertSame(directDataSource, factory.createDataSource(C.DATA_TYPE_DRM))
         assertSame(directDataSource, factory.createDataSource(Int.MAX_VALUE))
     }
