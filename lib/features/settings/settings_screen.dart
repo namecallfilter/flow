@@ -235,6 +235,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           enabled: _settingsStore.adProxyEnabled,
                           proxyUrls: _settingsStore.adProxyUrls,
                           whitelistedChannels: _settingsStore.adProxyEffectiveWhitelistedChannels,
+                          manualChannels: _settingsStore.adProxyWhitelistedChannels,
                           subscriptionChannels: _settingsStore.adProxySubscriptionChannels,
                           onEnabledChanged: (enabled) {
                             unawaited(_settingsStore.setAdProxyEnabled(enabled: enabled));
@@ -290,6 +291,7 @@ class _AdProxySettings extends StatelessWidget {
     required this.enabled,
     required this.proxyUrls,
     required this.whitelistedChannels,
+    required this.manualChannels,
     required this.subscriptionChannels,
     required this.onEnabledChanged,
     required this.onAddProxy,
@@ -302,6 +304,7 @@ class _AdProxySettings extends StatelessWidget {
   final bool enabled;
   final List<String> proxyUrls;
   final List<String> whitelistedChannels;
+  final List<String> manualChannels;
   final List<String> subscriptionChannels;
   final ValueChanged<bool> onEnabledChanged;
   final VoidCallback onAddProxy;
@@ -375,7 +378,7 @@ class _AdProxySettings extends StatelessWidget {
               subtitle: subscriptionChannels.contains(channel)
                   ? const Text("Subscribed channel")
                   : null,
-              trailing: subscriptionChannels.contains(channel)
+              trailing: subscriptionChannels.contains(channel) && !manualChannels.contains(channel)
                   ? const Tooltip(
                       message: "Managed automatically",
                       child: Icon(Icons.lock_outline),
@@ -396,6 +399,7 @@ class _AdProxySettings extends StatelessWidget {
     properties.add(FlagProperty("enabled", value: enabled, ifTrue: "enabled"));
     properties.add(IntProperty("proxyUrlCount", proxyUrls.length));
     properties.add(IterableProperty<String>("whitelistedChannels", whitelistedChannels));
+    properties.add(IterableProperty<String>("manualChannels", manualChannels));
     properties.add(IterableProperty<String>("subscriptionChannels", subscriptionChannels));
     properties.add(
       ObjectFlagProperty<ValueChanged<bool>>.has("onEnabledChanged", onEnabledChanged),

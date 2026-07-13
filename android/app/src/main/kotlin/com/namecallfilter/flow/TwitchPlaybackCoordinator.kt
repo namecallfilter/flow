@@ -27,6 +27,7 @@ internal data class TwitchManifestPayload(
 /**
  * Keeps clean playback direct. A proxy is consulted only after a trusted media
  * playlist contains a stitched ad (or a direct manifest request fails).
+ * Ad-bearing playlists are never returned as fallback content.
  */
 internal class TwitchPlaybackSession(
     rootUsherUri: String,
@@ -78,20 +79,35 @@ internal class TwitchPlaybackSession(
                 fetch(TwitchManifestRoute.Direct, targetUri.toString())
             }
         }
-        directResult.getOrNull()?.let { response ->
-            if (!containsTwitchStitchedAd(response.text)) {
+        val rawDirectResponse = directResult.getOrNull()
+        val directResponse = rawDirectResponse?.takeIf {
+            isUsableTwitchMediaPlaylist(it.text)
+        }
+        rawDirectResponse?.let { response ->
+            val containsAd = containsTwitchStitchedAd(response.text)
+            if (!containsAd && directResponse != null) {
                 return response
             }
-            onEvent("stitched ad detected in direct playlist")
+            onEvent(
+                if (containsAd) {
+                    "stitched ad detected in direct playlist"
+                } else {
+                    "direct playlist was unusable"
+                },
+            )
         }
         directResult.exceptionOrNull()?.let { error ->
             if (error !is IOException) {
                 throw error
             }
         }
-        val directResponse = directResult.getOrNull()
-        var lastAdResponse = directResponse
+        var foundUsableAd = directResponse?.let { containsTwitchStitchedAd(it.text) } == true
         var lastError = directResult.exceptionOrNull() as? IOException
+            ?: if (rawDirectResponse != null && directResponse == null) {
+                IOException("Direct Twitch playlist was unusable")
+            } else {
+                null
+            }
         repeat(proxyCount) { proxyIndex ->
             val result = runCatching {
                 fetch(TwitchManifestRoute.Proxy(proxyIndex), targetUri.toString())
@@ -99,19 +115,18 @@ internal class TwitchPlaybackSession(
             val response = result.getOrNull()
             if (response != null) {
                 val containsAd = containsTwitchStitchedAd(response.text)
+                val isUsable = isUsableTwitchMediaPlaylist(response.text)
                 if (
                     !containsAd &&
-                    isUsableTwitchMediaPlaylist(response.text) &&
-                    (
-                        directResponse == null ||
-                            twitchMediaPlaylistsOverlap(directResponse.text, response.text)
-                    )
+                    isUsable
                 ) {
                     onEvent("proxy ${proxyIndex + 1} returned a clean playlist")
                     return response
                 }
-                if (containsAd) {
-                    lastAdResponse = response
+                if (containsAd && isUsable) {
+                    foundUsableAd = true
+                } else if (!isUsable) {
+                    lastError = IOException("Proxy returned an unusable Twitch playlist")
                 }
             } else if (result.exceptionOrNull() is IOException) {
                 lastError = result.exceptionOrNull() as IOException
@@ -119,24 +134,17 @@ internal class TwitchPlaybackSession(
                 throw requireNotNull(result.exceptionOrNull())
             }
         }
-        val directFallback = directResponse
-        val adResponse = lastAdResponse
-            ?: throw lastError.orDefault("No ad proxy could load the Twitch playlist")
+        if (!foundUsableAd) {
+            throw lastError.orDefault("No ad proxy could load the Twitch playlist")
+        }
         if (index.logicalVariant(requestedUri) == null) {
-            return directFallback ?: adResponse
+            throw IOException("No clean replacement exists for this Twitch rendition")
         }
-        return try {
-            resolveReplacement(
-                requestedUri = requestedUri,
-                logicalUri = logicalUri,
-                adResponse = adResponse,
-                fetch = fetch,
-            )
-        } catch (error: IOException) {
-            directFallback?.also {
-                onEvent("no clean replacement was available; using the direct playlist")
-            } ?: throw error
-        }
+        return resolveReplacement(
+            requestedUri = requestedUri,
+            logicalUri = logicalUri,
+            fetch = fetch,
+        )
     }
 
     private fun resolveRoot(
@@ -168,27 +176,34 @@ internal class TwitchPlaybackSession(
     private fun resolveReplacement(
         requestedUri: URI,
         logicalUri: URI,
-        adResponse: TwitchManifestPayload,
         fetch: (TwitchManifestRoute, String) -> TwitchManifestPayload,
     ): TwitchManifestPayload = synchronized(replacementLock) {
         val index = synchronized(stateLock) { directIndex }
             ?: throw IOException("Twitch master playlist is unavailable")
 
+        var lastError: IOException? = null
         synchronized(stateLock) { replacementUris[logicalUri] }?.let { existing ->
-            val existingResponse = fetch(
-                TwitchManifestRoute.Direct,
-                mapReplacementUri(existing, requestedUri).toString(),
-            )
+            val existingResponse = try {
+                fetch(
+                    TwitchManifestRoute.Direct,
+                    mapReplacementUri(existing, requestedUri).toString(),
+                )
+            } catch (error: IOException) {
+                lastError = error
+                null
+            }
             if (
+                existingResponse != null &&
                 !containsTwitchStitchedAd(existingResponse.text) &&
-                isUsableTwitchMediaPlaylist(existingResponse.text) &&
-                twitchMediaPlaylistsOverlap(adResponse.text, existingResponse.text)
+                isUsableTwitchMediaPlaylist(existingResponse.text)
             ) {
                 return@synchronized existingResponse
             }
+            synchronized(stateLock) {
+                replacementUris.remove(logicalUri, existing)
+            }
         }
 
-        var lastError: IOException? = null
         repeat(proxyCount) { proxyNumber ->
             val route = TwitchManifestRoute.Proxy(proxyNumber)
             try {
@@ -202,8 +217,8 @@ internal class TwitchPlaybackSession(
                 if (containsTwitchStitchedAd(replacementResponse.text)) {
                     throw IOException("Proxy returned another stitched-ad playlist")
                 }
-                if (!twitchMediaPlaylistsOverlap(adResponse.text, replacementResponse.text)) {
-                    throw IOException("Replacement Twitch playlist is not aligned with the current stream")
+                if (!isUsableTwitchMediaPlaylist(replacementResponse.text)) {
+                    throw IOException("Proxy returned an unusable Twitch playlist")
                 }
                 synchronized(stateLock) {
                     replacementUris[logicalUri] = replacement.playlistUri
@@ -268,79 +283,47 @@ internal fun containsTwitchStitchedAd(playlist: String): Boolean = playlist.line
         attributes["CLASS"].equals("twitch-stitched-ad", ignoreCase = true)
 }
 
-internal fun twitchMediaPlaylistsOverlap(first: String, second: String): Boolean {
-    val firstWindow = parsePlaylistWindow(rewriteTwitchLowLatencyPlaylist(first)) ?: return false
-    val secondWindow = parsePlaylistWindow(rewriteTwitchLowLatencyPlaylist(second)) ?: return false
-    if (
-        firstWindow.discontinuitySequence != null &&
-        secondWindow.discontinuitySequence != null &&
-        firstWindow.discontinuitySequence != secondWindow.discontinuitySequence
-    ) {
-        return false
-    }
-    return firstWindow.sequenceRange.first <= secondWindow.sequenceRange.last &&
-        secondWindow.sequenceRange.first <= firstWindow.sequenceRange.last
-}
-
-private data class PlaylistWindow(
-    val discontinuitySequence: Long?,
-    val sequenceRange: LongRange,
-)
-
-private fun isUsableTwitchMediaPlaylist(playlist: String): Boolean =
-    parsePlaylistWindow(rewriteTwitchLowLatencyPlaylist(playlist)) != null
-
-private fun parsePlaylistWindow(playlist: String): PlaylistWindow? {
-    val lines = playlist.lineSequence().map(String::trim).toList()
+private fun isUsableTwitchMediaPlaylist(playlist: String): Boolean {
+    val lines = rewriteTwitchLowLatencyPlaylist(playlist)
+        .lineSequence()
+        .map(String::trim)
+        .toList()
     if (
         lines.firstOrNull()?.equals("#EXTM3U", ignoreCase = true) != true ||
         lines.any { it.startsWith("#EXT-X-STREAM-INF:", ignoreCase = true) }
     ) {
-        return null
+        return false
     }
-    val mediaSequence = parseSequenceTag(lines, "#EXT-X-MEDIA-SEQUENCE:") ?: return null
-    val discontinuityTags = lines.filter {
-        it.startsWith("#EXT-X-DISCONTINUITY-SEQUENCE:", ignoreCase = true)
+    if (parseSequenceTag(lines, "#EXT-X-MEDIA-SEQUENCE:") == null) {
+        return false
     }
-    val discontinuitySequence = when (discontinuityTags.size) {
-        0 -> null
-        1 -> discontinuityTags.single().substringAfter(':').trim().toLongOrNull()
-            ?.takeIf { it >= 0 }
-            ?: return null
-        else -> return null
+    if (
+        lines.any { it.startsWith("#EXT-X-DISCONTINUITY-SEQUENCE:", ignoreCase = true) } &&
+        parseSequenceTag(lines, "#EXT-X-DISCONTINUITY-SEQUENCE:") == null
+    ) {
+        return false
     }
-    var segmentCount = 0L
+    var segmentCount = 0
     var expectsSegmentUri = false
     for (line in lines.drop(1)) {
         when {
             line.startsWith("#EXTINF:", ignoreCase = true) -> {
                 if (expectsSegmentUri) {
-                    return null
+                    return false
                 }
                 expectsSegmentUri = true
             }
 
             line.isNotEmpty() && !line.startsWith('#') -> {
                 if (!expectsSegmentUri) {
-                    return null
+                    return false
                 }
                 segmentCount++
                 expectsSegmentUri = false
             }
         }
     }
-    if (expectsSegmentUri || segmentCount == 0L) {
-        return null
-    }
-    val lastSequence = try {
-        Math.addExact(mediaSequence, segmentCount - 1)
-    } catch (_: ArithmeticException) {
-        return null
-    }
-    return PlaylistWindow(
-        discontinuitySequence = discontinuitySequence,
-        sequenceRange = mediaSequence..lastSequence,
-    )
+    return !expectsSegmentUri && segmentCount > 0
 }
 
 private fun parseSequenceTag(lines: List<String>, prefix: String): Long? {

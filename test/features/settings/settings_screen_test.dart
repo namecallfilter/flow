@@ -150,6 +150,31 @@ void main() {
     expect(find.text("Subscribed channel"), findsOneWidget);
   });
 
+  testWidgets("allows removing a manual channel that is also subscription-managed", (tester) async {
+    final preferences = SharedPreferencesFlowPreferences(store: _MemoryPreferencesStore());
+    final settingsStore = AppSettingsStore(preferences: preferences);
+    await settingsStore.setAdProxyWhitelistedChannels(["Creator"]);
+    await settingsStore.syncAdProxySubscriptionChannel(login: "Creator", isSubscribed: true);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: SettingsScreen(settingsStore: settingsStore),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final removeChannel = find.byTooltip("Remove channel");
+    await tester.ensureVisible(removeChannel);
+    expect(removeChannel, findsOneWidget);
+
+    await tester.tap(removeChannel);
+    await tester.pumpAndSettle();
+
+    expect(settingsStore.adProxyWhitelistedChannels, isEmpty);
+    expect(settingsStore.adProxyEffectiveWhitelistedChannels, ["creator"]);
+    expect(find.byTooltip("Managed automatically"), findsOneWidget);
+  });
+
   testWidgets("adds and cancels proxy and whitelist dialogs without errors", (tester) async {
     final preferences = SharedPreferencesFlowPreferences(store: _MemoryPreferencesStore());
     final settingsStore = AppSettingsStore(preferences: preferences);
