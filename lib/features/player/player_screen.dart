@@ -906,7 +906,7 @@ class _PlayerViewport extends StatelessWidget {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<StreamChannel>("channel", channel));
     properties.add(DiagnosticsProperty<Uri?>("playbackUri", playbackUri));
-    properties.add(IterableProperty<String>("proxyUrls", proxyUrls));
+    properties.add(IntProperty("proxyUrlCount", proxyUrls.length));
     properties.add(IntProperty("playbackSessionGeneration", playbackSessionGeneration));
     properties.add(
       FlagProperty(

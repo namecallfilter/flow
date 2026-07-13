@@ -59,9 +59,14 @@ internal class TwitchPlaybackSession(
         var directResult = runCatching {
             fetch(TwitchManifestRoute.Direct, targetUri.toString())
         }
+        val mappedResponse = directResult.getOrNull()
         if (
             mappedUri != null &&
-            (directResult.isFailure || containsTwitchStitchedAd(directResult.getOrThrow().text))
+            (
+                mappedResponse == null ||
+                    containsTwitchStitchedAd(mappedResponse.text) ||
+                    !isUsableTwitchMediaPlaylist(mappedResponse.text)
+            )
         ) {
             synchronized(stateLock) {
                 replacementUris.remove(logicalUri, mappedUri)
@@ -84,7 +89,8 @@ internal class TwitchPlaybackSession(
                 throw error
             }
         }
-        var lastAdResponse = directResult.getOrNull()
+        val directResponse = directResult.getOrNull()
+        var lastAdResponse = directResponse
         var lastError = directResult.exceptionOrNull() as? IOException
         repeat(proxyCount) { proxyIndex ->
             val result = runCatching {
@@ -92,18 +98,28 @@ internal class TwitchPlaybackSession(
             }
             val response = result.getOrNull()
             if (response != null) {
-                if (!containsTwitchStitchedAd(response.text)) {
+                val containsAd = containsTwitchStitchedAd(response.text)
+                if (
+                    !containsAd &&
+                    isUsableTwitchMediaPlaylist(response.text) &&
+                    (
+                        directResponse == null ||
+                            twitchMediaPlaylistsOverlap(directResponse.text, response.text)
+                    )
+                ) {
                     onEvent("proxy ${proxyIndex + 1} returned a clean playlist")
                     return response
                 }
-                lastAdResponse = response
+                if (containsAd) {
+                    lastAdResponse = response
+                }
             } else if (result.exceptionOrNull() is IOException) {
                 lastError = result.exceptionOrNull() as IOException
             } else {
                 throw requireNotNull(result.exceptionOrNull())
             }
         }
-        val directFallback = directResult.getOrNull()
+        val directFallback = directResponse
         val adResponse = lastAdResponse
             ?: throw lastError.orDefault("No ad proxy could load the Twitch playlist")
         if (index.logicalVariant(requestedUri) == null) {
@@ -163,7 +179,11 @@ internal class TwitchPlaybackSession(
                 TwitchManifestRoute.Direct,
                 mapReplacementUri(existing, requestedUri).toString(),
             )
-            if (!containsTwitchStitchedAd(existingResponse.text)) {
+            if (
+                !containsTwitchStitchedAd(existingResponse.text) &&
+                isUsableTwitchMediaPlaylist(existingResponse.text) &&
+                twitchMediaPlaylistsOverlap(adResponse.text, existingResponse.text)
+            ) {
                 return@synchronized existingResponse
             }
         }
@@ -249,8 +269,8 @@ internal fun containsTwitchStitchedAd(playlist: String): Boolean = playlist.line
 }
 
 internal fun twitchMediaPlaylistsOverlap(first: String, second: String): Boolean {
-    val firstWindow = parsePlaylistWindow(first)
-    val secondWindow = parsePlaylistWindow(second)
+    val firstWindow = parsePlaylistWindow(rewriteTwitchLowLatencyPlaylist(first)) ?: return false
+    val secondWindow = parsePlaylistWindow(rewriteTwitchLowLatencyPlaylist(second)) ?: return false
     if (
         firstWindow.discontinuitySequence != null &&
         secondWindow.discontinuitySequence != null &&
@@ -258,35 +278,79 @@ internal fun twitchMediaPlaylistsOverlap(first: String, second: String): Boolean
     ) {
         return false
     }
-    val firstRange = firstWindow.sequenceRange ?: return true
-    val secondRange = secondWindow.sequenceRange ?: return true
-    return firstRange.first <= secondRange.last && secondRange.first <= firstRange.last
+    return firstWindow.sequenceRange.first <= secondWindow.sequenceRange.last &&
+        secondWindow.sequenceRange.first <= firstWindow.sequenceRange.last
 }
 
 private data class PlaylistWindow(
     val discontinuitySequence: Long?,
-    val sequenceRange: LongRange?,
+    val sequenceRange: LongRange,
 )
 
-private fun parsePlaylistWindow(playlist: String): PlaylistWindow {
+private fun isUsableTwitchMediaPlaylist(playlist: String): Boolean =
+    parsePlaylistWindow(rewriteTwitchLowLatencyPlaylist(playlist)) != null
+
+private fun parsePlaylistWindow(playlist: String): PlaylistWindow? {
     val lines = playlist.lineSequence().map(String::trim).toList()
-    val mediaSequence = lines.firstNotNullOfOrNull { line ->
-        line.substringAfter("#EXT-X-MEDIA-SEQUENCE:", missingDelimiterValue = "")
-            .takeIf { it.isNotEmpty() }
-            ?.toLongOrNull()
+    if (
+        lines.firstOrNull()?.equals("#EXTM3U", ignoreCase = true) != true ||
+        lines.any { it.startsWith("#EXT-X-STREAM-INF:", ignoreCase = true) }
+    ) {
+        return null
     }
-    val discontinuitySequence = lines.firstNotNullOfOrNull { line ->
-        line.substringAfter("#EXT-X-DISCONTINUITY-SEQUENCE:", missingDelimiterValue = "")
-            .takeIf { it.isNotEmpty() }
-            ?.toLongOrNull()
+    val mediaSequence = parseSequenceTag(lines, "#EXT-X-MEDIA-SEQUENCE:") ?: return null
+    val discontinuityTags = lines.filter {
+        it.startsWith("#EXT-X-DISCONTINUITY-SEQUENCE:", ignoreCase = true)
     }
-    val segmentCount = lines.count { it.isNotEmpty() && !it.startsWith('#') }
+    val discontinuitySequence = when (discontinuityTags.size) {
+        0 -> null
+        1 -> discontinuityTags.single().substringAfter(':').trim().toLongOrNull()
+            ?.takeIf { it >= 0 }
+            ?: return null
+        else -> return null
+    }
+    var segmentCount = 0L
+    var expectsSegmentUri = false
+    for (line in lines.drop(1)) {
+        when {
+            line.startsWith("#EXTINF:", ignoreCase = true) -> {
+                if (expectsSegmentUri) {
+                    return null
+                }
+                expectsSegmentUri = true
+            }
+
+            line.isNotEmpty() && !line.startsWith('#') -> {
+                if (!expectsSegmentUri) {
+                    return null
+                }
+                segmentCount++
+                expectsSegmentUri = false
+            }
+        }
+    }
+    if (expectsSegmentUri || segmentCount == 0L) {
+        return null
+    }
+    val lastSequence = try {
+        Math.addExact(mediaSequence, segmentCount - 1)
+    } catch (_: ArithmeticException) {
+        return null
+    }
     return PlaylistWindow(
         discontinuitySequence = discontinuitySequence,
-        sequenceRange = if (mediaSequence != null && segmentCount > 0) {
-            mediaSequence..(mediaSequence + segmentCount - 1)
-        } else {
-            null
-        },
+        sequenceRange = mediaSequence..lastSequence,
     )
+}
+
+private fun parseSequenceTag(lines: List<String>, prefix: String): Long? {
+    val values = lines.filter { it.startsWith(prefix, ignoreCase = true) }
+    if (values.size > 1) {
+        return null
+    }
+    return values.singleOrNull()
+        ?.substringAfter(':')
+        ?.trim()
+        ?.toLongOrNull()
+        ?.takeIf { it >= 0 }
 }

@@ -49,7 +49,7 @@ class Media3PlayerView extends StatelessWidget {
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<Uri>("uri", uri));
-    properties.add(IterableProperty<String>("proxyUrls", proxyUrls));
+    properties.add(IntProperty("proxyUrlCount", proxyUrls.length));
     properties.add(
       ObjectFlagProperty<ValueChanged<TwitchPlayerController>>.has(
         "onControllerCreated",

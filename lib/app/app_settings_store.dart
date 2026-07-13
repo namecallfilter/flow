@@ -29,6 +29,7 @@ abstract class AppSettingsStoreBase with Store {
   AppSettingsStoreBase({required this.preferences});
 
   final FlowPreferences preferences;
+  Future<void>? _loadFuture;
   Future<void> _adProxySubscriptionUpdateTail = Future<void>.value();
 
   @observable
@@ -56,7 +57,14 @@ abstract class AppSettingsStoreBase with Store {
   bool isLoaded = false;
 
   @action
-  Future<void> load() async {
+  Future<void> load() {
+    if (isLoaded) {
+      return Future<void>.value();
+    }
+    return _loadFuture ??= _load().whenComplete(() => _loadFuture = null);
+  }
+
+  Future<void> _load() async {
     final subscriptionLoad = _enqueueAdProxySubscriptionUpdate(() async {
       final channels = await preferences.readAdProxySubscriptionChannels();
       runInAction(
@@ -69,12 +77,14 @@ abstract class AppSettingsStoreBase with Store {
       preferences.readAdProxyUrls(),
       preferences.readAdProxyWhitelistedChannels(),
     ]);
-    themeMode = values[0] as ThemeMode;
-    adProxyEnabled = values[1] as bool;
-    adProxyUrls = ObservableList.of(values[2] as List<String>);
-    adProxyWhitelistedChannels = ObservableList.of(values[3] as List<String>);
     await subscriptionLoad;
-    isLoaded = true;
+    runInAction(() {
+      themeMode = values[0] as ThemeMode;
+      adProxyEnabled = values[1] as bool;
+      adProxyUrls = ObservableList.of(values[2] as List<String>);
+      adProxyWhitelistedChannels = ObservableList.of(values[3] as List<String>);
+      isLoaded = true;
+    });
   }
 
   Future<void> syncAdProxySubscriptionChannel({

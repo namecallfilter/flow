@@ -2,8 +2,10 @@ import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_auth.dart";
+import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/tabs_screen.dart";
 import "package:flow/app/theme.dart";
+import "package:flow/shared/preferences/preferences.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:http/http.dart" as http;
@@ -147,6 +149,32 @@ void main() {
       );
       expect(find.byKey(const ValueKey("following_title")), findsOneWidget);
     }
+  });
+
+  testWidgets("does not reload settings preferences when navigating to Settings", (
+    tester,
+  ) async {
+    final preferencesStore = _CountingPreferencesStore();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.light),
+        home: FlowTabsScreen(
+          authController: _authController(secureStore: _MemoryTwitchStore()),
+          settingsStore: AppSettingsStore(
+            preferences: SharedPreferencesFlowPreferences(store: preferencesStore),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final initialReadCount = preferencesStore.readCount;
+    expect(initialReadCount, greaterThan(0));
+
+    await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Settings")));
+    await tester.pumpAndSettle();
+
+    expect(preferencesStore.readCount, initialReadCount);
   });
 }
 
@@ -416,6 +444,31 @@ class _MemoryTwitchStore implements TwitchSecureStore {
   Future<void> saveWebSessionToken(String token) async {
     webSessionToken = token;
   }
+}
+
+class _CountingPreferencesStore implements FlowPreferencesStore {
+  int readCount = 0;
+
+  @override
+  Future<String?> getString(String key) async {
+    readCount++;
+    return null;
+  }
+
+  @override
+  Future<List<String>?> getStringList(String key) async {
+    readCount++;
+    return null;
+  }
+
+  @override
+  Future<void> remove(String key) async {}
+
+  @override
+  Future<void> setString(String key, String value) async {}
+
+  @override
+  Future<void> setStringList(String key, List<String> value) async {}
 }
 
 class _StaticCookieExtractor implements TwitchCookieExtractor {

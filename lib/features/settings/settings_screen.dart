@@ -207,65 +207,69 @@ class _SettingsScreenState extends State<SettingsScreen> {
           bottom: false,
           child: Stack(
             children: [
-              ListView(
-                padding: PageHeaderLayout.scrollPadding(
-                  top: PageHeaderLayout.settingsContentTopPadding,
-                  bottom: bottomScrollPadding,
+              AbsorbPointer(
+                key: const ValueKey("settings_content_interaction_gate"),
+                absorbing: !_settingsStore.isLoaded,
+                child: ListView(
+                  padding: PageHeaderLayout.scrollPadding(
+                    top: PageHeaderLayout.settingsContentTopPadding,
+                    bottom: bottomScrollPadding,
+                  ),
+                  children: [
+                    _SettingsGroup(
+                      key: const ValueKey("settings_theme_group"),
+                      children: [
+                        _ThemeModeRow(
+                          currentThemeMode: _settingsStore.themeMode,
+                          onThemeModeChanged: (themeMode) {
+                            unawaited(_changeThemeMode(themeMode));
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    _SettingsGroup(
+                      key: const ValueKey("settings_ad_proxy_group"),
+                      children: [
+                        _AdProxySettings(
+                          enabled: _settingsStore.adProxyEnabled,
+                          proxyUrls: _settingsStore.adProxyUrls,
+                          whitelistedChannels: _settingsStore.adProxyEffectiveWhitelistedChannels,
+                          subscriptionChannels: _settingsStore.adProxySubscriptionChannels,
+                          onEnabledChanged: (enabled) {
+                            unawaited(_settingsStore.setAdProxyEnabled(enabled: enabled));
+                          },
+                          onAddProxy: () => unawaited(_addProxyUrl()),
+                          onRemoveProxy: (index) {
+                            final urls = _settingsStore.adProxyUrls.toList()..removeAt(index);
+                            unawaited(_settingsStore.setAdProxyUrls(urls));
+                          },
+                          onMoveProxy: (index, offset) => unawaited(_moveProxy(index, offset)),
+                          onAddChannel: () => unawaited(_addWhitelistedChannel()),
+                          onRemoveChannel: (channel) {
+                            final channels = _settingsStore.adProxyWhitelistedChannels.toList()
+                              ..remove(channel);
+                            unawaited(_settingsStore.setAdProxyWhitelistedChannels(channels));
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    _SettingsGroup(
+                      children: [
+                        _SettingsRow(
+                          icon: Icons.info_outline,
+                          title: "About Flow",
+                          subtitle: "Mobile Twitch client.",
+                          trailing: const Text("1.0.0"),
+                          onTap: () {
+                            unawaited(_openRepository(context));
+                          },
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-                children: [
-                  _SettingsGroup(
-                    key: const ValueKey("settings_theme_group"),
-                    children: [
-                      _ThemeModeRow(
-                        currentThemeMode: _settingsStore.themeMode,
-                        onThemeModeChanged: (themeMode) {
-                          unawaited(_changeThemeMode(themeMode));
-                        },
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  _SettingsGroup(
-                    key: const ValueKey("settings_ad_proxy_group"),
-                    children: [
-                      _AdProxySettings(
-                        enabled: _settingsStore.adProxyEnabled,
-                        proxyUrls: _settingsStore.adProxyUrls,
-                        whitelistedChannels: _settingsStore.adProxyEffectiveWhitelistedChannels,
-                        subscriptionChannels: _settingsStore.adProxySubscriptionChannels,
-                        onEnabledChanged: (enabled) {
-                          unawaited(_settingsStore.setAdProxyEnabled(enabled: enabled));
-                        },
-                        onAddProxy: () => unawaited(_addProxyUrl()),
-                        onRemoveProxy: (index) {
-                          final urls = _settingsStore.adProxyUrls.toList()..removeAt(index);
-                          unawaited(_settingsStore.setAdProxyUrls(urls));
-                        },
-                        onMoveProxy: (index, offset) => unawaited(_moveProxy(index, offset)),
-                        onAddChannel: () => unawaited(_addWhitelistedChannel()),
-                        onRemoveChannel: (channel) {
-                          final channels = _settingsStore.adProxyWhitelistedChannels.toList()
-                            ..remove(channel);
-                          unawaited(_settingsStore.setAdProxyWhitelistedChannels(channels));
-                        },
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  _SettingsGroup(
-                    children: [
-                      _SettingsRow(
-                        icon: Icons.info_outline,
-                        title: "About Flow",
-                        subtitle: "Mobile Twitch client.",
-                        trailing: const Text("1.0.0"),
-                        onTap: () {
-                          unawaited(_openRepository(context));
-                        },
-                      ),
-                    ],
-                  ),
-                ],
               ),
               const Positioned(
                 top: 0,
@@ -332,7 +336,11 @@ class _AdProxySettings extends StatelessWidget {
               key: ValueKey("settings_proxy_$index"),
               dense: true,
               title: Text(index == 0 ? "Main" : "Fallback $index"),
-              subtitle: Text(url, maxLines: 1, overflow: TextOverflow.ellipsis),
+              subtitle: Text(
+                _displayProxyUrl(url),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -386,7 +394,7 @@ class _AdProxySettings extends StatelessWidget {
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(FlagProperty("enabled", value: enabled, ifTrue: "enabled"));
-    properties.add(IterableProperty<String>("proxyUrls", proxyUrls));
+    properties.add(IntProperty("proxyUrlCount", proxyUrls.length));
     properties.add(IterableProperty<String>("whitelistedChannels", whitelistedChannels));
     properties.add(IterableProperty<String>("subscriptionChannels", subscriptionChannels));
     properties.add(
@@ -400,6 +408,11 @@ class _AdProxySettings extends StatelessWidget {
       ObjectFlagProperty<ValueChanged<String>>.has("onRemoveChannel", onRemoveChannel),
     );
   }
+}
+
+String _displayProxyUrl(String value) {
+  final uri = Uri.tryParse(value);
+  return uri == null || uri.userInfo.isEmpty ? value : uri.replace(userInfo: "").toString();
 }
 
 class _SettingsListHeader extends StatelessWidget {

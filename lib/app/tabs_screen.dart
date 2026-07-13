@@ -152,9 +152,6 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> {
       _visitedRoutes.add(nextRoute);
     });
     _tabsStore.setCurrentRoute(nextRoute);
-    if (nextRoute == FlowRoutes.settings) {
-      unawaited(_settingsStore.load());
-    }
     _syncTabHistory();
   }
 

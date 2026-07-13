@@ -1,3 +1,5 @@
+import "dart:async";
+
 import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/settings/settings_screen.dart";
@@ -7,6 +9,24 @@ import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  test("shares preference reads between concurrent settings loads", () async {
+    final preferencesStore = _DelayedPreferencesStore();
+    final settingsStore = AppSettingsStore(
+      preferences: SharedPreferencesFlowPreferences(store: preferencesStore),
+    );
+
+    final firstLoad = settingsStore.load();
+    final secondLoad = settingsStore.load();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(preferencesStore.readCount, 5);
+    preferencesStore.completeReads();
+    await Future.wait([firstLoad, secondLoad]);
+
+    expect(settingsStore.isLoaded, isTrue);
+    expect(preferencesStore.readCount, 5);
+  });
+
   test("serializes subscription whitelist updates", () async {
     final preferences = SharedPreferencesFlowPreferences(store: _MemoryPreferencesStore());
     await preferences.saveAdProxyWhitelistedChannels(["manual"]);
@@ -59,6 +79,53 @@ void main() {
 
     expect(settingsStore.adProxyEnabled, isTrue);
     expect(await preferences.readAdProxyEnabled(), isTrue);
+  });
+
+  testWidgets("blocks settings interactions until preferences finish loading", (tester) async {
+    final preferencesStore = _DelayedPreferencesStore();
+    final settingsStore = AppSettingsStore(
+      preferences: SharedPreferencesFlowPreferences(store: preferencesStore),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: SettingsScreen(settingsStore: settingsStore),
+      ),
+    );
+    await tester.pump();
+
+    final interactionGate = find.byKey(const ValueKey("settings_content_interaction_gate"));
+    expect(tester.widget<AbsorbPointer>(interactionGate).absorbing, isTrue);
+    await tester.tap(
+      find.byKey(const ValueKey("settings_ad_proxy_toggle")),
+      warnIfMissed: false,
+    );
+    expect(settingsStore.adProxyEnabled, isFalse);
+
+    preferencesStore.completeReads();
+    await tester.pumpAndSettle();
+    expect(tester.widget<AbsorbPointer>(interactionGate).absorbing, isFalse);
+
+    await tester.tap(find.byKey(const ValueKey("settings_ad_proxy_toggle")));
+    await tester.pumpAndSettle();
+    expect(settingsStore.adProxyEnabled, isTrue);
+  });
+
+  testWidgets("masks proxy credentials while retaining the host and port", (tester) async {
+    final preferences = SharedPreferencesFlowPreferences(store: _MemoryPreferencesStore());
+    final settingsStore = AppSettingsStore(preferences: preferences);
+    await settingsStore.setAdProxyUrls(["http://user:password@host:8080"]);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: SettingsScreen(settingsStore: settingsStore),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text("http://host:8080"), findsOneWidget);
+    expect(find.textContaining("user"), findsNothing);
+    expect(find.textContaining("password"), findsNothing);
   });
 
   testWidgets("shows subscription whitelist updates without reloading settings", (tester) async {
@@ -160,4 +227,25 @@ class _MemoryPreferencesStore implements FlowPreferencesStore {
   @override
   Future<void> setStringList(String key, List<String> value) async =>
       stringLists[key] = List.of(value);
+}
+
+class _DelayedPreferencesStore extends _MemoryPreferencesStore {
+  final _readsCompleted = Completer<void>();
+  int readCount = 0;
+
+  void completeReads() => _readsCompleted.complete();
+
+  @override
+  Future<String?> getString(String key) async {
+    readCount++;
+    await _readsCompleted.future;
+    return super.getString(key);
+  }
+
+  @override
+  Future<List<String>?> getStringList(String key) async {
+    readCount++;
+    await _readsCompleted.future;
+    return super.getStringList(key);
+  }
 }
