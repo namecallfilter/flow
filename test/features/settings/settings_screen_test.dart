@@ -111,6 +111,29 @@ void main() {
     expect(settingsStore.adProxyEnabled, isTrue);
   });
 
+  testWidgets("offers a retry when settings fail to load", (tester) async {
+    final settingsStore = AppSettingsStore(
+      preferences: SharedPreferencesFlowPreferences(store: _FailingOncePreferencesStore()),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: SettingsScreen(settingsStore: settingsStore),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final interactionGate = find.byKey(const ValueKey("settings_content_interaction_gate"));
+    expect(tester.widget<AbsorbPointer>(interactionGate).absorbing, isTrue);
+    expect(find.byKey(const ValueKey("settings_load_retry")), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey("settings_load_retry")));
+    await tester.pumpAndSettle();
+
+    expect(settingsStore.isLoaded, isTrue);
+    expect(tester.widget<AbsorbPointer>(interactionGate).absorbing, isFalse);
+  });
+
   testWidgets("masks proxy credentials while retaining the host and port", (tester) async {
     final preferences = SharedPreferencesFlowPreferences(store: _MemoryPreferencesStore());
     final settingsStore = AppSettingsStore(preferences: preferences);
@@ -272,5 +295,18 @@ class _DelayedPreferencesStore extends _MemoryPreferencesStore {
     readCount++;
     await _readsCompleted.future;
     return super.getStringList(key);
+  }
+}
+
+class _FailingOncePreferencesStore extends _MemoryPreferencesStore {
+  bool _hasFailed = false;
+
+  @override
+  Future<String?> getString(String key) {
+    if (!_hasFailed && key == SharedPreferencesFlowPreferences.adProxyEnabledKey) {
+      _hasFailed = true;
+      return Future<String?>.error(StateError("read failed"));
+    }
+    return super.getString(key);
   }
 }

@@ -57,6 +57,7 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   late final AppSettingsStore _settingsStore;
+  bool _settingsLoadFailed = false;
 
   @override
   void initState() {
@@ -67,8 +68,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
           preferences: _MemoryFlowPreferences(themeMode: widget.currentThemeMode),
         );
     if (!_settingsStore.isLoaded) {
-      unawaited(_settingsStore.load());
+      unawaited(_loadSettings());
     }
+  }
+
+  Future<void> _loadSettings() async {
+    try {
+      await _settingsStore.load();
+    } on Object {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _settingsLoadFailed = true);
+    }
+  }
+
+  void _retrySettingsLoad() {
+    setState(() => _settingsLoadFailed = false);
+    unawaited(_loadSettings());
   }
 
   Future<void> _changeThemeMode(ThemeMode themeMode) async {
@@ -272,6 +289,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ],
                 ),
               ),
+              if (_settingsLoadFailed)
+                Positioned.fill(
+                  child: Center(
+                    child: FilledButton.icon(
+                      key: const ValueKey("settings_load_retry"),
+                      onPressed: _retrySettingsLoad,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text("Couldn't load settings. Retry"),
+                    ),
+                  ),
+                ),
               const Positioned(
                 top: 0,
                 left: 0,
