@@ -26,6 +26,7 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.hls.DefaultHlsDataSourceFactory
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.ui.PlayerView
@@ -291,32 +292,42 @@ internal class TwitchPlayerView(
             }
         }.also(player::addListener)
 
-        val proxyClient = if (proxyUrls.isEmpty()) {
-            null
+        val proxyClients = if (proxyUrls.isEmpty()) {
+            emptyList()
         } else {
-            buildHttpProxyClient(proxyUrls) { host, proxyType ->
-                Log.d(LOG_TAG, "ad proxy connection host=$host route=$proxyType")
+            proxyUrls.mapNotNull { proxyUrl ->
+                buildHttpProxyClient(
+                    listOf(proxyUrl),
+                ) { host, proxyType ->
+                    Log.d(LOG_TAG, "ad proxy connection host=$host route=$proxyType")
+                }
             }
         }
         val directDataSourceFactory = DefaultDataSource.Factory(
             playerView.context,
             DefaultHttpDataSource.Factory().setUserAgent(USER_AGENT),
         )
-        val manifestDataSourceFactory = if (proxyClient == null) {
-            directDataSourceFactory
-        } else {
-            Log.d(LOG_TAG, "ad proxy active for Twitch manifests (${proxyUrls.size} endpoints)")
+        val proxyDataSourceFactories = proxyClients.map {
             DefaultDataSource.Factory(
                 playerView.context,
-                OkHttpDataSource.Factory(proxyClient).setUserAgent(USER_AGENT),
+                OkHttpDataSource.Factory(it).setUserAgent(USER_AGENT),
             )
         }
-        val mediaSource = HlsMediaSource.Factory(
-            ManifestOnlyHlsDataSourceFactory(
-                manifestFactory = manifestDataSourceFactory,
+        val hlsDataSourceFactory = if (proxyDataSourceFactories.isEmpty()) {
+            DefaultHlsDataSourceFactory(directDataSourceFactory)
+        } else {
+            Log.d(LOG_TAG, "adaptive ad proxy active (${proxyUrls.size} endpoints)")
+            AdaptiveTwitchHlsDataSourceFactory(
+                manifestResolver = TwitchPlaybackCoordinator(
+                    rootUsherUri = url,
+                    directFactory = directDataSourceFactory,
+                    proxyFactories = proxyDataSourceFactories,
+                    onEvent = { message -> Log.d(LOG_TAG, "adaptive ad proxy: $message") },
+                ),
                 directFactory = directDataSourceFactory,
-            ),
-        )
+            )
+        }
+        val mediaSource = HlsMediaSource.Factory(hlsDataSourceFactory)
             .setExtractorFactory(TwitchEmsgMetadataBridgeExtractorFactory())
             .setMetadataType(HlsMediaSource.METADATA_TYPE_ID3)
             .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(MINIMUM_LOAD_RETRY_COUNT))

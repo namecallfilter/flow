@@ -102,10 +102,10 @@ internal class OrderedHttpProxySelector(
     override fun select(uri: URI?): List<Proxy> {
         val available = proxies.filterNot(failed::contains)
         if (available.isNotEmpty()) {
-            return available + Proxy.NO_PROXY
+            return available
         }
         failed.clear()
-        return listOf(Proxy.NO_PROXY)
+        return proxies
     }
 
     @Synchronized

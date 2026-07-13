@@ -315,7 +315,7 @@ class _AdProxySettings extends StatelessWidget {
         _SettingsRow(
           icon: Icons.shield_outlined,
           title: "Ad proxying",
-          subtitle: "Route Twitch playback manifests, not video, through HTTP proxies.",
+          subtitle: "Use HTTP proxies only when Twitch returns an ad-bearing playlist.",
           trailing: Switch(
             key: const ValueKey("settings_ad_proxy_toggle"),
             value: enabled,

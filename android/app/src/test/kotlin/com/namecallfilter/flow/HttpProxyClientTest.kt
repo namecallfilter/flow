@@ -9,7 +9,6 @@ import org.junit.Test
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.InetSocketAddress
-import java.net.Proxy
 import java.net.ServerSocket
 import java.net.URI
 import kotlin.concurrent.thread
@@ -49,12 +48,11 @@ class HttpProxyClientTest {
         val selector = OrderedHttpProxySelector(proxies)
         val uri = URI("https://video-weaver.sfo05.hls.ttvnw.net/v1/playlist/index.m3u8")
 
-        assertEquals(proxies + Proxy.NO_PROXY, selector.select(uri))
+        assertEquals(proxies, selector.select(uri))
         selector.markFailed(proxies.first())
-        assertEquals(listOf(proxies.last(), Proxy.NO_PROXY), selector.select(uri))
+        assertEquals(listOf(proxies.last()), selector.select(uri))
         selector.markFailed(proxies.last())
-        assertEquals(listOf(Proxy.NO_PROXY), selector.select(uri))
-        assertEquals(proxies + Proxy.NO_PROXY, selector.select(uri))
+        assertEquals(proxies, selector.select(uri))
     }
 
     @Test
@@ -63,7 +61,7 @@ class HttpProxyClientTest {
         val selector = OrderedHttpProxySelector(listOf(proxy))
 
         assertEquals(
-            listOf(proxy, Proxy.NO_PROXY),
+            listOf(proxy),
             selector.select(URI("https://redirected-manifest.example/stream")),
         )
     }

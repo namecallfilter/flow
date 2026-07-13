@@ -6,13 +6,13 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.exoplayer.hls.HlsDataSourceFactory
 
 @UnstableApi
-internal class ManifestOnlyHlsDataSourceFactory(
-    private val manifestFactory: DataSource.Factory,
+internal class AdaptiveTwitchHlsDataSourceFactory(
+    private val manifestResolver: TwitchManifestResolver,
     private val directFactory: DataSource.Factory,
 ) : HlsDataSourceFactory {
     override fun createDataSource(dataType: Int): DataSource =
         if (dataType == C.DATA_TYPE_MANIFEST) {
-            manifestFactory.createDataSource()
+            TwitchManifestDataSource(manifestResolver)
         } else {
             directFactory.createDataSource()
         }
