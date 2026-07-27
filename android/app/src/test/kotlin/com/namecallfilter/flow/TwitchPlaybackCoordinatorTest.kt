@@ -4,6 +4,7 @@ import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
@@ -13,547 +14,562 @@ import org.junit.Test
 
 class TwitchPlaybackCoordinatorTest {
     @Test
-    fun cleanPlaybackUsesNoProxyRequests() {
-        val session = TwitchPlaybackSession(ROOT, proxyCount = 1)
+    fun initialMasterUsesOrderedProxyChainWithDirectFallback() {
+        val session = TwitchPlaybackSession(ROOT, proxyCount = 2)
+        val requests = mutableListOf<TwitchManifestRoute>()
+
+        val result = session.resolve(ROOT) { route, uri ->
+            requests += route
+            when (route) {
+                is TwitchManifestRoute.Proxy -> throw IOException("proxy failed")
+                TwitchManifestRoute.Direct -> payload(directMaster(), uri)
+            }
+        }
+
+        assertEquals(directMaster(), result.text)
+        assertEquals(
+            listOf(
+                TwitchManifestRoute.Proxy(0),
+                TwitchManifestRoute.Proxy(1),
+                TwitchManifestRoute.Direct,
+            ),
+            requests,
+        )
+    }
+
+    @Test
+    fun successfulProxyResponseDoesNotHopToAnotherEndpoint() {
+        val session = TwitchPlaybackSession(ROOT, proxyCount = 2)
         val routes = mutableListOf<TwitchManifestRoute>()
-        val fetch: (TwitchManifestRoute, String) -> TwitchManifestPayload = { route, uri ->
+
+        session.resolve(ROOT) { route, uri ->
             routes += route
-            payload(if (uri == ROOT) directMaster() else cleanPlaylist(), uri)
+            payload(directMaster(), uri)
         }
 
-        session.resolve(ROOT, fetch)
-        session.resolve(DIRECT_VARIANT, fetch)
-
-        assertEquals(listOf(TwitchManifestRoute.Direct, TwitchManifestRoute.Direct), routes)
+        assertEquals(listOf(TwitchManifestRoute.Proxy(0)), routes)
     }
 
     @Test
-    fun nonCanonicalAdLikeDaterangesUseNoProxy() {
-        val session = TwitchPlaybackSession(ROOT, proxyCount = 1)
-        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
-        val routes = mutableListOf<TwitchManifestRoute>()
-        val playlists = listOf(
-            cleanPlaylist() + "\n#EXT-X-DATERANGE:ID=\"stitched-ad-1\"",
-            cleanPlaylist() + "\n#EXT-X-DATERANGE:CLASS=\"TWITCH-STITCHED-AD\"",
-        )
-
-        playlists.forEach { playlist ->
-            val result = session.resolve(DIRECT_VARIANT) { route, uri ->
-                routes += route
-                payload(playlist, uri)
-            }
-            assertEquals(playlist, result.text)
-        }
-
-        assertEquals(listOf(TwitchManifestRoute.Direct, TwitchManifestRoute.Direct), routes)
-    }
-
-    @Test
-    fun adPlaylistRetriesSameUriThroughProxyOnce() {
-        val session = TwitchPlaybackSession(ROOT, proxyCount = 1)
-        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
+    fun firstTrustedPlaylistUsesProxyChainAndLaterPollsAreDirect() {
+        val session = sessionWithMaster()
         val requests = mutableListOf<Pair<TwitchManifestRoute, String>>()
-
-        val result = session.resolve(DIRECT_VARIANT) { route, uri ->
-            requests += route to uri
-            payload(if (route == TwitchManifestRoute.Direct) adPlaylist() else cleanPlaylist(), uri)
-        }
-
-        assertFalse(containsTwitchStitchedAd(result.text))
-        assertEquals(
-            listOf(
-                TwitchManifestRoute.Direct to DIRECT_VARIANT,
-                TwitchManifestRoute.Proxy(0) to DIRECT_VARIANT,
-            ),
-            requests,
-        )
-    }
-
-    @Test
-    fun cleanSameUriProxyDoesNotRequireSequenceAlignment() {
-        val session = TwitchPlaybackSession(ROOT, proxyCount = 2)
-        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
-        val requests = mutableListOf<Pair<TwitchManifestRoute, String>>()
-
-        val result = session.resolve(DIRECT_VARIANT) { route, uri ->
-            requests += route to uri
-            val playlist = when (route) {
-                TwitchManifestRoute.Direct -> adPlaylist()
-                TwitchManifestRoute.Proxy(0) -> cleanPlaylist(mediaSequence = 200)
-                TwitchManifestRoute.Proxy(1) -> error("Fallback proxy should not be used")
-                else -> error("Unexpected proxy")
-            }
-            payload(playlist, uri)
-        }
-
-        assertFalse(containsTwitchStitchedAd(result.text))
-        assertEquals(
-            listOf(
-                TwitchManifestRoute.Direct to DIRECT_VARIANT,
-                TwitchManifestRoute.Proxy(0) to DIRECT_VARIANT,
-            ),
-            requests,
-        )
-    }
-
-    @Test
-    fun directPlaylistFailureIsPropagatedWithoutProxy() {
-        val session = TwitchPlaybackSession(ROOT, proxyCount = 1)
-        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
-        val directError = IOException("direct failed")
-        val routes = mutableListOf<TwitchManifestRoute>()
-
-        val thrown = assertThrows(IOException::class.java) {
-            session.resolve(DIRECT_VARIANT) { route, _ ->
-                routes += route
-                if (route != TwitchManifestRoute.Direct) {
-                    error("Proxy must not be used")
-                }
-                throw directError
-            }
-        }
-
-        assertSame(directError, thrown)
-        assertEquals(listOf(TwitchManifestRoute.Direct), routes)
-    }
-
-    @Test
-    fun malformedDirectPlaylistUsesNoProxy() {
-        val session = TwitchPlaybackSession(ROOT, proxyCount = 1)
-        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
-        val routes = mutableListOf<TwitchManifestRoute>()
-
-        assertThrows(IOException::class.java) {
-            session.resolve(DIRECT_VARIANT) { route, uri ->
-                routes += route
-                payload(emptyMediaPlaylist(), uri)
-            }
-        }
-
-        assertEquals(listOf(TwitchManifestRoute.Direct), routes)
-    }
-
-    @Test
-    fun malformedAdPlaylistUsesNoProxy() {
-        val session = TwitchPlaybackSession(ROOT, proxyCount = 1)
-        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
-        val routes = mutableListOf<TwitchManifestRoute>()
-        val malformedAd = emptyMediaPlaylist() +
-            "\n#EXT-X-DATERANGE:ID=\"stitched-ad-1\",CLASS=\"twitch-stitched-ad\""
-
-        assertThrows(IOException::class.java) {
-            session.resolve(DIRECT_VARIANT) { route, uri ->
-                routes += route
-                payload(malformedAd, uri)
-            }
-        }
-
-        assertEquals(listOf(TwitchManifestRoute.Direct), routes)
-    }
-
-    @Test
-    fun rootFailureIsPropagatedWithoutProxy() {
-        val session = TwitchPlaybackSession(ROOT, proxyCount = 2)
-        val directError = IOException("root failed")
-        val routes = mutableListOf<TwitchManifestRoute>()
-
-        val thrown = assertThrows(IOException::class.java) {
-            session.resolve(ROOT) { route, _ ->
-                routes += route
-                throw directError
-            }
-        }
-
-        assertSame(directError, thrown)
-        assertEquals(listOf(TwitchManifestRoute.Direct), routes)
-    }
-
-    @Test
-    fun malformedRootUsesNoProxy() {
-        val session = TwitchPlaybackSession(ROOT, proxyCount = 2)
-        val routes = mutableListOf<TwitchManifestRoute>()
-
-        assertThrows(IOException::class.java) {
-            session.resolve(ROOT) { route, uri ->
-                routes += route
-                payload("#EXTM3U", uri)
-            }
-        }
-
-        assertEquals(listOf(TwitchManifestRoute.Direct), routes)
-    }
-
-    @Test
-    fun malformedProxyPlaylistsAreSkipped() {
-        val valid = cleanPlaylist()
-        val invalidPlaylists = listOf(
-            valid.replace("#EXT-X-MEDIA-SEQUENCE:100\n", ""),
-            valid.replace("#EXT-X-MEDIA-SEQUENCE:100", "#EXT-X-MEDIA-SEQUENCE:bad"),
-            valid.replace(
-                "#EXT-X-MEDIA-SEQUENCE:100",
-                "#EXT-X-MEDIA-SEQUENCE:100\n#EXT-X-MEDIA-SEQUENCE:101",
-            ),
-            cleanPlaylist(mediaSequence = -1),
-            valid.replace("#EXT-X-DISCONTINUITY-SEQUENCE:1", "#EXT-X-DISCONTINUITY-SEQUENCE:bad"),
-            valid.replace(
-                "#EXT-X-DISCONTINUITY-SEQUENCE:1",
-                "#EXT-X-DISCONTINUITY-SEQUENCE:1\n#EXT-X-DISCONTINUITY-SEQUENCE:2",
-            ),
-            cleanPlaylist(discontinuitySequence = -1),
-            directMaster(),
-            "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:100\ngarbage.ts",
-            "#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:100\n#EXTINF:2,",
-        )
-
-        invalidPlaylists.forEach { invalid ->
-            val session = TwitchPlaybackSession(ROOT, proxyCount = 2)
-            session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
-            val result = session.resolve(DIRECT_VARIANT) { route, uri ->
-                payload(
-                    when (route) {
-                        TwitchManifestRoute.Direct -> adPlaylist()
-                        TwitchManifestRoute.Proxy(0) -> invalid
-                        TwitchManifestRoute.Proxy(1) -> valid
-                        else -> error("Unexpected proxy")
-                    },
-                    uri,
-                )
-            }
-
-            assertEquals(valid, result.text)
-        }
-    }
-
-    @Test
-    fun mainProxyCreatesReplacementBeforeFallbackAndMapsLaterRefreshes() {
-        val session = TwitchPlaybackSession(ROOT, proxyCount = 2)
-        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
-        val requests = mutableListOf<Pair<TwitchManifestRoute, String>>()
-        val firstRequest = "$DIRECT_VARIANT&_HLS_msn=12&_HLS_part=1"
-
-        val first = session.resolve(firstRequest) { route, uri ->
-            requests += route to uri
-            when {
-                route is TwitchManifestRoute.Proxy && uri == ROOT -> payload(proxyMaster(), ROOT)
-                route is TwitchManifestRoute.Proxy && uri == PROXY_VARIANT ->
-                    payload(
-                        cleanPlaylist(mediaSequence = 500, discontinuitySequence = 99),
-                        PROXY_VARIANT,
-                    )
-                else -> payload(adPlaylist(), uri)
-            }
-        }
-
-        assertEquals(PROXY_VARIANT, first.finalUri)
-        assertEquals(
-            listOf(
-                TwitchManifestRoute.Direct to firstRequest,
-                TwitchManifestRoute.Proxy(0) to firstRequest,
-                TwitchManifestRoute.Proxy(0) to ROOT,
-                TwitchManifestRoute.Proxy(0) to PROXY_VARIANT,
-            ),
-            requests,
-        )
-
-        requests.clear()
-        val laterRequest = "$DIRECT_VARIANT&_HLS_msn=13&_HLS_skip=YES"
-        val later = session.resolve(laterRequest) { route, uri ->
-            requests += route to uri
-            payload(cleanPlaylist(mediaSequence = 501, discontinuitySequence = 99), uri)
-        }
-
-        val expectedUri = "$PROXY_VARIANT&_HLS_msn=13&_HLS_skip=YES"
-        assertEquals(expectedUri, later.finalUri)
-        assertEquals(listOf(TwitchManifestRoute.Direct to expectedUri), requests)
-    }
-
-    @Test
-    fun replacementAssignmentMapsEveryMatchingRendition() {
-        val session = TwitchPlaybackSession(ROOT, proxyCount = 1)
-        session.resolve(ROOT) { _, uri -> payload(twoVariantMaster(DIRECT_VARIANT, DIRECT_SECOND_VARIANT), uri) }
 
         session.resolve(DIRECT_VARIANT) { route, uri ->
-            when {
-                route == TwitchManifestRoute.Proxy(0) && uri == ROOT ->
-                    payload(twoVariantMaster(PROXY_VARIANT, PROXY_SECOND_VARIANT), ROOT)
-                route == TwitchManifestRoute.Proxy(0) && uri == PROXY_VARIANT ->
-                    payload(cleanPlaylist(), PROXY_VARIANT)
-                else -> payload(adPlaylist(), uri)
-            }
+            requests += route to uri
+            payload(cleanPlaylist(), uri)
+        }
+        session.resolve("$DIRECT_VARIANT&_HLS_msn=101") { route, uri ->
+            requests += route to uri
+            payload(cleanPlaylist(101), uri)
         }
 
+        assertEquals(
+            listOf(
+                TwitchManifestRoute.Proxy(0) to DIRECT_VARIANT,
+                TwitchManifestRoute.Direct to "$DIRECT_VARIANT&_HLS_msn=101",
+            ),
+            requests,
+        )
+    }
+
+    @Test
+    fun firstRequestIsTrackedIndependentlyForEachRendition() {
+        val session = TwitchPlaybackSession(ROOT, proxyCount = 1)
+        session.resolve(ROOT) { _, uri ->
+            payload(twoVariantMaster(DIRECT_VARIANT, DIRECT_SECOND_VARIANT), uri)
+        }
         val requests = mutableListOf<Pair<TwitchManifestRoute, String>>()
-        val result = session.resolve(DIRECT_SECOND_VARIANT) { route, uri ->
+
+        session.resolve(DIRECT_VARIANT) { route, uri ->
+            requests += route to uri
+            payload(cleanPlaylist(), uri)
+        }
+        session.resolve(DIRECT_SECOND_VARIANT) { route, uri ->
             requests += route to uri
             payload(cleanPlaylist(), uri)
         }
 
-        assertEquals(PROXY_SECOND_VARIANT, result.finalUri)
-        assertEquals(
-            listOf(TwitchManifestRoute.Direct to PROXY_SECOND_VARIANT),
-            requests,
-        )
-    }
-
-    @Test
-    fun failedConcurrentCachedReplacementContinuesToTheProxyLoop() {
-        val session = TwitchPlaybackSession(ROOT, proxyCount = 1)
-        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
-        val directStarted = CountDownLatch(1)
-        val releaseDirect = CountDownLatch(1)
-        val executor = Executors.newSingleThreadExecutor()
-
-        try {
-            val concurrentResult = executor.submit<TwitchManifestPayload> {
-                session.resolve(DIRECT_VARIANT) { route, uri ->
-                    when {
-                        route == TwitchManifestRoute.Direct && uri == DIRECT_VARIANT -> {
-                            directStarted.countDown()
-                            assertTrue(releaseDirect.await(5, TimeUnit.SECONDS))
-                            payload(adPlaylist(), uri)
-                        }
-                        route == TwitchManifestRoute.Direct && uri == PROXY_VARIANT ->
-                            throw IOException("cached replacement failed")
-                        route == TwitchManifestRoute.Proxy(0) && uri == ROOT ->
-                            payload(proxyMaster(), ROOT)
-                        route == TwitchManifestRoute.Proxy(0) && uri == PROXY_VARIANT ->
-                            payload(cleanPlaylist(), PROXY_VARIANT)
-                        else -> payload(adPlaylist(), uri)
-                    }
-                }
-            }
-
-            assertTrue(directStarted.await(5, TimeUnit.SECONDS))
-            session.resolve(DIRECT_VARIANT) { route, uri ->
-                when {
-                    route == TwitchManifestRoute.Proxy(0) && uri == ROOT ->
-                        payload(proxyMaster(), ROOT)
-                    route == TwitchManifestRoute.Proxy(0) && uri == PROXY_VARIANT ->
-                        payload(cleanPlaylist(), PROXY_VARIANT)
-                    else -> payload(adPlaylist(), uri)
-                }
-            }
-            releaseDirect.countDown()
-
-            assertEquals(PROXY_VARIANT, concurrentResult.get(5, TimeUnit.SECONDS).finalUri)
-        } finally {
-            releaseDirect.countDown()
-            executor.shutdownNow()
-        }
-    }
-
-    @Test
-    fun unknownManifestIsNeverSentToProxy() {
-        val session = TwitchPlaybackSession(ROOT, proxyCount = 1)
-        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
-
-        val result = session.resolve("https://example.test/untrusted.m3u8") { route, uri ->
-            assertEquals(TwitchManifestRoute.Direct, route)
-            payload(adPlaylist(), uri)
-        }
-
-        assertTrue(containsTwitchStitchedAd(result.text))
-    }
-
-    @Test
-    fun separateRenditionDoesNotFallBackToAnAdPlaylist() {
-        val audioUri = "https://video-weaver.direct.test/audio.m3u8?token=d"
-        val session = TwitchPlaybackSession(ROOT, proxyCount = 1)
-        session.resolve(ROOT) { _, uri ->
-            payload(
-                directMaster().replace(
-                    "#EXTM3U",
-                    "#EXTM3U\n" +
-                        "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"English\",URI=\"$audioUri\"",
-                ),
-                uri,
-            )
-        }
-        val requests = mutableListOf<TwitchManifestRoute>()
-
-        assertThrows(IOException::class.java) {
-            session.resolve(audioUri) { route, uri ->
-                requests += route
-                payload(adPlaylist(), uri)
-            }
-        }
-
-        assertEquals(listOf(TwitchManifestRoute.Direct, TwitchManifestRoute.Proxy(0)), requests)
-    }
-
-    @Test
-    fun missingReplacementQualityDoesNotFallBackToAnAdPlaylist() {
-        val session = TwitchPlaybackSession(ROOT, proxyCount = 1)
-        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
-
-        assertThrows(IOException::class.java) {
-            session.resolve(DIRECT_VARIANT) { route, uri ->
-                when {
-                    route is TwitchManifestRoute.Proxy && uri == ROOT -> payload(
-                        proxyMaster(resolution = "640x360", stableId = "360p30"),
-                        ROOT,
-                    )
-                    else -> payload(adPlaylist(), uri)
-                }
-            }
-        }
-    }
-
-    @Test
-    fun directPlaylistTimeoutDoesNotStartReplacement() {
-        val session = TwitchPlaybackSession(ROOT, proxyCount = 1)
-        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
-        val routes = mutableListOf<TwitchManifestRoute>()
-
-        assertThrows(IOException::class.java) {
-            session.resolve(DIRECT_VARIANT) { route, uri ->
-                routes += route
-                when {
-                    route == TwitchManifestRoute.Direct -> throw IOException("timed out")
-                    uri == ROOT -> payload(
-                        proxyMaster(resolution = "640x360", stableId = "360p30"),
-                        ROOT,
-                    )
-                    else -> payload(adPlaylist(), uri)
-                }
-            }
-        }
-
-        assertEquals(listOf(TwitchManifestRoute.Direct), routes)
-    }
-
-    @Test
-    fun missingReplacementQualityTriesTheNextProxy() {
-        val session = TwitchPlaybackSession(ROOT, proxyCount = 2)
-        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
-        val requests = mutableListOf<Pair<TwitchManifestRoute, String>>()
-
-        val result = session.resolve(DIRECT_VARIANT) { route, uri ->
-            requests += route to uri
-            when {
-                route == TwitchManifestRoute.Proxy(0) && uri == ROOT -> payload(
-                    proxyMaster(resolution = "640x360", stableId = "360p30"),
-                    ROOT,
-                )
-                route == TwitchManifestRoute.Proxy(1) && uri == ROOT -> payload(
-                    proxyMaster(uri = PROXY_VARIANT_2),
-                    ROOT,
-                )
-                route == TwitchManifestRoute.Proxy(1) && uri == PROXY_VARIANT_2 ->
-                    payload(cleanPlaylist(), PROXY_VARIANT_2)
-                else -> payload(adPlaylist(), uri)
-            }
-        }
-
-        assertEquals(PROXY_VARIANT_2, result.finalUri)
         assertEquals(
             listOf(
-                TwitchManifestRoute.Direct to DIRECT_VARIANT,
                 TwitchManifestRoute.Proxy(0) to DIRECT_VARIANT,
-                TwitchManifestRoute.Proxy(0) to ROOT,
-                TwitchManifestRoute.Proxy(1) to DIRECT_VARIANT,
-                TwitchManifestRoute.Proxy(1) to ROOT,
-                TwitchManifestRoute.Proxy(1) to PROXY_VARIANT_2,
+                TwitchManifestRoute.Proxy(0) to DIRECT_SECOND_VARIANT,
             ),
             requests,
         )
     }
 
     @Test
-    fun invalidReplacementPlaylistTriesTheNextProxy() {
-        val session = TwitchPlaybackSession(ROOT, proxyCount = 2)
+    fun unknownManifestIsAlwaysDirect() {
+        val session = sessionWithMaster()
+        val requests = mutableListOf<TwitchManifestRoute>()
+
+        val result = session.resolve(UNKNOWN_VARIANT) { route, uri ->
+            requests += route
+            payload(adPlaylist(), uri)
+        }
+
+        assertTrue(containsTwitchStitchedAd(result.text))
+        assertEquals(listOf(TwitchManifestRoute.Direct), requests)
+    }
+
+    @Test
+    fun laterDirectFailureDoesNotActivateProxying() {
+        val session = sessionWithMaster()
+        session.resolve(DIRECT_VARIANT) { _, uri -> payload(cleanPlaylist(), uri) }
+        val failure = IOException("direct failed")
+        val requests = mutableListOf<TwitchManifestRoute>()
+
+        val thrown = assertThrows(IOException::class.java) {
+            session.resolve(DIRECT_VARIANT) { route, _ ->
+                requests += route
+                throw failure
+            }
+        }
+
+        assertSame(failure, thrown)
+        assertEquals(listOf(TwitchManifestRoute.Direct), requests)
+    }
+
+    @Test
+    fun stitchedAdDetectionMatchesUpstreamSubstringSemantics() {
+        assertTrue(containsTwitchStitchedAd(cleanPlaylist() + "\n#EXT-X-DATERANGE:ID=\"stitched-ad-1\""))
+        assertTrue(
+            containsTwitchStitchedAd(
+                cleanPlaylist() + "\n#EXT-X-DATERANGE:CLASS=\"TWITCH-STITCHED-AD\"",
+            ),
+        )
+        assertFalse(containsTwitchStitchedAd(cleanPlaylist()))
+    }
+
+    @Test
+    fun unusableAdResponseDoesNotRefreshTheAssignment() {
+        var refreshes = 0
+        val session = TwitchPlaybackSession(
+            ROOT,
+            proxyCount = 1,
+            freshRootUsherUri = {
+                refreshes++
+                FRESH_ROOT
+            },
+        )
+        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
+
+        assertThrows(IOException::class.java) {
+            session.resolve(DIRECT_VARIANT) { _, uri ->
+                payload(emptyMediaPlaylist() + "\n# stitched-ad", uri)
+            }
+        }
+
+        assertEquals(0, refreshes)
+    }
+
+    @Test
+    fun proxiedAdGetsFreshDirectAssignment() {
+        var refreshes = 0
+        val session = TwitchPlaybackSession(
+            ROOT,
+            proxyCount = 1,
+            freshRootUsherUri = {
+                refreshes++
+                FRESH_ROOT
+            },
+        )
         session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
         val requests = mutableListOf<Pair<TwitchManifestRoute, String>>()
 
         val result = session.resolve(DIRECT_VARIANT) { route, uri ->
             requests += route to uri
             when {
-                route is TwitchManifestRoute.Direct -> payload(adPlaylist(), uri)
-                uri == DIRECT_VARIANT -> payload(adPlaylist(), uri)
-                route == TwitchManifestRoute.Proxy(0) && uri == ROOT -> payload(proxyMaster(), ROOT)
-                route == TwitchManifestRoute.Proxy(0) && uri == PROXY_VARIANT ->
-                    payload(emptyMediaPlaylist(), PROXY_VARIANT)
-                route == TwitchManifestRoute.Proxy(1) && uri == ROOT ->
-                    payload(proxyMaster(uri = PROXY_VARIANT_2), ROOT)
-                route == TwitchManifestRoute.Proxy(1) && uri == PROXY_VARIANT_2 ->
-                    payload(cleanPlaylist(), PROXY_VARIANT_2)
-                else -> error("Unexpected request: $route $uri")
-            }
-        }
-
-        assertEquals(PROXY_VARIANT_2, result.finalUri)
-        assertTrue(requests.contains(TwitchManifestRoute.Proxy(0) to PROXY_VARIANT))
-        assertTrue(requests.contains(TwitchManifestRoute.Proxy(1) to PROXY_VARIANT_2))
-    }
-
-    @Test
-    fun expiredReplacementErrorIsPropagatedAndClearsTheMapping() {
-        val session = TwitchPlaybackSession(ROOT, proxyCount = 1)
-        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
-        session.resolve(DIRECT_VARIANT) { route, uri ->
-            when {
-                route is TwitchManifestRoute.Proxy && uri == ROOT -> payload(proxyMaster(), ROOT)
-                route is TwitchManifestRoute.Proxy && uri == PROXY_VARIANT ->
-                    payload(cleanPlaylist(), PROXY_VARIANT)
+                route == TwitchManifestRoute.Direct && uri == FRESH_ROOT ->
+                    payload(master(DIRECT_REPLACEMENT, "1280x720", "720p60"), uri)
+                route == TwitchManifestRoute.Direct && uri == DIRECT_REPLACEMENT ->
+                    payload(cleanPlaylist(200), uri)
                 else -> payload(adPlaylist(), uri)
             }
         }
-        val requests = mutableListOf<Pair<TwitchManifestRoute, String>>()
 
-        assertThrows(IOException::class.java) {
-            session.resolve("$DIRECT_VARIANT&_HLS_msn=120") { route, uri ->
-                requests += route to uri
-                throw IOException("replacement expired")
-            }
-        }
-
+        assertEquals(1, refreshes)
+        assertEquals(DIRECT_REPLACEMENT, result.finalUri)
         assertEquals(
-            listOf(TwitchManifestRoute.Direct to "$PROXY_VARIANT&_HLS_msn=120"),
+            listOf(
+                TwitchManifestRoute.Proxy(0) to DIRECT_VARIANT,
+                TwitchManifestRoute.Direct to FRESH_ROOT,
+                TwitchManifestRoute.Direct to DIRECT_REPLACEMENT,
+            ),
             requests,
         )
+    }
 
-        requests.clear()
-        val retry = session.resolve(DIRECT_VARIANT) { route, uri ->
+    @Test
+    fun directAdGetsFreshProxiedAssignment() {
+        var refreshes = 0
+        val session = TwitchPlaybackSession(
+            ROOT,
+            proxyCount = 1,
+            freshRootUsherUri = {
+                refreshes++
+                FRESH_ROOT
+            },
+        )
+        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
+        session.resolve(DIRECT_VARIANT) { _, uri -> payload(cleanPlaylist(), uri) }
+        val requests = mutableListOf<Pair<TwitchManifestRoute, String>>()
+
+        val result = session.resolve(DIRECT_VARIANT) { route, uri ->
             requests += route to uri
-            payload(cleanPlaylist(mediaSequence = 120), uri)
+            when {
+                route == TwitchManifestRoute.Proxy(0) && uri == FRESH_ROOT ->
+                    payload(proxyMaster(), uri)
+                route == TwitchManifestRoute.Proxy(0) && uri == PROXY_REPLACEMENT ->
+                    payload(cleanPlaylist(200), uri)
+                else -> payload(adPlaylist(), uri)
+            }
         }
-        assertEquals(DIRECT_VARIANT, retry.finalUri)
-        assertEquals(listOf(TwitchManifestRoute.Direct to DIRECT_VARIANT), requests)
+
+        assertEquals(1, refreshes)
+        assertEquals(PROXY_REPLACEMENT, result.finalUri)
+        assertEquals(
+            listOf(
+                TwitchManifestRoute.Direct to DIRECT_VARIANT,
+                TwitchManifestRoute.Proxy(0) to FRESH_ROOT,
+                TwitchManifestRoute.Proxy(0) to PROXY_REPLACEMENT,
+            ),
+            requests,
+        )
     }
 
     @Test
-    fun malformedCachedReplacementIsRejectedAndClearsTheMapping() {
-        val session = TwitchPlaybackSession(ROOT, proxyCount = 1)
+    fun replacementUsesFreshRootInsteadOfOriginalToken() {
+        val session = TwitchPlaybackSession(
+            ROOT,
+            proxyCount = 1,
+            freshRootUsherUri = { FRESH_ROOT },
+        )
+        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
+        val roots = mutableListOf<String>()
+
+        session.resolve(DIRECT_VARIANT) { route, uri ->
+            if (uri.contains("usher.ttvnw.net")) {
+                roots += uri
+            }
+            when {
+                route == TwitchManifestRoute.Direct && uri == FRESH_ROOT ->
+                    payload(master(DIRECT_REPLACEMENT, "1280x720", "720p60"), uri)
+                route == TwitchManifestRoute.Direct && uri == DIRECT_REPLACEMENT ->
+                    payload(cleanPlaylist(), uri)
+                else -> payload(adPlaylist(), uri)
+            }
+        }
+
+        assertEquals(listOf(FRESH_ROOT), roots)
+    }
+
+    @Test
+    fun replacementFailureReturnsTheUsableAdResponse() {
+        val session = TwitchPlaybackSession(
+            ROOT,
+            proxyCount = 1,
+            freshRootUsherUri = { throw IOException("token failed") },
+        )
+        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
+
+        val result = session.resolve(DIRECT_VARIANT) { _, uri -> payload(adPlaylist(), uri) }
+
+        assertTrue(containsTwitchStitchedAd(result.text))
+        assertEquals(DIRECT_VARIANT, result.finalUri)
+    }
+
+    @Test
+    fun missingReplacementQualityDoesNotSelectAnArbitraryRendition() {
+        val session = TwitchPlaybackSession(
+            ROOT,
+            proxyCount = 1,
+            freshRootUsherUri = { FRESH_ROOT },
+        )
+        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
+        val requests = mutableListOf<String>()
+
+        val result = session.resolve(DIRECT_VARIANT) { route, uri ->
+            requests += uri
+            when {
+                route == TwitchManifestRoute.Direct && uri == FRESH_ROOT ->
+                    payload(master(DIRECT_REPLACEMENT, "640x360", "360p30"), uri)
+                else -> payload(adPlaylist(), uri)
+            }
+        }
+
+        assertTrue(containsTwitchStitchedAd(result.text))
+        assertFalse(requests.contains(DIRECT_REPLACEMENT))
+    }
+
+    @Test
+    fun replacementMappingsKeepLaterPollsDirectAndPreserveLlHlsCursors() {
+        val session = TwitchPlaybackSession(
+            ROOT,
+            proxyCount = 1,
+            freshRootUsherUri = { FRESH_ROOT },
+        )
         session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
         session.resolve(DIRECT_VARIANT) { route, uri ->
             when {
-                route is TwitchManifestRoute.Proxy && uri == ROOT -> payload(proxyMaster(), ROOT)
-                route is TwitchManifestRoute.Proxy && uri == PROXY_VARIANT ->
-                    payload(cleanPlaylist(), PROXY_VARIANT)
+                route == TwitchManifestRoute.Direct && uri == FRESH_ROOT ->
+                    payload(master(DIRECT_REPLACEMENT, "1280x720", "720p60"), uri)
+                route == TwitchManifestRoute.Direct && uri == DIRECT_REPLACEMENT ->
+                    payload(cleanPlaylist(), uri)
                 else -> payload(adPlaylist(), uri)
             }
         }
         val requests = mutableListOf<Pair<TwitchManifestRoute, String>>()
 
-        assertThrows(IOException::class.java) {
-            session.resolve("$DIRECT_VARIANT&_HLS_msn=120") { route, uri ->
-                requests += route to uri
-                payload(emptyMediaPlaylist(), uri)
-            }
-        }
-
-        assertEquals(
-            listOf(TwitchManifestRoute.Direct to "$PROXY_VARIANT&_HLS_msn=120"),
-            requests,
-        )
-
-        requests.clear()
-        val retry = session.resolve(DIRECT_VARIANT) { route, uri ->
+        val result = session.resolve("$DIRECT_VARIANT&_HLS_msn=120&_HLS_skip=YES") { route, uri ->
             requests += route to uri
             payload(cleanPlaylist(120), uri)
         }
-        assertEquals(DIRECT_VARIANT, retry.finalUri)
-        assertEquals(listOf(TwitchManifestRoute.Direct to DIRECT_VARIANT), requests)
+
+        val expected = "$DIRECT_REPLACEMENT&_HLS_msn=120&_HLS_skip=YES"
+        assertEquals(expected, result.finalUri)
+        assertEquals(listOf(TwitchManifestRoute.Direct to expected), requests)
+    }
+
+    @Test
+    fun directReplacementUriIsRecognizedForLaterAdDetection() {
+        var refreshes = 0
+        val session = TwitchPlaybackSession(
+            ROOT,
+            proxyCount = 1,
+            freshRootUsherUri = {
+                refreshes++
+                if (refreshes == 1) FRESH_ROOT else SECOND_FRESH_ROOT
+            },
+        )
+        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
+        session.resolve(DIRECT_VARIANT) { route, uri ->
+            when {
+                route == TwitchManifestRoute.Direct && uri == FRESH_ROOT ->
+                    payload(master(DIRECT_REPLACEMENT, "1280x720", "720p60"), uri)
+                route == TwitchManifestRoute.Direct && uri == DIRECT_REPLACEMENT ->
+                    payload(cleanPlaylist(), uri)
+                else -> payload(adPlaylist(), uri)
+            }
+        }
+        repeat(16) {
+            session.resolve(DIRECT_REPLACEMENT) { _, uri -> payload(cleanPlaylist(), uri) }
+        }
+
+        session.resolve(DIRECT_REPLACEMENT) { route, uri ->
+            when {
+                route == TwitchManifestRoute.Proxy(0) && uri == SECOND_FRESH_ROOT ->
+                    payload(proxyMaster(), uri)
+                route == TwitchManifestRoute.Proxy(0) && uri == PROXY_REPLACEMENT ->
+                    payload(cleanPlaylist(), uri)
+                else -> payload(adPlaylist(), uri)
+            }
+        }
+
+        assertEquals(2, refreshes)
+    }
+
+    @Test
+    fun bothAdAssignmentsPreferTheProxiedResponse() {
+        val session = TwitchPlaybackSession(
+            ROOT,
+            proxyCount = 1,
+            freshRootUsherUri = { FRESH_ROOT },
+        )
+        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
+
+        val result = session.resolve(DIRECT_VARIANT) { route, uri ->
+            when {
+                route == TwitchManifestRoute.Direct && uri == FRESH_ROOT ->
+                    payload(master(DIRECT_REPLACEMENT, "1280x720", "720p60"), uri)
+                route == TwitchManifestRoute.Direct && uri == DIRECT_REPLACEMENT ->
+                    payload(adPlaylist(), uri)
+                else -> payload(adPlaylist(), uri)
+            }
+        }
+
+        assertEquals(DIRECT_VARIANT, result.finalUri)
+    }
+
+    @Test
+    fun proxiedAdReplacementIsRetainedWhenBothAssignmentsContainAds() {
+        val session = TwitchPlaybackSession(
+            ROOT,
+            proxyCount = 1,
+            freshRootUsherUri = { FRESH_ROOT },
+        )
+        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
+        session.resolve(DIRECT_VARIANT) { _, uri -> payload(cleanPlaylist(), uri) }
+
+        val result = session.resolve(DIRECT_VARIANT) { route, uri ->
+            when {
+                route == TwitchManifestRoute.Proxy(0) && uri == FRESH_ROOT ->
+                    payload(proxyMaster(), uri)
+                route == TwitchManifestRoute.Proxy(0) && uri == PROXY_REPLACEMENT ->
+                    payload(adPlaylist(), uri)
+                else -> payload(adPlaylist(), uri)
+            }
+        }
+        val requests = mutableListOf<Pair<TwitchManifestRoute, String>>()
+        session.resolve(DIRECT_VARIANT) { route, uri ->
+            requests += route to uri
+            payload(adPlaylist(), uri)
+        }
+
+        assertEquals(PROXY_REPLACEMENT, result.finalUri)
+        assertEquals(
+            listOf(TwitchManifestRoute.Direct to PROXY_REPLACEMENT),
+            requests,
+        )
+    }
+
+    @Test
+    fun adReplacementCooldownPreventsRepeatedTokenRefreshes() {
+        var refreshes = 0
+        val session = TwitchPlaybackSession(
+            ROOT,
+            proxyCount = 1,
+            freshRootUsherUri = {
+                refreshes++
+                FRESH_ROOT
+            },
+        )
+        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
+        session.resolve(DIRECT_VARIANT) { route, uri ->
+            if (uri == FRESH_ROOT) {
+                throw IOException("replacement failed")
+            }
+            payload(adPlaylist(), uri)
+        }
+        session.resolve(DIRECT_VARIANT) { _, uri -> payload(adPlaylist(), uri) }
+        assertEquals(1, refreshes)
+
+        repeat(16) {
+            session.resolve(DIRECT_VARIANT) { _, uri -> payload(cleanPlaylist(), uri) }
+        }
+        session.resolve(DIRECT_VARIANT) { route, uri ->
+            if (uri == FRESH_ROOT) {
+                throw IOException("replacement failed")
+            }
+            payload(adPlaylist(), uri)
+        }
+
+        assertEquals(2, refreshes)
+    }
+
+    @Test
+    fun adOnDirectReplacementRestoresTheOriginalAssignmentDuringCooldown() {
+        val session = TwitchPlaybackSession(
+            ROOT,
+            proxyCount = 1,
+            freshRootUsherUri = { FRESH_ROOT },
+        )
+        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
+        session.resolve(DIRECT_VARIANT) { route, uri ->
+            when {
+                route == TwitchManifestRoute.Direct && uri == FRESH_ROOT ->
+                    payload(master(DIRECT_REPLACEMENT, "1280x720", "720p60"), uri)
+                route == TwitchManifestRoute.Direct && uri == DIRECT_REPLACEMENT ->
+                    payload(cleanPlaylist(), uri)
+                else -> payload(adPlaylist(), uri)
+            }
+        }
+        val requests = mutableListOf<Pair<TwitchManifestRoute, String>>()
+
+        val result = session.resolve(DIRECT_VARIANT) { route, uri ->
+            requests += route to uri
+            payload(if (uri == DIRECT_REPLACEMENT) adPlaylist() else cleanPlaylist(), uri)
+        }
+
+        assertEquals(DIRECT_VARIANT, result.finalUri)
+        assertEquals(
+            listOf(
+                TwitchManifestRoute.Direct to DIRECT_REPLACEMENT,
+                TwitchManifestRoute.Direct to DIRECT_VARIANT,
+            ),
+            requests,
+        )
+    }
+
+    @Test
+    fun adCooldownIsSharedAcrossRenditions() {
+        var refreshes = 0
+        val session = TwitchPlaybackSession(
+            ROOT,
+            proxyCount = 1,
+            freshRootUsherUri = {
+                refreshes++
+                FRESH_ROOT
+            },
+        )
+        session.resolve(ROOT) { _, uri ->
+            payload(twoVariantMaster(DIRECT_VARIANT, DIRECT_SECOND_VARIANT), uri)
+        }
+        val fetch: (TwitchManifestRoute, String) -> TwitchManifestPayload = { _, uri ->
+            if (uri == FRESH_ROOT) {
+                throw IOException("replacement failed")
+            }
+            payload(adPlaylist(), uri)
+        }
+
+        session.resolve(DIRECT_VARIANT, fetch)
+        session.resolve(DIRECT_SECOND_VARIANT, fetch)
+
+        assertEquals(1, refreshes)
+    }
+
+    @Test
+    fun concurrentAdLoadsReuseTheReplacementAssignment() {
+        val refreshes = AtomicInteger()
+        val session = TwitchPlaybackSession(
+            ROOT,
+            proxyCount = 1,
+            freshRootUsherUri = {
+                refreshes.incrementAndGet()
+                FRESH_ROOT
+            },
+        )
+        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
+        val replacementStarted = CountDownLatch(1)
+        val releaseReplacement = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+        val fetch: (TwitchManifestRoute, String) -> TwitchManifestPayload = { route, uri ->
+            when {
+                route == TwitchManifestRoute.Direct && uri == FRESH_ROOT -> {
+                    replacementStarted.countDown()
+                    assertTrue(releaseReplacement.await(5, TimeUnit.SECONDS))
+                    payload(master(DIRECT_REPLACEMENT, "1280x720", "720p60"), uri)
+                }
+                route == TwitchManifestRoute.Direct && uri == DIRECT_REPLACEMENT ->
+                    payload(cleanPlaylist(), uri)
+                else -> payload(adPlaylist(), uri)
+            }
+        }
+
+        try {
+            val first = executor.submit<TwitchManifestPayload> {
+                session.resolve(DIRECT_VARIANT, fetch)
+            }
+            assertTrue(replacementStarted.await(5, TimeUnit.SECONDS))
+            val second = executor.submit<TwitchManifestPayload> {
+                session.resolve(DIRECT_VARIANT, fetch)
+            }
+            releaseReplacement.countDown()
+
+            assertEquals(DIRECT_REPLACEMENT, first.get(5, TimeUnit.SECONDS).finalUri)
+            assertEquals(DIRECT_REPLACEMENT, second.get(5, TimeUnit.SECONDS).finalUri)
+            assertEquals(1, refreshes.get())
+        } finally {
+            releaseReplacement.countDown()
+            executor.shutdownNow()
+        }
+    }
+
+    private fun sessionWithMaster(): TwitchPlaybackSession {
+        val session = TwitchPlaybackSession(ROOT, proxyCount = 1)
+        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
+        return session
     }
 
     private fun payload(text: String, uri: String) = TwitchManifestPayload(
@@ -563,11 +579,7 @@ class TwitchPlaybackCoordinatorTest {
 
     private fun directMaster() = master(DIRECT_VARIANT, "1280x720", "720p60")
 
-    private fun proxyMaster(
-        resolution: String = "1280x720",
-        stableId: String = "720p60",
-        uri: String = PROXY_VARIANT,
-    ) = master(uri, resolution, stableId)
+    private fun proxyMaster() = master(PROXY_REPLACEMENT, "1280x720", "720p60")
 
     private fun master(uri: String, resolution: String, stableId: String) = """
         #EXTM3U
@@ -583,13 +595,10 @@ class TwitchPlaybackCoordinatorTest {
         $secondUri
     """.trimIndent()
 
-    private fun cleanPlaylist(
-        mediaSequence: Long = 100,
-        discontinuitySequence: Long = 1,
-    ) = """
+    private fun cleanPlaylist(mediaSequence: Long = 100) = """
         #EXTM3U
         #EXT-X-MEDIA-SEQUENCE:$mediaSequence
-        #EXT-X-DISCONTINUITY-SEQUENCE:$discontinuitySequence
+        #EXT-X-DISCONTINUITY-SEQUENCE:1
         #EXTINF:2,
         one.ts
         #EXTINF:2,
@@ -608,10 +617,14 @@ class TwitchPlaybackCoordinatorTest {
 
     private companion object {
         const val ROOT = "https://usher.ttvnw.net/api/v2/channel/hls/test.m3u8?sig=s&token=t"
+        const val FRESH_ROOT =
+            "https://usher.ttvnw.net/api/v2/channel/hls/test.m3u8?sig=fresh&token=fresh"
+        const val SECOND_FRESH_ROOT =
+            "https://usher.ttvnw.net/api/v2/channel/hls/test.m3u8?sig=fresh2&token=fresh2"
         const val DIRECT_VARIANT = "https://video-weaver.direct.test/live.m3u8?token=d"
         const val DIRECT_SECOND_VARIANT = "https://video-weaver.direct.test/low.m3u8?token=d2"
-        const val PROXY_VARIANT = "https://video-weaver.proxy.test/live.m3u8?token=p"
-        const val PROXY_SECOND_VARIANT = "https://video-weaver.proxy.test/low.m3u8?token=p2"
-        const val PROXY_VARIANT_2 = "https://video-weaver.fallback.test/live.m3u8?token=p2"
+        const val DIRECT_REPLACEMENT = "https://video-weaver.direct-new.test/live.m3u8?token=dn"
+        const val PROXY_REPLACEMENT = "https://video-weaver.proxy.test/live.m3u8?token=p"
+        const val UNKNOWN_VARIANT = "https://example.test/untrusted.m3u8"
     }
 }

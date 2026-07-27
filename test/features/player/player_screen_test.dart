@@ -1313,6 +1313,9 @@ class _FakePlayerController implements TwitchPlayerController {
   @override
   Stream<TwitchPlayerEvent> get events => _events.stream;
 
+  @override
+  void dispose() {}
+
   void emit(TwitchPlayerEvent event) => _events.add(event);
 
   @override

@@ -1,98 +1,23 @@
 package com.namecallfilter.flow
 
+import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.LivePlaybackSpeedControl
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 @UnstableApi
 class TwitchLatencyPlaybackSpeedControlTest {
-    private val policy = TwitchLatencySpeedPolicy()
-
     @Test
-    fun catchUpIsBoundedBetweenOneAndOnePointZeroThree() {
-        assertSpeed(1.0f, policy.decide(input(latencyMs = 700L)))
-        assertSpeed(1.03f, policy.decide(input(latencyMs = Long.MAX_VALUE)))
-    }
-
-    @Test
-    fun latencyHysteresisDoesNotToggleAudioSpeedAroundTarget() {
-        assertSpeed(1.03f, policy.decide(input(latencyMs = 1_850L)))
-
-        listOf(1_825L, 1_725L, 1_651L).forEach { latencyMs ->
-            assertSpeed(1.03f, policy.decide(input(latencyMs = latencyMs)))
-        }
-        assertSpeed(1.0f, policy.decide(input(latencyMs = 1_650L)))
-        assertSpeed(1.0f, policy.decide(input(latencyMs = 1_849L)))
-    }
-
-    @Test
-    fun oneCatchUpSpeedAvoidsAudioPipelineChurnAsLatencyChanges() {
-        listOf(1_850L, 2_000L, 2_500L, 3_500L, 8_000L, 2_200L, 1_651L).forEach { latencyMs ->
-            assertSpeed(1.03f, policy.decide(input(latencyMs = latencyMs)))
-        }
-    }
-
-    @Test
-    fun bufferGateHasHysteresisAndKeepsCatchUpArmed() {
-        assertDecision(
-            speed = 1.0f,
-            reason = TwitchLatencySpeedReason.LOW_BUFFER,
-            policy.decide(input(latencyMs = 4_000L, bufferedDurationMs = 249L)),
+    fun freshTranscRReplacesTimelineOffsetAndPreservesBufferedDuration() {
+        val delegates = mutableListOf<RecordingLivePlaybackSpeedControl>()
+        val controller = controller(clockMs = { 10_000L }, delegates = delegates)
+        controller.updateLatencyMeasurement(
+            latencyMs = 9_000L,
+            source = LiveLatencyMeasurementSource.STITCHED_AD_TIMELINE,
         )
-        assertDecision(
-            speed = 1.0f,
-            reason = TwitchLatencySpeedReason.LOW_BUFFER,
-            policy.decide(input(latencyMs = 4_000L, bufferedDurationMs = 999L)),
-        )
-        assertDecision(
-            speed = 1.03f,
-            reason = TwitchLatencySpeedReason.HIGH_LATENCY,
-            policy.decide(input(latencyMs = 4_000L, bufferedDurationMs = 1_000L)),
-        )
-        assertDecision(
-            speed = 1.03f,
-            reason = TwitchLatencySpeedReason.HIGH_LATENCY,
-            policy.decide(input(latencyMs = 4_000L, bufferedDurationMs = 500L)),
-        )
-        assertDecision(
-            speed = 1.0f,
-            reason = TwitchLatencySpeedReason.LOW_BUFFER,
-            policy.decide(input(latencyMs = 4_000L, bufferedDurationMs = 249L)),
-        )
-    }
-
-    @Test
-    fun missingAndStaleMeasurementsNeverChangeSpeed() {
-        listOf(
-            input(latencyMs = null),
-            input(latencyMs = 6_000L, measurementAgeMs = 6_001L),
-        ).forEach { currentInput ->
-            assertSpeed(1.0f, policy.decide(currentInput))
-        }
-    }
-
-    @Test
-    fun media3AdapterIgnoresTimelineOffsetsAndSyntheticTargetOverrides() {
-        val controller = TwitchLatencyPlaybackSpeedControl(
-            realtimeClockMs = { 10_000L },
-            logger = {},
-        )
-        controller.updateLatencyMeasurement(2_000L)
-
-        val nearTimelineOffset = controller.getAdjustedPlaybackSpeed(
-            liveOffsetUs = 500_000L,
-            bufferedDurationUs = 4_000_000L,
-        )
-        val farTimelineOffset = controller.getAdjustedPlaybackSpeed(
-            liveOffsetUs = 50_000_000L,
-            bufferedDurationUs = 4_000_000L,
-        )
-        assertEquals(nearTimelineOffset, farTimelineOffset, 0.0001f)
-
-        controller.setTargetLiveOffsetOverrideUs(50_000_000L)
-        assertEquals(3_000_000L, controller.targetLiveOffsetUs)
-
-        controller.invalidateMeasurementForDiscontinuity("test seek")
         assertSpeed(
             1.0f,
             controller.getAdjustedPlaybackSpeed(
@@ -100,80 +25,169 @@ class TwitchLatencyPlaybackSpeedControlTest {
                 bufferedDurationUs = 4_000_000L,
             ),
         )
-    }
 
-    @Test
-    fun briefRebufferPreservesFreshCorrection() {
-        val controller = TwitchLatencyPlaybackSpeedControl(
-            realtimeClockMs = { 10_000L },
-            logger = {},
+        controller.updateLatencyMeasurement(2_000L)
+        assertSpeed(
+            DELEGATE_SPEED,
+            controller.getAdjustedPlaybackSpeed(
+                liveOffsetUs = 50_000_000L,
+                bufferedDurationUs = 4_000_000L,
+            ),
         )
-        controller.updateLatencyMeasurement(4_000L)
-        assertSpeed(1.03f, adjustedSpeed(controller))
 
-        controller.notifyRebuffer()
-        assertSpeed(1.03f, adjustedSpeed(controller))
+        assertEquals(
+            listOf(AdjustedSpeedCall(liveOffsetUs = 2_000_000L, bufferedDurationUs = 4_000_000L)),
+            delegates.single().adjustedSpeedCalls,
+        )
     }
 
     @Test
-    fun staleGapStopsSpeedWithoutDiscardingCatchUpHysteresis() {
-        val policy = TwitchLatencySpeedPolicy()
-        assertSpeed(1.03f, policy.decide(input(latencyMs = 1_900L)))
+    fun staleTranscRReturnsUnitSpeedWithoutCallingDelegate() {
+        var nowMs = 10_000L
+        val delegates = mutableListOf<RecordingLivePlaybackSpeedControl>()
+        val controller = controller(clockMs = { nowMs }, delegates = delegates)
+        controller.updateLatencyMeasurement(2_000L)
+        nowMs += TwitchLatencyPlaybackSpeedControl.MAX_MEASUREMENT_AGE_MS + 1L
+
         assertSpeed(
             1.0f,
-            policy.decide(input(latencyMs = 1_800L, measurementAgeMs = 6_001L)),
+            controller.getAdjustedPlaybackSpeed(
+                liveOffsetUs = 50_000_000L,
+                bufferedDurationUs = 4_000_000L,
+            ),
         )
+        assertTrue(delegates.single().adjustedSpeedCalls.isEmpty())
+    }
+
+    @Test
+    fun resetRecreatesDelegateAndClearsTranscR() {
+        val delegates = mutableListOf<RecordingLivePlaybackSpeedControl>()
+        val controller = controller(clockMs = { 10_000L }, delegates = delegates)
+        val liveConfiguration = liveConfiguration()
+        controller.setLiveConfiguration(liveConfiguration)
+        controller.updateLatencyMeasurement(2_000L)
+
+        controller.reset()
+
+        assertEquals(2, delegates.size)
+        assertSame(liveConfiguration, delegates.last().receivedLiveConfiguration)
         assertSpeed(
-            1.03f,
-            policy.decide(input(latencyMs = 1_800L, measurementAgeMs = 0L)),
+            1.0f,
+            controller.getAdjustedPlaybackSpeed(
+                liveOffsetUs = 50_000_000L,
+                bufferedDurationUs = 4_000_000L,
+            ),
+        )
+        assertTrue(delegates.last().adjustedSpeedCalls.isEmpty())
+    }
+
+    @Test
+    fun invalidatedTranscRWaitsForFreshMeasurement() {
+        val delegates = mutableListOf<RecordingLivePlaybackSpeedControl>()
+        val controller = controller(clockMs = { 10_000L }, delegates = delegates)
+        controller.updateLatencyMeasurement(2_000L)
+        assertSpeed(DELEGATE_SPEED, adjustedSpeed(controller))
+
+        controller.invalidateMeasurementForDiscontinuity("test seek")
+        assertSpeed(1.0f, adjustedSpeed(controller))
+        assertEquals(1, delegates.single().adjustedSpeedCalls.size)
+
+        controller.updateLatencyMeasurement(2_200L)
+        assertSpeed(DELEGATE_SPEED, adjustedSpeed(controller))
+        assertEquals(
+            AdjustedSpeedCall(liveOffsetUs = 2_200_000L, bufferedDurationUs = 4_000_000L),
+            delegates.single().adjustedSpeedCalls.last(),
         )
     }
 
     @Test
-    fun stitchedAdFallbackUsesTheSameBoundedPolicy() {
-        val controller = TwitchLatencyPlaybackSpeedControl(
-            realtimeClockMs = { 10_000L },
-            logger = {},
-        )
-        controller.updateLatencyMeasurement(
-            latencyMs = 2_000L,
-            source = LiveLatencyMeasurementSource.STITCHED_AD_TIMELINE,
-        )
+    fun forwardsConfigurationAndRebufferButIgnoresTargetOverride() {
+        val delegates = mutableListOf<RecordingLivePlaybackSpeedControl>()
+        val controller = controller(clockMs = { 10_000L }, delegates = delegates)
+        val liveConfiguration = liveConfiguration()
 
-        assertSpeed(1.03f, adjustedSpeed(controller))
+        controller.setLiveConfiguration(liveConfiguration)
+        controller.notifyRebuffer()
+        controller.setTargetLiveOffsetOverrideUs(50_000_000L)
+
+        val delegate = delegates.single()
+        assertSame(liveConfiguration, delegate.receivedLiveConfiguration)
+        assertEquals(1, delegate.rebufferCount)
+        assertTrue(delegate.targetLiveOffsetOverridesUs.isEmpty())
+        assertEquals(DELEGATE_TARGET_LIVE_OFFSET_US, controller.targetLiveOffsetUs)
+        assertEquals(1_650L, liveConfiguration.targetOffsetMs)
+        assertEquals(1.0f, liveConfiguration.minPlaybackSpeed, 0.0001f)
+        assertEquals(1.03f, liveConfiguration.maxPlaybackSpeed, 0.0001f)
+        assertEquals(
+            5_000L,
+            TwitchLatencyPlaybackSpeedControl.MIN_PLAYBACK_SPEED_UPDATE_INTERVAL_MS,
+        )
     }
 
-    private fun input(
-        latencyMs: Long? = 3_000L,
-        measurementAgeMs: Long? = 500L,
-        bufferedDurationMs: Long? = 4_000L,
-    ) = TwitchLatencySpeedInput(
-        latencyMs = latencyMs,
-        measurementAgeMs = measurementAgeMs,
-        bufferedDurationMs = bufferedDurationMs,
+    private fun controller(
+        clockMs: () -> Long,
+        delegates: MutableList<RecordingLivePlaybackSpeedControl>,
+    ) = TwitchLatencyPlaybackSpeedControl(
+        realtimeClockMs = clockMs,
+        logger = {},
+        delegateFactory = {
+            RecordingLivePlaybackSpeedControl().also(delegates::add)
+        },
     )
 
     private fun adjustedSpeed(controller: TwitchLatencyPlaybackSpeedControl): Float =
         controller.getAdjustedPlaybackSpeed(
-            liveOffsetUs = 10_000_000L,
+            liveOffsetUs = 50_000_000L,
             bufferedDurationUs = 4_000_000L,
         )
 
-    private fun assertSpeed(expected: Float, decision: TwitchLatencySpeedDecision) {
-        assertEquals(expected, decision.speed, 0.0001f)
-    }
+    private fun liveConfiguration(): MediaItem.LiveConfiguration =
+        MediaItem.LiveConfiguration.Builder()
+            .setTargetOffsetMs(TwitchLatencyPlaybackSpeedControl.TARGET_LIVE_OFFSET_MS)
+            .setMinPlaybackSpeed(TwitchLatencyPlaybackSpeedControl.MIN_PLAYBACK_SPEED)
+            .setMaxPlaybackSpeed(TwitchLatencyPlaybackSpeedControl.MAX_PLAYBACK_SPEED)
+            .build()
 
     private fun assertSpeed(expected: Float, actual: Float) {
         assertEquals(expected, actual, 0.0001f)
     }
 
-    private fun assertDecision(
-        speed: Float,
-        reason: TwitchLatencySpeedReason,
-        decision: TwitchLatencySpeedDecision,
-    ) {
-        assertEquals(speed, decision.speed, 0.0001f)
-        assertEquals(reason, decision.reason)
-        assertEquals(TwitchLatencySpeedMode.CATCHING_UP, decision.mode)
+    private data class AdjustedSpeedCall(
+        val liveOffsetUs: Long,
+        val bufferedDurationUs: Long,
+    )
+
+    private class RecordingLivePlaybackSpeedControl : LivePlaybackSpeedControl {
+        var receivedLiveConfiguration: MediaItem.LiveConfiguration? = null
+        var rebufferCount = 0
+        val targetLiveOffsetOverridesUs = mutableListOf<Long>()
+        val adjustedSpeedCalls = mutableListOf<AdjustedSpeedCall>()
+
+        override fun setLiveConfiguration(liveConfiguration: MediaItem.LiveConfiguration) {
+            receivedLiveConfiguration = liveConfiguration
+        }
+
+        override fun setTargetLiveOffsetOverrideUs(liveOffsetUs: Long) {
+            targetLiveOffsetOverridesUs += liveOffsetUs
+        }
+
+        override fun notifyRebuffer() {
+            rebufferCount++
+        }
+
+        override fun getAdjustedPlaybackSpeed(
+            liveOffsetUs: Long,
+            bufferedDurationUs: Long,
+        ): Float {
+            adjustedSpeedCalls += AdjustedSpeedCall(liveOffsetUs, bufferedDurationUs)
+            return DELEGATE_SPEED
+        }
+
+        override fun getTargetLiveOffsetUs(): Long = DELEGATE_TARGET_LIVE_OFFSET_US
+    }
+
+    private companion object {
+        const val DELEGATE_SPEED = 1.02f
+        const val DELEGATE_TARGET_LIVE_OFFSET_US = 1_650_000L
     }
 }

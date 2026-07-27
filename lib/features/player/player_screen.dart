@@ -195,9 +195,16 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     _uptimeTimer?.cancel();
     _viewerTimer?.cancel();
     unawaited(_playerEvents?.cancel());
+    _playerController?.dispose();
+    _playerController = null;
     _qualitySettings.dispose();
     unawaited(_queueDisplayMode(widget.displayModeController.restore));
     super.dispose();
+  }
+
+  Future<Uri> _fetchPlaybackUri() {
+    final loader = widget.playbackUriLoader ?? widget.apiCache.fetchLivePlaybackUri;
+    return loader(widget.channel.login);
   }
 
   Future<void> _loadPlaybackUri({bool refresh = false}) async {
@@ -223,16 +230,17 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
 
     try {
       final proxyUrls = await _loadProxyUrls();
-      final loader = widget.playbackUriLoader ?? widget.apiCache.fetchLivePlaybackUri;
-      final uri = await loader(widget.channel.login);
+      final uri = await _fetchPlaybackUri();
       if (!mounted || generation != _loadGeneration) {
         return;
       }
 
       final previousEvents = _playerEvents;
+      final previousController = _playerController;
       _playerEvents = null;
       _playerController = null;
       unawaited(previousEvents?.cancel());
+      previousController?.dispose();
       setState(() {
         _playbackUri = uri;
         _proxyUrls = proxyUrls;
@@ -355,9 +363,11 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     int playbackSessionGeneration,
   ) {
     if (!mounted || playbackSessionGeneration != _playbackSessionGeneration) {
+      controller.dispose();
       return;
     }
     unawaited(_playerEvents?.cancel());
+    _playerController?.dispose();
     _playerController = controller;
     _playerEvents = controller.events.listen(
       _handlePlayerEvent,
@@ -628,6 +638,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       playbackSessionGeneration: playbackSessionGeneration,
       playbackSupported: _playbackSupported,
       playerSurfaceBuilder: widget.playerSurfaceBuilder,
+      playbackUriRefresher: _fetchPlaybackUri,
       onControllerCreated: (controller) => _handleControllerCreated(
         controller,
         playbackSessionGeneration,
@@ -724,6 +735,7 @@ class _PlayerViewport extends StatelessWidget {
     required this.playbackSessionGeneration,
     required this.playbackSupported,
     required this.playerSurfaceBuilder,
+    required this.playbackUriRefresher,
     required this.onControllerCreated,
     required this.isLandscape,
     required this.controlsVisible,
@@ -751,6 +763,7 @@ class _PlayerViewport extends StatelessWidget {
   final int playbackSessionGeneration;
   final bool playbackSupported;
   final PlayerSurfaceBuilder? playerSurfaceBuilder;
+  final Future<Uri> Function() playbackUriRefresher;
   final ValueChanged<TwitchPlayerController> onControllerCreated;
   final bool isLandscape;
   final bool controlsVisible;
@@ -803,6 +816,7 @@ class _PlayerViewport extends StatelessWidget {
               child: playerSurfaceBuilder == null
                   ? Media3PlayerView(
                       uri: uri,
+                      playbackUriRefresher: playbackUriRefresher,
                       proxyUrls: proxyUrls,
                       onControllerCreated: onControllerCreated,
                     )
@@ -919,6 +933,12 @@ class _PlayerViewport extends StatelessWidget {
       ObjectFlagProperty<PlayerSurfaceBuilder?>.has(
         "playerSurfaceBuilder",
         playerSurfaceBuilder,
+      ),
+    );
+    properties.add(
+      ObjectFlagProperty<Future<Uri> Function()>.has(
+        "playbackUriRefresher",
+        playbackUriRefresher,
       ),
     );
     properties.add(
