@@ -1773,6 +1773,30 @@ class _MemoryFlowPreferences implements FlowPreferences {
   List<String> searchHistory = const <String>[];
 
   @override
+  Future<bool> readAdProxyEnabled() async => false;
+
+  @override
+  Future<List<String>> readAdProxyUrls() async => const [];
+
+  @override
+  Future<List<String>> readAdProxyWhitelistedChannels() async => const [];
+
+  @override
+  Future<List<String>> readAdProxySubscriptionChannels() async => const [];
+
+  @override
+  Future<void> saveAdProxyEnabled({required bool enabled}) async {}
+
+  @override
+  Future<void> saveAdProxyUrls(List<String> urls) async {}
+
+  @override
+  Future<void> saveAdProxyWhitelistedChannels(List<String> channels) async {}
+
+  @override
+  Future<void> saveAdProxySubscriptionChannels(List<String> channels) async {}
+
+  @override
   Future<void> clearBrowseSearchHistory() async {
     searchHistory = const <String>[];
   }

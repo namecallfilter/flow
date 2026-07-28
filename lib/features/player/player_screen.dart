@@ -2,12 +2,14 @@ import "dart:async";
 import "dart:math" as math;
 
 import "package:flow/api/twitch_api_cache.dart";
+import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/spacing.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/browse/browse_screen.dart";
 import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/player/media3_player_controller.dart";
 import "package:flow/features/player/media3_player_view.dart";
+import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flow/shared/widgets/avatar_ring.dart";
@@ -63,6 +65,7 @@ class StreamPlayerScreen extends StatefulWidget {
     this.playbackUriLoader,
     this.viewerCountLoader,
     this.playerSurfaceBuilder,
+    this.preferences,
     this.displayModeController = const SystemPlayerDisplayModeController(),
     this.clock = DateTime.now,
   });
@@ -72,6 +75,7 @@ class StreamPlayerScreen extends StatefulWidget {
   final PlaybackUriLoader? playbackUriLoader;
   final ViewerCountLoader? viewerCountLoader;
   final PlayerSurfaceBuilder? playerSurfaceBuilder;
+  final FlowPreferences? preferences;
   final PlayerDisplayModeController displayModeController;
   final DateTime Function() clock;
 
@@ -86,6 +90,7 @@ class StreamPlayerScreen extends StatefulWidget {
     properties.add(
       ObjectFlagProperty<PlaybackUriLoader?>.has("playbackUriLoader", playbackUriLoader),
     );
+    properties.add(DiagnosticsProperty<FlowPreferences?>("preferences", preferences));
     properties.add(
       ObjectFlagProperty<ViewerCountLoader?>.has("viewerCountLoader", viewerCountLoader),
     );
@@ -112,6 +117,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   Timer? _uptimeTimer;
   Timer? _viewerTimer;
   Uri? _playbackUri;
+  List<String> _proxyUrls = const [];
   int? _latencyMs;
   TwitchAdEvent? _activeAd;
   final ValueNotifier<_QualitySettingsState> _qualitySettings = ValueNotifier(
@@ -189,9 +195,16 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     _uptimeTimer?.cancel();
     _viewerTimer?.cancel();
     unawaited(_playerEvents?.cancel());
+    _playerController?.dispose();
+    _playerController = null;
     _qualitySettings.dispose();
     unawaited(_queueDisplayMode(widget.displayModeController.restore));
     super.dispose();
+  }
+
+  Future<Uri> _fetchPlaybackUri() {
+    final loader = widget.playbackUriLoader ?? widget.apiCache.fetchLivePlaybackUri;
+    return loader(widget.channel.login);
   }
 
   Future<void> _loadPlaybackUri({bool refresh = false}) async {
@@ -216,18 +229,21 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     });
 
     try {
-      final loader = widget.playbackUriLoader ?? widget.apiCache.fetchLivePlaybackUri;
-      final uri = await loader(widget.channel.login);
+      final proxyUrls = await _loadProxyUrls();
+      final uri = await _fetchPlaybackUri();
       if (!mounted || generation != _loadGeneration) {
         return;
       }
 
       final previousEvents = _playerEvents;
+      final previousController = _playerController;
       _playerEvents = null;
       _playerController = null;
       unawaited(previousEvents?.cancel());
+      previousController?.dispose();
       setState(() {
         _playbackUri = uri;
+        _proxyUrls = proxyUrls;
         _playbackSessionGeneration++;
       });
     } on Object catch (error) {
@@ -239,6 +255,77 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         _controlsVisible = true;
         _errorMessage = _playerErrorMessage(error);
       });
+    }
+  }
+
+  Future<List<String>> _loadProxyUrls() async {
+    final settingsStore = widget.preferences == null ? AppSettingsScope.maybeOf(context) : null;
+    if (widget.playbackUriLoader != null && widget.preferences == null && settingsStore == null) {
+      return const [];
+    }
+    try {
+      if (settingsStore != null) {
+        if (!settingsStore.isLoaded) {
+          await settingsStore.load();
+        }
+        if (!settingsStore.adProxyEnabled) {
+          return const [];
+        }
+        if (widget.playbackUriLoader == null) {
+          await _syncSubscriptionWhitelist(
+            settingsStore.preferences,
+            settingsStore: settingsStore,
+          );
+        }
+        if (settingsStore.adProxyEffectiveWhitelistedChannels.contains(
+          widget.channel.login.trim().toLowerCase(),
+        )) {
+          return const [];
+        }
+        return settingsStore.adProxyUrls.toList();
+      }
+
+      final preferences = widget.preferences ?? SharedPreferencesFlowPreferences();
+      if (!await preferences.readAdProxyEnabled()) {
+        return const [];
+      }
+      if (widget.playbackUriLoader == null) {
+        await _syncSubscriptionWhitelist(preferences);
+      }
+      final whitelistedChannels = normalizeChannelLogins([
+        ...await preferences.readAdProxyWhitelistedChannels(),
+        ...await preferences.readAdProxySubscriptionChannels(),
+      ]);
+      if (whitelistedChannels.contains(widget.channel.login.trim().toLowerCase())) {
+        return const [];
+      }
+      return preferences.readAdProxyUrls();
+    } on Object {
+      return const [];
+    }
+  }
+
+  Future<void> _syncSubscriptionWhitelist(
+    FlowPreferences preferences, {
+    AppSettingsStore? settingsStore,
+  }) async {
+    try {
+      final login = widget.channel.login.trim().toLowerCase();
+      final isSubscribed = await widget.apiCache.fetchChannelSubscriptionStatus(login);
+      if (settingsStore == null) {
+        await syncSubscriptionWhitelist(
+          preferences,
+          login: login,
+          isSubscribed: isSubscribed,
+        );
+      } else {
+        await settingsStore.syncAdProxySubscriptionChannel(
+          login: login,
+          isSubscribed: isSubscribed,
+        );
+      }
+    } on Object {
+      // Subscription state is optional; playback should still start if it cannot be checked.
     }
   }
 
@@ -276,9 +363,11 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     int playbackSessionGeneration,
   ) {
     if (!mounted || playbackSessionGeneration != _playbackSessionGeneration) {
+      controller.dispose();
       return;
     }
     unawaited(_playerEvents?.cancel());
+    _playerController?.dispose();
     _playerController = controller;
     _playerEvents = controller.events.listen(
       _handlePlayerEvent,
@@ -545,9 +634,11 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     final viewport = _PlayerViewport(
       channel: widget.channel,
       playbackUri: _playbackUri,
+      proxyUrls: _proxyUrls,
       playbackSessionGeneration: playbackSessionGeneration,
       playbackSupported: _playbackSupported,
       playerSurfaceBuilder: widget.playerSurfaceBuilder,
+      playbackUriRefresher: _fetchPlaybackUri,
       onControllerCreated: (controller) => _handleControllerCreated(
         controller,
         playbackSessionGeneration,
@@ -574,7 +665,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
 
     return Scaffold(
       key: ValueKey("player_page_${widget.channel.login}"),
-      backgroundColor: AppColors.darkBackground,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
         top: !isLandscape,
         bottom: false,
@@ -609,13 +700,42 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   }
 }
 
+Future<void> _subscriptionWhitelistUpdateTail = Future<void>.value();
+
+Future<void> syncSubscriptionWhitelist(
+  FlowPreferences preferences, {
+  required String login,
+  required bool isSubscribed,
+}) {
+  final result = _subscriptionWhitelistUpdateTail.then((_) async {
+    final normalized = normalizeChannelLogins([login]);
+    if (normalized.isEmpty) {
+      return;
+    }
+    final normalizedLogin = normalized.single;
+    final channels = await preferences.readAdProxySubscriptionChannels();
+    if (isSubscribed && !channels.contains(normalizedLogin)) {
+      await preferences.saveAdProxySubscriptionChannels([...channels, normalizedLogin]);
+    } else if (!isSubscribed && channels.contains(normalizedLogin)) {
+      await preferences.saveAdProxySubscriptionChannels(channels.toList()..remove(normalizedLogin));
+    }
+  });
+  _subscriptionWhitelistUpdateTail = result.then<void>(
+    (_) {},
+    onError: (Object _, StackTrace _) {},
+  );
+  return result;
+}
+
 class _PlayerViewport extends StatelessWidget {
   const _PlayerViewport({
     required this.channel,
     required this.playbackUri,
+    required this.proxyUrls,
     required this.playbackSessionGeneration,
     required this.playbackSupported,
     required this.playerSurfaceBuilder,
+    required this.playbackUriRefresher,
     required this.onControllerCreated,
     required this.isLandscape,
     required this.controlsVisible,
@@ -639,9 +759,11 @@ class _PlayerViewport extends StatelessWidget {
 
   final StreamChannel channel;
   final Uri? playbackUri;
+  final List<String> proxyUrls;
   final int playbackSessionGeneration;
   final bool playbackSupported;
   final PlayerSurfaceBuilder? playerSurfaceBuilder;
+  final Future<Uri> Function() playbackUriRefresher;
   final ValueChanged<TwitchPlayerController> onControllerCreated;
   final bool isLandscape;
   final bool controlsVisible;
@@ -694,6 +816,8 @@ class _PlayerViewport extends StatelessWidget {
               child: playerSurfaceBuilder == null
                   ? Media3PlayerView(
                       uri: uri,
+                      playbackUriRefresher: playbackUriRefresher,
+                      proxyUrls: proxyUrls,
                       onControllerCreated: onControllerCreated,
                     )
                   : playerSurfaceBuilder!(context, uri, onControllerCreated),
@@ -796,6 +920,7 @@ class _PlayerViewport extends StatelessWidget {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<StreamChannel>("channel", channel));
     properties.add(DiagnosticsProperty<Uri?>("playbackUri", playbackUri));
+    properties.add(IntProperty("proxyUrlCount", proxyUrls.length));
     properties.add(IntProperty("playbackSessionGeneration", playbackSessionGeneration));
     properties.add(
       FlagProperty(
@@ -808,6 +933,12 @@ class _PlayerViewport extends StatelessWidget {
       ObjectFlagProperty<PlayerSurfaceBuilder?>.has(
         "playerSurfaceBuilder",
         playerSurfaceBuilder,
+      ),
+    );
+    properties.add(
+      ObjectFlagProperty<Future<Uri> Function()>.has(
+        "playbackUriRefresher",
+        playbackUriRefresher,
       ),
     );
     properties.add(

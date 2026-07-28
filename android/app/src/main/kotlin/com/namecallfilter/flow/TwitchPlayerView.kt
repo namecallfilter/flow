@@ -23,8 +23,10 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.hls.DefaultHlsDataSourceFactory
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.ui.PlayerView
@@ -32,6 +34,10 @@ import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.platform.PlatformView
+import java.io.IOException
+import java.net.URI
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 
 @UnstableApi
@@ -39,7 +45,8 @@ internal class TwitchPlayerView(
     context: Context,
     messenger: BinaryMessenger,
     viewId: Int,
-    initialUrl: String?,
+    private val initialUrl: String?,
+    private val proxyUrls: List<String>,
 ) : PlatformView {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val playerView = LayoutInflater.from(context).inflate(
@@ -71,6 +78,7 @@ internal class TwitchPlayerView(
     private var latestCorrectionMeasurement: LiveLatencyMeasurement? = null
     private var correctionMeasurementSequence = 0L
     private var lastCorrectionWaitReason: String? = null
+    private var initialized = false
     private var disposed = false
     private val adProgressTicker = object : Runnable {
         override fun run() {
@@ -114,6 +122,7 @@ internal class TwitchPlayerView(
 
         override fun onPlayerError(error: PlaybackException) {
             latestError = error.message ?: "The stream could not be played."
+            Log.e(LOG_TAG, "playback failed", error)
             emitError(latestError!!)
         }
 
@@ -153,10 +162,8 @@ internal class TwitchPlayerView(
         Log.d(
             LOG_TAG,
             "live playback target=${TARGET_LIVE_OFFSET_MS}ms " +
-                "load-control target=" +
-                "${TwitchLatencyPlaybackSpeedControl.LOAD_CONTROL_TARGET_LIVE_OFFSET_MS}ms " +
-                "transc_r speed range=${TwitchLatencySpeedPolicy.MIN_PLAYBACK_SPEED}x-" +
-                "${TwitchLatencySpeedPolicy.MAX_PLAYBACK_SPEED}x",
+                "transc_r speed range=${TwitchLatencyPlaybackSpeedControl.MIN_PLAYBACK_SPEED}x-" +
+                "${TwitchLatencyPlaybackSpeedControl.MAX_PLAYBACK_SPEED}x",
         )
 
         eventChannel.setStreamHandler(
@@ -177,6 +184,14 @@ internal class TwitchPlayerView(
         )
         methodChannel.setMethodCallHandler { call, result ->
             when (call.method) {
+                "initialize" -> {
+                    if (!initialized) {
+                        initialized = true
+                        initialUrl?.takeIf { it.isNotBlank() }?.let(::load)
+                    }
+                    result.success(null)
+                }
+
                 "play" -> {
                     resumeAtLiveEdge()
                     result.success(null)
@@ -203,9 +218,6 @@ internal class TwitchPlayerView(
             }
         }
 
-        if (!initialUrl.isNullOrBlank()) {
-            load(initialUrl)
-        }
         mainHandler.post(adProgressTicker)
     }
 
@@ -230,6 +242,7 @@ internal class TwitchPlayerView(
     }
 
     private fun load(url: String) {
+        val playbackUrl = withDeviceSupportedTwitchCodecs(url)
         val generation = ++sessionGeneration
         liveSpeedControl.reset()
         latencyCorrection.reset()
@@ -288,10 +301,43 @@ internal class TwitchPlayerView(
             }
         }.also(player::addListener)
 
-        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent(USER_AGENT)
-        val dataSourceFactory = DefaultDataSource.Factory(playerView.context, httpDataSourceFactory)
-        val mediaSource = HlsMediaSource.Factory(dataSourceFactory)
+        val proxyClients = if (proxyUrls.isEmpty()) {
+            emptyList()
+        } else {
+            proxyUrls.mapNotNull { proxyUrl ->
+                buildHttpProxyClient(
+                    listOf(proxyUrl),
+                ) { host, proxyType ->
+                    Log.d(LOG_TAG, "ad proxy connection host=$host route=$proxyType")
+                }
+            }
+        }
+        val directDataSourceFactory = DefaultDataSource.Factory(
+            playerView.context,
+            DefaultHttpDataSource.Factory().setUserAgent(USER_AGENT),
+        )
+        val proxyDataSourceFactories = proxyClients.map {
+            DefaultDataSource.Factory(
+                playerView.context,
+                OkHttpDataSource.Factory(it).setUserAgent(USER_AGENT),
+            )
+        }
+        val hlsDataSourceFactory = if (proxyDataSourceFactories.isEmpty()) {
+            DefaultHlsDataSourceFactory(directDataSourceFactory)
+        } else {
+            Log.d(LOG_TAG, "adaptive ad proxy active (${proxyUrls.size} endpoints)")
+            AdaptiveTwitchHlsDataSourceFactory(
+                manifestResolver = TwitchPlaybackCoordinator(
+                    rootUsherUri = playbackUrl,
+                    directFactory = directDataSourceFactory,
+                    proxyFactories = proxyDataSourceFactories,
+                    freshRootUsherUri = ::refreshPlaybackUri,
+                    onEvent = { message -> Log.d(LOG_TAG, "adaptive ad proxy: $message") },
+                ),
+                directFactory = directDataSourceFactory,
+            )
+        }
+        val mediaSource = HlsMediaSource.Factory(hlsDataSourceFactory)
             .setExtractorFactory(TwitchEmsgMetadataBridgeExtractorFactory())
             .setMetadataType(HlsMediaSource.METADATA_TYPE_ID3)
             .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(MINIMUM_LOAD_RETRY_COUNT))
@@ -311,15 +357,15 @@ internal class TwitchPlayerView(
             )
             .createMediaSource(
                 MediaItem.Builder()
-                    .setUri(Uri.parse(url))
+                    .setUri(Uri.parse(playbackUrl))
                     .setMimeType(MimeTypes.APPLICATION_M3U8)
                     .setLiveConfiguration(
                         MediaItem.LiveConfiguration.Builder()
                             .setTargetOffsetMs(TARGET_LIVE_OFFSET_MS)
                             .setMinOffsetMs(MIN_LIVE_OFFSET_MS)
                             .setMaxOffsetMs(MAX_LIVE_OFFSET_MS)
-                            .setMinPlaybackSpeed(TwitchLatencySpeedPolicy.MIN_PLAYBACK_SPEED)
-                            .setMaxPlaybackSpeed(TwitchLatencySpeedPolicy.MAX_PLAYBACK_SPEED)
+                            .setMinPlaybackSpeed(TwitchLatencyPlaybackSpeedControl.MIN_PLAYBACK_SPEED)
+                            .setMaxPlaybackSpeed(TwitchLatencyPlaybackSpeedControl.MAX_PLAYBACK_SPEED)
                             .build(),
                     )
                     .build(),
@@ -328,6 +374,62 @@ internal class TwitchPlayerView(
         player.setMediaSource(mediaSource)
         player.prepare()
         player.play()
+    }
+
+    private fun refreshPlaybackUri(): String {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            throw IOException("Playback URI refresh cannot run on the main thread")
+        }
+        val completed = CountDownLatch(1)
+        var refreshedUrl: String? = null
+        var refreshError: IOException? = null
+        mainHandler.post {
+            if (disposed) {
+                refreshError = IOException("Twitch player was disposed")
+                completed.countDown()
+                return@post
+            }
+            methodChannel.invokeMethod(
+                "refreshPlaybackUri",
+                null,
+                object : MethodChannel.Result {
+                    override fun success(result: Any?) {
+                        val value = result as? String
+                        val uri = value?.let { runCatching { URI(it) }.getOrNull() }
+                        if (
+                            value.isNullOrBlank() ||
+                            uri?.scheme != "https" ||
+                            uri.host.isNullOrBlank()
+                        ) {
+                            refreshError = IOException("Flutter returned an invalid playback URI")
+                        } else {
+                            refreshedUrl = withDeviceSupportedTwitchCodecs(value)
+                        }
+                        completed.countDown()
+                    }
+
+                    override fun error(code: String, message: String?, details: Any?) {
+                        refreshError = IOException(message ?: "Playback URI refresh failed ($code)")
+                        completed.countDown()
+                    }
+
+                    override fun notImplemented() {
+                        refreshError = IOException("Playback URI refresh is unavailable")
+                        completed.countDown()
+                    }
+                },
+            )
+        }
+        try {
+            if (!completed.await(PLAYBACK_URI_REFRESH_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                throw IOException("Playback URI refresh timed out")
+            }
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw IOException("Playback URI refresh was interrupted", error)
+        }
+        refreshError?.let { throw it }
+        return refreshedUrl ?: throw IOException("Playback URI refresh returned no URL")
     }
 
     private fun resumeAtLiveEdge() {
@@ -722,9 +824,8 @@ internal class TwitchPlayerView(
         const val AUTO_QUALITY_ID = "auto"
         // Twitch's promoted prefetch segments distort Media3's calculated live
         // offset. HLS startup, action seeks, and playback speed therefore share
-        // this validated transc_r target. LoadControl receives a separate stable
-        // readiness target from TwitchLatencyPlaybackSpeedControl.
-        const val TARGET_LIVE_OFFSET_MS = TwitchLatencySpeedPolicy.TARGET_LATENCY_MS
+        // this validated transc_r target.
+        const val TARGET_LIVE_OFFSET_MS = TwitchLatencyPlaybackSpeedControl.TARGET_LIVE_OFFSET_MS
         const val MIN_LIVE_OFFSET_MS = 1500L
         const val MAX_LIVE_OFFSET_MS = 3500L
         const val MIN_BUFFER_MS = 6000
@@ -732,6 +833,7 @@ internal class TwitchPlayerView(
         const val BUFFER_FOR_PLAYBACK_MS = 1000
         const val BUFFER_AFTER_REBUFFER_MS = 1500
         const val MINIMUM_LOAD_RETRY_COUNT = 6
+        const val PLAYBACK_URI_REFRESH_TIMEOUT_SECONDS = 15L
         const val AD_PROGRESS_INTERVAL_MS = 500L
         const val EXPIRED_AD_CUE_RETENTION_MS = 30 * 60_000L
         const val PRIMARY_LATENCY_FRESHNESS_MS = 2500L

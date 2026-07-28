@@ -65,6 +65,8 @@ class TwitchPlayerErrorEvent extends TwitchPlayerEvent {
 abstract interface class TwitchPlayerController {
   Stream<TwitchPlayerEvent> get events;
 
+  void dispose();
+
   Future<void> play();
 
   Future<void> pause();
@@ -77,12 +79,22 @@ abstract interface class TwitchPlayerController {
 }
 
 class MethodChannelTwitchPlayerController implements TwitchPlayerController {
-  MethodChannelTwitchPlayerController(int viewId)
-    : _methodChannel = MethodChannel("flow/twitch_player/$viewId"),
-      _eventChannel = EventChannel("flow/twitch_player/$viewId/events");
+  MethodChannelTwitchPlayerController(
+    int viewId, {
+    required Future<Uri> Function() playbackUriRefresher,
+  }) : _methodChannel = MethodChannel("flow/twitch_player/$viewId"),
+       _eventChannel = EventChannel("flow/twitch_player/$viewId/events") {
+    _methodChannel.setMethodCallHandler((call) async {
+      if (call.method != "refreshPlaybackUri") {
+        throw MissingPluginException("Unknown Twitch player method ${call.method}");
+      }
+      return (await playbackUriRefresher()).toString();
+    });
+  }
 
   final MethodChannel _methodChannel;
   final EventChannel _eventChannel;
+  bool _disposed = false;
   late final Stream<TwitchPlayerEvent> _events = _eventChannel
       .receiveBroadcastStream()
       .map(_decodeEvent)
@@ -91,6 +103,18 @@ class MethodChannelTwitchPlayerController implements TwitchPlayerController {
 
   @override
   Stream<TwitchPlayerEvent> get events => _events;
+
+  @override
+  void dispose() {
+    if (_disposed) {
+      return;
+    }
+    _disposed = true;
+    _methodChannel.setMethodCallHandler(null);
+  }
+
+  Future<void> initialize() =>
+      _disposed ? Future<void>.value() : _methodChannel.invokeMethod<void>("initialize");
 
   @override
   Future<void> jumpToLive() => _methodChannel.invokeMethod<void>("jumpToLive");

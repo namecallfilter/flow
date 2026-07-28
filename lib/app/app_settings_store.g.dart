@@ -9,6 +9,15 @@ part of 'app_settings_store.dart';
 // ignore_for_file: non_constant_identifier_names, unnecessary_brace_in_string_interps, unnecessary_lambdas, prefer_expression_function_bodies, lines_longer_than_80_chars, avoid_as, avoid_annotating_with_dynamic, no_leading_underscores_for_local_identifiers
 
 mixin _$AppSettingsStore on AppSettingsStoreBase, Store {
+  Computed<List<String>>? _$adProxyEffectiveWhitelistedChannelsComputed;
+
+  @override
+  List<String> get adProxyEffectiveWhitelistedChannels =>
+      (_$adProxyEffectiveWhitelistedChannelsComputed ??= Computed<List<String>>(
+        () => super.adProxyEffectiveWhitelistedChannels,
+        name: 'AppSettingsStoreBase.adProxyEffectiveWhitelistedChannels',
+      )).value;
+
   late final _$themeModeAtom = Atom(
     name: 'AppSettingsStoreBase.themeMode',
     context: context,
@@ -25,6 +34,86 @@ mixin _$AppSettingsStore on AppSettingsStoreBase, Store {
     _$themeModeAtom.reportWrite(value, super.themeMode, () {
       super.themeMode = value;
     });
+  }
+
+  late final _$adProxyEnabledAtom = Atom(
+    name: 'AppSettingsStoreBase.adProxyEnabled',
+    context: context,
+  );
+
+  @override
+  bool get adProxyEnabled {
+    _$adProxyEnabledAtom.reportRead();
+    return super.adProxyEnabled;
+  }
+
+  @override
+  set adProxyEnabled(bool value) {
+    _$adProxyEnabledAtom.reportWrite(value, super.adProxyEnabled, () {
+      super.adProxyEnabled = value;
+    });
+  }
+
+  late final _$adProxyUrlsAtom = Atom(
+    name: 'AppSettingsStoreBase.adProxyUrls',
+    context: context,
+  );
+
+  @override
+  ObservableList<String> get adProxyUrls {
+    _$adProxyUrlsAtom.reportRead();
+    return super.adProxyUrls;
+  }
+
+  @override
+  set adProxyUrls(ObservableList<String> value) {
+    _$adProxyUrlsAtom.reportWrite(value, super.adProxyUrls, () {
+      super.adProxyUrls = value;
+    });
+  }
+
+  late final _$adProxyWhitelistedChannelsAtom = Atom(
+    name: 'AppSettingsStoreBase.adProxyWhitelistedChannels',
+    context: context,
+  );
+
+  @override
+  ObservableList<String> get adProxyWhitelistedChannels {
+    _$adProxyWhitelistedChannelsAtom.reportRead();
+    return super.adProxyWhitelistedChannels;
+  }
+
+  @override
+  set adProxyWhitelistedChannels(ObservableList<String> value) {
+    _$adProxyWhitelistedChannelsAtom.reportWrite(
+      value,
+      super.adProxyWhitelistedChannels,
+      () {
+        super.adProxyWhitelistedChannels = value;
+      },
+    );
+  }
+
+  late final _$adProxySubscriptionChannelsAtom = Atom(
+    name: 'AppSettingsStoreBase.adProxySubscriptionChannels',
+    context: context,
+  );
+
+  @override
+  ObservableList<String> get adProxySubscriptionChannels {
+    _$adProxySubscriptionChannelsAtom.reportRead();
+    return super.adProxySubscriptionChannels;
+  }
+
+  @override
+  set adProxySubscriptionChannels(ObservableList<String> value) {
+    _$adProxySubscriptionChannelsAtom.reportWrite(
+      value,
+      super.adProxySubscriptionChannels,
+      () {
+        super.adProxySubscriptionChannels = value;
+      },
+    );
   }
 
   late final _$isLoadedAtom = Atom(
@@ -65,11 +154,50 @@ mixin _$AppSettingsStore on AppSettingsStoreBase, Store {
     return _$setThemeModeAsyncAction.run(() => super.setThemeMode(mode));
   }
 
+  late final _$setAdProxyEnabledAsyncAction = AsyncAction(
+    'AppSettingsStoreBase.setAdProxyEnabled',
+    context: context,
+  );
+
+  @override
+  Future<void> setAdProxyEnabled({required bool enabled}) {
+    return _$setAdProxyEnabledAsyncAction.run(
+      () => super.setAdProxyEnabled(enabled: enabled),
+    );
+  }
+
+  late final _$setAdProxyUrlsAsyncAction = AsyncAction(
+    'AppSettingsStoreBase.setAdProxyUrls',
+    context: context,
+  );
+
+  @override
+  Future<void> setAdProxyUrls(List<String> urls) {
+    return _$setAdProxyUrlsAsyncAction.run(() => super.setAdProxyUrls(urls));
+  }
+
+  late final _$setAdProxyWhitelistedChannelsAsyncAction = AsyncAction(
+    'AppSettingsStoreBase.setAdProxyWhitelistedChannels',
+    context: context,
+  );
+
+  @override
+  Future<void> setAdProxyWhitelistedChannels(List<String> channels) {
+    return _$setAdProxyWhitelistedChannelsAsyncAction.run(
+      () => super.setAdProxyWhitelistedChannels(channels),
+    );
+  }
+
   @override
   String toString() {
     return '''
 themeMode: ${themeMode},
-isLoaded: ${isLoaded}
+adProxyEnabled: ${adProxyEnabled},
+adProxyUrls: ${adProxyUrls},
+adProxyWhitelistedChannels: ${adProxyWhitelistedChannels},
+adProxySubscriptionChannels: ${adProxySubscriptionChannels},
+isLoaded: ${isLoaded},
+adProxyEffectiveWhitelistedChannels: ${adProxyEffectiveWhitelistedChannels}
     ''';
   }
 }

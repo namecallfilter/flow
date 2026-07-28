@@ -1,3 +1,5 @@
+import "dart:async";
+
 import "package:flow/features/player/media3_player_controller.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
@@ -7,11 +9,15 @@ import "package:flutter/services.dart";
 class Media3PlayerView extends StatelessWidget {
   const Media3PlayerView({
     required this.uri,
+    required this.playbackUriRefresher,
     required this.onControllerCreated,
     super.key,
+    this.proxyUrls = const [],
   });
 
   final Uri uri;
+  final Future<Uri> Function() playbackUriRefresher;
+  final List<String> proxyUrls;
   final ValueChanged<TwitchPlayerController> onControllerCreated;
 
   static const unsupportedMessage = "Playback is available on Android.";
@@ -36,10 +42,16 @@ class Media3PlayerView extends StatelessWidget {
       viewType: "flow/twitch_player",
       layoutDirection: TextDirection.ltr,
       hitTestBehavior: PlatformViewHitTestBehavior.transparent,
-      creationParams: {"url": uri.toString()},
+      creationParams: {"url": uri.toString(), "proxyUrls": proxyUrls},
       creationParamsCodec: const StandardMessageCodec(),
-      onPlatformViewCreated: (viewId) =>
-          onControllerCreated(MethodChannelTwitchPlayerController(viewId)),
+      onPlatformViewCreated: (viewId) {
+        final controller = MethodChannelTwitchPlayerController(
+          viewId,
+          playbackUriRefresher: playbackUriRefresher,
+        );
+        onControllerCreated(controller);
+        unawaited(controller.initialize());
+      },
     );
   }
 
@@ -47,6 +59,13 @@ class Media3PlayerView extends StatelessWidget {
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<Uri>("uri", uri));
+    properties.add(
+      ObjectFlagProperty<Future<Uri> Function()>.has(
+        "playbackUriRefresher",
+        playbackUriRefresher,
+      ),
+    );
+    properties.add(IntProperty("proxyUrlCount", proxyUrls.length));
     properties.add(
       ObjectFlagProperty<ValueChanged<TwitchPlayerController>>.has(
         "onControllerCreated",

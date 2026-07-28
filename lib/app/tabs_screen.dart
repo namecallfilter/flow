@@ -99,6 +99,8 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> {
   late final _TabNavigatorObserver _followingNavigatorObserver;
   late final _TabNavigatorObserver _browseNavigatorObserver;
   late final _TabNavigatorObserver _settingsNavigatorObserver;
+  LocalHistoryEntry? _tabHistoryEntry;
+  bool _isDisposing = false;
 
   @override
   void initState() {
@@ -122,6 +124,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> {
     _followingNavigatorObserver = _TabNavigatorObserver(_handleTabNavigatorChanged);
     _browseNavigatorObserver = _TabNavigatorObserver(_handleTabNavigatorChanged);
     _settingsNavigatorObserver = _TabNavigatorObserver(_handleTabNavigatorChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _syncTabHistory());
   }
 
   TwitchAuthController _buildDefaultAuthController() {
@@ -149,6 +152,49 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> {
       _visitedRoutes.add(nextRoute);
     });
     _tabsStore.setCurrentRoute(nextRoute);
+    _syncTabHistory();
+  }
+
+  void _syncTabHistory() {
+    if (!mounted || _isDisposing) {
+      return;
+    }
+
+    if (_tabsStore.currentRoute == FlowRoutes.following) {
+      final entry = _tabHistoryEntry;
+      _tabHistoryEntry = null;
+      entry?.remove();
+      return;
+    }
+    if (_tabHistoryEntry != null) {
+      return;
+    }
+    final route = ModalRoute.of(context);
+    if (route == null) {
+      return;
+    }
+
+    late final LocalHistoryEntry entry;
+    entry = LocalHistoryEntry(
+      onRemove: () {
+        if (identical(_tabHistoryEntry, entry)) {
+          _tabHistoryEntry = null;
+        }
+        if (mounted && !_isDisposing && _tabsStore.currentRoute != FlowRoutes.following) {
+          _selectRoute(FlowRoutes.following);
+        }
+      },
+    );
+    _tabHistoryEntry = entry;
+    route.addLocalHistoryEntry(entry);
+  }
+
+  @override
+  void dispose() {
+    _isDisposing = true;
+    _tabHistoryEntry?.remove();
+    _tabHistoryEntry = null;
+    super.dispose();
   }
 
   @override
@@ -157,7 +203,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> {
       extendBody: true,
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: PopScope<void>(
-        canPop: _tabsStore.currentRoute == FlowRoutes.following && !_activeNavigatorCanPop(),
+        canPop: !_activeNavigatorCanPop(),
         onPopInvokedWithResult: (didPop, _) {
           if (didPop) {
             return;
@@ -226,8 +272,13 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> {
 
     return Navigator(
       key: navigatorKey,
-      initialRoute: routeName,
       observers: observers,
+      onGenerateInitialRoutes: (_, _) => [
+        MaterialPageRoute<void>(
+          settings: RouteSettings(name: routeName),
+          builder: rootBuilder,
+        ),
+      ],
       onGenerateRoute: (settings) => MaterialPageRoute<void>(
         settings: settings,
         builder: rootBuilder,
@@ -327,6 +378,34 @@ class _MemoryFlowPreferences implements FlowPreferences {
 
   ThemeMode themeMode;
   List<String> searchHistory = const <String>[];
+  bool adProxyEnabled = false;
+  List<String> adProxyUrls = const [];
+  List<String> adProxyWhitelistedChannels = const [];
+
+  @override
+  Future<bool> readAdProxyEnabled() async => adProxyEnabled;
+
+  @override
+  Future<List<String>> readAdProxyUrls() async => adProxyUrls;
+
+  @override
+  Future<List<String>> readAdProxyWhitelistedChannels() async => adProxyWhitelistedChannels;
+
+  @override
+  Future<List<String>> readAdProxySubscriptionChannels() async => const [];
+
+  @override
+  Future<void> saveAdProxyEnabled({required bool enabled}) async => adProxyEnabled = enabled;
+
+  @override
+  Future<void> saveAdProxyUrls(List<String> urls) async => adProxyUrls = List.of(urls);
+
+  @override
+  Future<void> saveAdProxyWhitelistedChannels(List<String> channels) async =>
+      adProxyWhitelistedChannels = List.of(channels);
+
+  @override
+  Future<void> saveAdProxySubscriptionChannels(List<String> channels) async {}
 
   @override
   Future<void> clearBrowseSearchHistory() async {
