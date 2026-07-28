@@ -3,6 +3,7 @@ import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
+import "package:flow/app/spacing.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/player/player_screen.dart";
@@ -156,9 +157,12 @@ void main() {
     );
   });
 
-  testWidgets("does not open stale preview playback before channel details load", (
-    tester,
-  ) async {
+  testWidgets("shows a skeleton until channel details load", (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 1200);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
     final response = Completer<http.Response>();
     await tester.pumpWidget(
       MaterialApp(
@@ -181,12 +185,88 @@ void main() {
     );
     await tester.pump();
 
-    await tester.tap(find.byKey(const ValueKey("channel_profile_avatar")));
-    await tester.pump();
+    final headerSkeleton = find.byKey(const ValueKey("channel_header_skeleton"));
+    final firstSkeletonRow = find.byKey(const ValueKey("channel_broadcast_skeleton_0"));
+    final secondSkeletonRow = find.byKey(const ValueKey("channel_broadcast_skeleton_1"));
+    final firstSkeletonThumbnail = find.byKey(
+      const ValueKey("channel_broadcast_skeleton_thumbnail_0"),
+    );
+    final firstSkeletonDuration = find.byKey(
+      const ValueKey("channel_broadcast_skeleton_duration_0"),
+    );
+    final firstSkeletonText = find.byKey(
+      const ValueKey("channel_broadcast_skeleton_text_0"),
+    );
+    final headerSkeletonRect = tester.getRect(headerSkeleton);
+    final skeletonThumbnailSize = tester.getSize(firstSkeletonThumbnail);
+    final skeletonRowStride =
+        tester.getTopLeft(secondSkeletonRow).dy - tester.getTopLeft(firstSkeletonRow).dy;
+
+    expect(find.byKey(const ValueKey("channel_skeleton")), findsOneWidget);
+    expect(headerSkeleton, findsOneWidget);
+    expect(find.byKey(const ValueKey("channel_broadcast_skeleton_9")), findsOneWidget);
+    expect(find.byKey(const ValueKey("channel_broadcast_skeleton_10")), findsNothing);
+    expect(headerSkeletonRect.height, 174);
+    expect(tester.getSize(firstSkeletonThumbnail), const Size(132, 74.25));
+    expect(tester.getSize(firstSkeletonDuration), const Size(49, 17));
+    expect(
+      tester.getTopLeft(firstSkeletonDuration).dx - tester.getTopLeft(firstSkeletonThumbnail).dx,
+      6,
+    );
+    expect(
+      tester.getBottomRight(firstSkeletonThumbnail).dy -
+          tester.getBottomRight(firstSkeletonDuration).dy,
+      5,
+    );
+    expect(tester.getSize(firstSkeletonText).height, 82);
+    expect(
+      tester.getTopLeft(firstSkeletonText).dx - tester.getTopRight(firstSkeletonThumbnail).dx,
+      AppSpacing.md,
+    );
+    expect(skeletonRowStride, 94);
+    for (final key in const [
+      "channel_broadcast_skeleton_title_1_0",
+      "channel_broadcast_skeleton_title_2_0",
+      "channel_broadcast_skeleton_metadata_0",
+      "channel_broadcast_skeleton_views_0",
+    ]) {
+      expect(tester.getSize(find.byKey(ValueKey(key))).width, greaterThan(0));
+    }
+    expect(find.byKey(const ValueKey("channel_header_card")), findsNothing);
+    expect(find.byKey(const ValueKey("channel_profile_avatar")), findsNothing);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
     expect(find.byType(StreamPlayerScreen), findsNothing);
 
-    response.complete(_channelDetailsResponse(isLive: false));
+    response.complete(
+      _channelDetailsResponse(
+        isLive: false,
+        videoTitles: const [
+          "A very long broadcast title that wraps onto a second line",
+          "Another long broadcast title that also needs a second line",
+        ],
+      ),
+    );
     await tester.pumpAndSettle();
+
+    final loadedHeader = find.byKey(const ValueKey("channel_header_card"));
+    final firstLoadedRow = find.byKey(const ValueKey("past_broadcast_vod-1"));
+    final secondLoadedRow = find.byKey(const ValueKey("past_broadcast_vod-1-1"));
+    final firstLoadedThumbnail = find.byKey(
+      const ValueKey("past_broadcast_thumbnail_vod-1"),
+    );
+    final firstLoadedText = find.byKey(const ValueKey("past_broadcast_text_vod-1"));
+    final loadedRowStride =
+        tester.getTopLeft(secondLoadedRow).dy - tester.getTopLeft(firstLoadedRow).dy;
+
+    expect(find.byKey(const ValueKey("channel_skeleton")), findsNothing);
+    expect(loadedHeader, findsOneWidget);
+    expect(tester.getRect(loadedHeader).height, closeTo(headerSkeletonRect.height, 4));
+    expect(tester.getSize(firstLoadedThumbnail), skeletonThumbnailSize);
+    expect(
+      tester.getTopLeft(firstLoadedText).dx - tester.getTopRight(firstLoadedThumbnail).dx,
+      AppSpacing.md,
+    );
+    expect(loadedRowStride, closeTo(skeletonRowStride, 4));
   });
 
   testWidgets("does not open the player from an offline channel avatar", (
@@ -293,59 +373,66 @@ void _expectVisibleHeaderGap(
 http.Response _channelDetailsResponse({
   String videoId = "vod-1",
   String videoTitle = "2025 Japan Trip",
+  List<String>? videoTitles,
   String category = "Just Chatting",
   String? nextCursor,
   bool isLive = true,
-}) => http.Response(
-  jsonEncode({
-    "data": {
-      "user": {
-        "id": "creator-1",
-        "login": "jason",
-        "displayName": "Jason",
-        "description": "Hi Im Jason",
-        "profileImageURL": "https://static-cdn.jtvnw.net/creator-1.png",
-        "followers": {"totalCount": 2300000},
-        "stream": isLive
-            ? {
-                "id": "live-1",
-                "createdAt": "2026-07-04T01:00:00Z",
-                "game": {"id": "509658", "displayName": category},
-                "previewImageURL":
-                    "https://static-cdn.jtvnw.net/previews-ttv/live_user_jason-320x180.jpg",
-                "viewersCount": 26300,
-                "broadcaster": {
-                  "broadcastSettings": {"title": "Live with chat"},
+}) {
+  final titles = videoTitles ?? [videoTitle];
+
+  return http.Response(
+    jsonEncode({
+      "data": {
+        "user": {
+          "id": "creator-1",
+          "login": "jason",
+          "displayName": "Jason",
+          "description": "Hi Im Jason",
+          "profileImageURL": "https://static-cdn.jtvnw.net/creator-1.png",
+          "followers": {"totalCount": 2300000},
+          "stream": isLive
+              ? {
+                  "id": "live-1",
+                  "createdAt": "2026-07-04T01:00:00Z",
+                  "game": {"id": "509658", "displayName": category},
+                  "previewImageURL":
+                      "https://static-cdn.jtvnw.net/previews-ttv/live_user_jason-320x180.jpg",
+                  "viewersCount": 26300,
+                  "broadcaster": {
+                    "broadcastSettings": {"title": "Live with chat"},
+                  },
+                }
+              : null,
+          "videos": {
+            "edges": [
+              for (var index = 0; index < titles.length; index++)
+                {
+                  "cursor": index == titles.length - 1 ? nextCursor : null,
+                  "node": {
+                    "id": index == 0 ? videoId : "$videoId-$index",
+                    "title": titles[index],
+                    "game": {"id": "509658", "displayName": "Just Chatting"},
+                    "lengthSeconds": 17999,
+                    "previewThumbnailURL":
+                        "https://static-cdn.jtvnw.net/${index == 0 ? videoId : "$videoId-$index"}.jpg",
+                    "publishedAt": DateTime.now()
+                        .subtract(Duration(days: 2 + index, hours: 1))
+                        .toUtc()
+                        .toIso8601String(),
+                    "createdAt": DateTime.now()
+                        .subtract(Duration(days: 2 + index, hours: 2))
+                        .toUtc()
+                        .toIso8601String(),
+                    "viewCount": 91234,
+                  },
                 },
-              }
-            : null,
-        "videos": {
-          "edges": [
-            {
-              "cursor": nextCursor,
-              "node": {
-                "id": videoId,
-                "title": videoTitle,
-                "game": {"id": "509658", "displayName": "Just Chatting"},
-                "lengthSeconds": 17999,
-                "previewThumbnailURL": "https://static-cdn.jtvnw.net/$videoId.jpg",
-                "publishedAt": DateTime.now()
-                    .subtract(const Duration(days: 2, hours: 1))
-                    .toUtc()
-                    .toIso8601String(),
-                "createdAt": DateTime.now()
-                    .subtract(const Duration(days: 2, hours: 2))
-                    .toUtc()
-                    .toIso8601String(),
-                "viewCount": 91234,
-              },
-            },
-          ],
-          "pageInfo": {"hasNextPage": nextCursor != null},
+            ],
+            "pageInfo": {"hasNextPage": nextCursor != null},
+          },
         },
       },
-    },
-  }),
-  200,
-  headers: {"content-type": "application/json"},
-);
+    }),
+    200,
+    headers: {"content-type": "application/json"},
+  );
+}

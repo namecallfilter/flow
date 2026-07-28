@@ -1,4 +1,5 @@
 import "dart:async";
+import "dart:math" as math;
 import "dart:ui";
 
 import "package:flow/api/twitch_api.dart";
@@ -12,6 +13,7 @@ import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flow/shared/widgets/pull_to_refresh.dart";
 import "package:flow/shared/widgets/section_header.dart";
+import "package:flow/shared/widgets/skeleton.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:flutter_mobx/flutter_mobx.dart";
@@ -118,75 +120,325 @@ class _ChannelScreenState extends State<ChannelScreen> {
         backgroundColor: theme.scaffoldBackgroundColor,
         body: SafeArea(
           bottom: false,
-          child: Stack(
-            children: [
-              FlowPullToRefresh(
-                scrollController: _scrollController,
-                onRefresh: _refresh,
-                indicatorStartTop: PageHeaderLayout.backButtonRefreshIndicatorStartTop,
-                indicatorMaxTravel: 52,
-                child: ListView(
-                  controller: _scrollController,
-                  physics: const AlwaysScrollableScrollPhysics(
-                    parent: ClampingScrollPhysics(),
-                  ),
-                  padding: PageHeaderLayout.scrollPadding(
-                    top: PageHeaderLayout.backButtonContentTopPadding,
-                    bottom: bottomScrollPadding,
-                  ),
-                  children: [
-                    if (_store.isInitialLoading) ...[
-                      const LinearProgressIndicator(minHeight: 3),
-                      const SizedBox(height: AppSpacing.lg),
-                    ],
-                    if (_store.errorMessage != null && channel == null)
-                      _StatusMessage(message: _store.errorMessage!)
-                    else ...[
-                      _ChannelHeader(
-                        channel: channel,
-                        initialChannel: widget.initialChannel,
-                        onProfileTap: livePlayerChannel == null
-                            ? null
-                            : () => _openLiveStream(livePlayerChannel),
-                      ),
-                      const SizedBox(height: AppSpacing.xxl),
-                      const SectionHeader(title: "Past broadcasts"),
-                      const SizedBox(height: AppSpacing.sm),
-                      if (channel == null && _store.isLoading)
-                        const SizedBox.shrink()
-                      else if (channel == null || channel.pastBroadcasts.isEmpty)
-                        const _StatusMessage(message: "No past broadcasts.")
+          child: LayoutBuilder(
+            builder: (context, constraints) => Stack(
+              children: [
+                FlowPullToRefresh(
+                  scrollController: _scrollController,
+                  onRefresh: _refresh,
+                  indicatorStartTop: PageHeaderLayout.backButtonRefreshIndicatorStartTop,
+                  indicatorMaxTravel: 52,
+                  child: ListView(
+                    controller: _scrollController,
+                    physics: const AlwaysScrollableScrollPhysics(
+                      parent: ClampingScrollPhysics(),
+                    ),
+                    padding: PageHeaderLayout.scrollPadding(
+                      top: PageHeaderLayout.backButtonContentTopPadding,
+                      bottom: bottomScrollPadding,
+                    ),
+                    children: [
+                      if (_store.isInitialLoading)
+                        _ChannelSkeleton(viewportHeight: constraints.maxHeight)
+                      else if (_store.errorMessage != null && channel == null)
+                        _StatusMessage(message: _store.errorMessage!)
                       else ...[
-                        for (final broadcast in channel.pastBroadcasts)
-                          _PastBroadcastCard(broadcast: broadcast),
-                        if (_store.pastBroadcastsError != null)
-                          _StatusMessage(message: _store.pastBroadcastsError!)
-                        else if (_store.isLoadingPastBroadcasts) ...[
-                          const SizedBox(height: AppSpacing.sm),
-                          const Center(
-                            child: SizedBox.square(
-                              dimension: 22,
-                              child: CircularProgressIndicator(strokeWidth: 2.4),
+                        _ChannelHeader(
+                          channel: channel,
+                          initialChannel: widget.initialChannel,
+                          onProfileTap: livePlayerChannel == null
+                              ? null
+                              : () => _openLiveStream(livePlayerChannel),
+                        ),
+                        const SizedBox(height: AppSpacing.xxl),
+                        const SectionHeader(title: "Past broadcasts"),
+                        const SizedBox(height: AppSpacing.sm),
+                        if (channel == null || channel.pastBroadcasts.isEmpty)
+                          const _StatusMessage(message: "No past broadcasts.")
+                        else ...[
+                          for (final broadcast in channel.pastBroadcasts)
+                            _PastBroadcastCard(broadcast: broadcast),
+                          if (_store.pastBroadcastsError != null)
+                            _StatusMessage(message: _store.pastBroadcastsError!)
+                          else if (_store.isLoadingPastBroadcasts) ...[
+                            const SizedBox(height: AppSpacing.sm),
+                            const Center(
+                              child: SizedBox.square(
+                                dimension: 22,
+                                child: CircularProgressIndicator(strokeWidth: 2.4),
+                              ),
                             ),
-                          ),
+                          ],
                         ],
                       ],
                     ],
-                  ],
+                  ),
                 ),
-              ),
-              const Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: _ChannelTopBar(),
-              ),
-            ],
+                const Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: _ChannelTopBar(),
+                ),
+              ],
+            ),
           ),
         ),
       );
     },
   );
+}
+
+const _channelHeaderSkeletonExtent = 174.0;
+const _pastBroadcastSkeletonExtent = 94.0;
+const _channelSkeletonFixedContentExtent =
+    _channelHeaderSkeletonExtent + AppSpacing.xxl + 32 + AppSpacing.sm;
+
+class _ChannelSkeleton extends StatelessWidget {
+  const _ChannelSkeleton({required this.viewportHeight});
+
+  final double viewportHeight;
+
+  @override
+  Widget build(BuildContext context) {
+    final availableHeight = math.max(
+      0.0,
+      viewportHeight -
+          PageHeaderLayout.backButtonContentTopPadding -
+          _channelSkeletonFixedContentExtent,
+    );
+    final broadcastCount = (availableHeight / _pastBroadcastSkeletonExtent).ceil();
+
+    return SkeletonShimmer(
+      child: Semantics(
+        key: const ValueKey("channel_skeleton"),
+        label: "Loading channel",
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const _ChannelHeaderSkeleton(),
+            const SizedBox(height: AppSpacing.xxl),
+            const SectionHeader(title: "Past broadcasts"),
+            const SizedBox(height: AppSpacing.sm),
+            for (var index = 0; index < broadcastCount; index++)
+              _PastBroadcastSkeleton(index: index),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(DoubleProperty("viewportHeight", viewportHeight));
+  }
+}
+
+class _ChannelHeaderSkeleton extends StatelessWidget {
+  const _ChannelHeaderSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return DecoratedBox(
+      key: const ValueKey("channel_header_skeleton"),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withValues(
+            alpha: theme.brightness == Brightness.dark ? 0.14 : 0.42,
+          ),
+        ),
+      ),
+      child: const Padding(
+        padding: EdgeInsets.all(AppSpacing.lg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                SkeletonBox(
+                  key: ValueKey("channel_header_skeleton_avatar"),
+                  width: 70,
+                  height: 70,
+                  borderRadius: BorderRadius.all(Radius.circular(AppRadius.pill)),
+                ),
+                SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          SkeletonBox(
+                            key: ValueKey("channel_header_skeleton_name"),
+                            width: 132,
+                            height: 20,
+                          ),
+                          SizedBox(width: 6),
+                          SkeletonBox(
+                            key: ValueKey("channel_header_skeleton_verified"),
+                            width: 18,
+                            height: 18,
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: AppSpacing.xs),
+                      SkeletonBox(
+                        key: ValueKey("channel_header_skeleton_status"),
+                        width: 72,
+                        height: 12,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: AppSpacing.lg),
+            SizedBox(
+              height: 22,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: SkeletonBox(
+                  key: ValueKey("channel_header_skeleton_description"),
+                  width: 220,
+                  height: 13,
+                ),
+              ),
+            ),
+            SizedBox(height: AppSpacing.md),
+            SizedBox(
+              height: 22,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: SkeletonBox(
+                  key: ValueKey("channel_header_skeleton_followers"),
+                  width: 104,
+                  height: 14,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PastBroadcastSkeleton extends StatelessWidget {
+  const _PastBroadcastSkeleton({required this.index});
+
+  final int index;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    key: ValueKey("channel_broadcast_skeleton_$index"),
+    padding: const EdgeInsets.only(bottom: AppSpacing.md),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          key: ValueKey("channel_broadcast_skeleton_thumbnail_$index"),
+          width: 132,
+          height: 74.25,
+          child: Stack(
+            children: [
+              const Positioned.fill(child: SkeletonBox(height: 1)),
+              Positioned(
+                left: 6,
+                bottom: 5,
+                child: SkeletonBox(
+                  key: ValueKey("channel_broadcast_skeleton_duration_$index"),
+                  width: 49,
+                  height: 17,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: AppSpacing.md),
+        Expanded(
+          child: SizedBox(
+            key: ValueKey("channel_broadcast_skeleton_text_$index"),
+            height: 82,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _PastBroadcastSkeletonLine(
+                  key: ValueKey("channel_broadcast_skeleton_title_1_$index"),
+                  slotHeight: 22,
+                  widthFactor: 0.96,
+                  barHeight: 14,
+                ),
+                _PastBroadcastSkeletonLine(
+                  key: ValueKey("channel_broadcast_skeleton_title_2_$index"),
+                  slotHeight: 22,
+                  widthFactor: 0.82,
+                  barHeight: 14,
+                ),
+                _PastBroadcastSkeletonLine(
+                  key: ValueKey("channel_broadcast_skeleton_metadata_$index"),
+                  slotHeight: 18,
+                  widthFactor: 0.72,
+                  barHeight: 13,
+                ),
+                const SizedBox(height: 2),
+                _PastBroadcastSkeletonLine(
+                  key: ValueKey("channel_broadcast_skeleton_views_$index"),
+                  slotHeight: 18,
+                  widthFactor: 0.42,
+                  barHeight: 13,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(IntProperty("index", index));
+  }
+}
+
+class _PastBroadcastSkeletonLine extends StatelessWidget {
+  const _PastBroadcastSkeletonLine({
+    required this.slotHeight,
+    required this.widthFactor,
+    required this.barHeight,
+    super.key,
+  });
+
+  final double slotHeight;
+  final double widthFactor;
+  final double barHeight;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: slotHeight,
+    child: Align(
+      alignment: Alignment.centerLeft,
+      child: FractionallySizedBox(
+        widthFactor: widthFactor,
+        child: SkeletonBox(height: barHeight),
+      ),
+    ),
+  );
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(DoubleProperty("slotHeight", slotHeight));
+    properties.add(DoubleProperty("widthFactor", widthFactor));
+    properties.add(DoubleProperty("barHeight", barHeight));
+  }
 }
 
 class _ChannelTopBar extends StatelessWidget {
@@ -537,6 +789,7 @@ class _PastBroadcastCard extends StatelessWidget {
           const SizedBox(width: AppSpacing.md),
           Expanded(
             child: Column(
+              key: ValueKey("past_broadcast_text_${broadcast.id}"),
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(

@@ -85,6 +85,83 @@ void main() {
 
     expect(store.channels.single.displayName, "FastCreator");
   });
+
+  test("invalidates an in-flight search before the next debounce starts", () async {
+    final slowSearch = Completer<http.Response>();
+    final preferences = _MemoryFlowPreferences();
+    final cache = TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+        httpClient: MockClient((request) async {
+          if (request.url.host == "gql.twitch.tv") {
+            final query = _graphQlQuery(request);
+            final variables = _graphQlVariables(request);
+            if (query.contains("FlowSearchChannels")) {
+              return slowSearch.future;
+            }
+            if (query.contains("FlowSearchCategories")) {
+              return _searchCategoriesResponse(const <Map<String, Object?>>[]);
+            }
+            if (query.contains("FlowUsers")) {
+              final ids = (variables["ids"] as List<Object?>?)?.cast<String>() ?? const <String>[];
+              return _jsonResponse({
+                "data": {
+                  "users": [
+                    for (final id in ids) _userJson(id),
+                  ],
+                },
+              });
+            }
+            if (query.contains("FlowTopStreams") || query.contains("FlowGameStreams")) {
+              return _topStreamsResponse(const <Map<String, Object?>>[]);
+            }
+          }
+
+          return http.Response("not found", 404);
+        }),
+      ),
+    );
+    final store =
+        BrowseSearchStore(
+            apiCache: cache,
+            preferences: preferences,
+          )
+          ..channels = const [
+            TwitchSearchChannel(
+              id: "cached-1",
+              broadcasterLogin: "cachedcreator",
+              displayName: "CachedCreator",
+              gameName: "",
+              title: "",
+              isLive: false,
+            ),
+          ];
+
+    final slowFuture = store.search("slow");
+    await Future<void>.delayed(Duration.zero);
+    store.invalidatePendingSearch();
+
+    expect(store.isSearching, isFalse);
+
+    slowSearch.complete(
+      _jsonResponse({
+        "data": {
+          "searchSuggestions": {
+            "edges": [
+              _searchChannelEdge(id: "slow-1", displayName: "SlowCreator"),
+            ],
+            "tracking": null,
+          },
+        },
+      }),
+    );
+    await slowFuture;
+
+    expect(store.channels.single.displayName, "CachedCreator");
+    expect(store.errorMessage, isNull);
+    expect(preferences.searchHistory, isEmpty);
+  });
 }
 
 String _graphQlQuery(http.Request request) {

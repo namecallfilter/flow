@@ -179,6 +179,18 @@ mixin _$BrowseSearchStore on BrowseSearchStoreBase, Store {
   }
 
   @override
+  void invalidatePendingSearch() {
+    final _$actionInfo = _$BrowseSearchStoreBaseActionController.startAction(
+      name: 'BrowseSearchStoreBase.invalidatePendingSearch',
+    );
+    try {
+      return super.invalidatePendingSearch();
+    } finally {
+      _$BrowseSearchStoreBaseActionController.endAction(_$actionInfo);
+    }
+  }
+
+  @override
   String toString() {
     return '''
 query: ${query},

@@ -57,6 +57,13 @@ abstract class BrowseSearchStoreBase with Store {
   }
 
   @action
+  void invalidatePendingSearch() {
+    _searchGeneration++;
+    isSearching = false;
+    errorMessage = null;
+  }
+
+  @action
   Future<void> clearSearchHistory() async {
     searchHistory = const <String>[];
     await preferences.clearBrowseSearchHistory();

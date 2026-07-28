@@ -5,6 +5,7 @@ import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/following/following_screen.dart";
+import "package:flow/features/following/following_store.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
@@ -12,6 +13,114 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  testWidgets("uses skeleton only for the initial Following load", (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 1200);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final initialStore = FollowingStore(authController: _authController(clientId: ""))
+      ..isLoadingFollowing = true;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: FollowingScreen(followingStore: initialStore),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey("following_skeleton")), findsOneWidget);
+    expect(find.byType(StreamCardSkeleton), findsNWidgets(9));
+    final firstStreamSkeleton = find.byKey(const ValueKey("following_stream_skeleton_0"));
+    final thumbnail = find.descendant(
+      of: firstStreamSkeleton,
+      matching: find.byKey(const ValueKey("stream_skeleton_thumbnail")),
+    );
+    final viewers = find.descendant(
+      of: firstStreamSkeleton,
+      matching: find.byKey(const ValueKey("stream_skeleton_viewers")),
+    );
+    final avatar = find.descendant(
+      of: firstStreamSkeleton,
+      matching: find.byKey(const ValueKey("stream_skeleton_avatar")),
+    );
+    final verified = find.descendant(
+      of: firstStreamSkeleton,
+      matching: find.byKey(const ValueKey("stream_skeleton_verified")),
+    );
+    final title = find.descendant(
+      of: firstStreamSkeleton,
+      matching: find.byKey(const ValueKey("stream_skeleton_title")),
+    );
+    final metadata = find.descendant(
+      of: firstStreamSkeleton,
+      matching: find.byKey(const ValueKey("stream_skeleton_metadata")),
+    );
+    final offlineSkeleton = find.byKey(const ValueKey("following_offline_skeleton"));
+    final offlineSkeletonRect = tester.getRect(offlineSkeleton);
+    final scrollPosition = Scrollable.of(tester.element(offlineSkeleton)).position;
+
+    expect(tester.getSize(firstStreamSkeleton).height, 93);
+    expect(tester.getSize(thumbnail), const Size(116, 65.25));
+    expect(tester.getSize(viewers), const Size(49, 17));
+    expect(tester.getTopLeft(viewers).dx - tester.getTopLeft(thumbnail).dx, 6);
+    expect(tester.getBottomRight(thumbnail).dy - tester.getBottomRight(viewers).dy, 3);
+    expect(tester.getSize(avatar), const Size(28, 28));
+    expect(tester.getSize(verified), const Size(14, 14));
+    expect(tester.getSize(title).height, 17);
+    expect(tester.getSize(metadata), const Size(104, 15));
+    expect(tester.getTopLeft(title).dy - tester.getBottomLeft(avatar).dy, 6);
+    expect(tester.getTopLeft(metadata).dy - tester.getBottomLeft(title).dy, 5);
+    expect(offlineSkeletonRect.height, 72);
+    expect(scrollPosition.maxScrollExtent, 0);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.text("No followed channels are live now."), findsNothing);
+    expect(find.byKey(const ValueKey("offline_toggle")), findsNothing);
+
+    final refreshStore = FollowingStore(authController: _authController(clientId: ""))
+      ..connection = _connection(
+        followedStreams: const [
+          TwitchFollowedStream(
+            id: "stream-1",
+            userId: "live-1",
+            userLogin: "liveone",
+            userName: "LiveOne",
+            gameName: "Minecraft",
+            title: "Building with chat",
+            viewerCount: 321,
+          ),
+        ],
+        followedChannels: const [
+          TwitchFollowedChannel(
+            broadcasterId: "live-1",
+            broadcasterLogin: "liveone",
+            broadcasterName: "LiveOne",
+          ),
+        ],
+      )
+      ..isLoadingFollowing = true;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: FollowingScreen(
+          key: const ValueKey("refresh_following_screen"),
+          followingStore: refreshStore,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final loadedOfflineCard = find.byKey(const ValueKey("following_offline_card"));
+    final loadedOfflineRect = tester.getRect(loadedOfflineCard);
+    expect(find.byKey(const ValueKey("following_skeleton")), findsNothing);
+    expect(find.text("LiveOne"), findsOneWidget);
+    expect(find.byType(StreamCard), findsOneWidget);
+    expect(loadedOfflineRect.height, offlineSkeletonRect.height);
+    expect(loadedOfflineRect.width, offlineSkeletonRect.width);
+    expect(loadedOfflineRect.left, offlineSkeletonRect.left);
+  });
+
   testWidgets("renders live streams and expands offline channels from auth data", (
     tester,
   ) async {
@@ -183,11 +292,11 @@ Widget _followingScreen({
   ),
 );
 
-TwitchAuthController _authController() => TwitchAuthController(
-  config: const TwitchAuthConfig(clientId: "client-123"),
+TwitchAuthController _authController({String clientId = "client-123"}) => TwitchAuthController(
+  config: TwitchAuthConfig(clientId: clientId),
   secureStore: _MemoryTwitchStore(),
   apiClientFactory: (accessToken, {gqlAccessToken}) => TwitchApiClient(
-    clientId: "client-123",
+    clientId: clientId,
     accessToken: accessToken,
     gqlAccessToken: gqlAccessToken,
   ),

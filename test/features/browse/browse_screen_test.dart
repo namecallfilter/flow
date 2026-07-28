@@ -1,17 +1,22 @@
+import "dart:async";
 import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
+import "package:flow/app/spacing.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/browse/browse_screen.dart";
+import "package:flow/features/browse/browse_search_store.dart";
 import "package:flow/features/browse/browse_store.dart";
 import "package:flow/features/browse/category_streams_store.dart";
 import "package:flow/features/following/following_screen.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
+import "package:flow/shared/widgets/avatar_ring.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
+import "package:flow/shared/widgets/skeleton.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:http/http.dart" as http;
@@ -20,6 +25,328 @@ import "package:http/testing.dart";
 typedef _RequestObserver = void Function(http.Request request);
 
 void main() {
+  testWidgets("shows category skeleton until initial Browse content loads", (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 1200);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+      ),
+    );
+    final store = BrowseStore(apiCache: apiCache)..isLoadingCategories = true;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: BrowseScreen(apiCache: apiCache, browseStore: store),
+      ),
+    );
+    await tester.pump();
+
+    final categorySkeleton = find.byKey(const ValueKey("browse_categories_skeleton"));
+    final categorySkeletonBoxes = find.descendant(
+      of: categorySkeleton,
+      matching: find.byType(SkeletonBox),
+    );
+    expect(categorySkeleton, findsOneWidget);
+    expect(categorySkeletonBoxes, findsNWidgets(54));
+    expect(tester.getBottomLeft(categorySkeletonBoxes.at(53)).dy, greaterThanOrEqualTo(1200));
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.text("No categories found."), findsNothing);
+
+    store
+      ..categories = const [
+        BrowseCategory(
+          id: "category-1",
+          name: "Just Chatting",
+          viewerCount: 1,
+          viewers: "1",
+          imageUrl: null,
+          colors: [Colors.purple, Colors.pink],
+        ),
+      ]
+      ..categoriesLoaded = true
+      ..isLoadingCategories = false;
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey("browse_categories_skeleton")), findsNothing);
+    expect(find.byKey(const ValueKey("browse_category_card_Just Chatting")), findsOneWidget);
+  });
+
+  testWidgets("matches stream skeleton geometry in Browse Live Channels", (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 1200);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+      ),
+    );
+    final store = BrowseStore(apiCache: apiCache)
+      ..categoriesLoaded = true
+      ..selectedSection = BrowseSection.liveChannels
+      ..isLoadingLiveChannels = true;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: BrowseScreen(apiCache: apiCache, browseStore: store),
+      ),
+    );
+    await tester.pump();
+
+    final liveSkeleton = find.byKey(const ValueKey("browse_live_channels_skeleton"));
+    final firstCard = find
+        .descendant(
+          of: liveSkeleton,
+          matching: find.byType(StreamCardSkeleton),
+        )
+        .first;
+    final thumbnail = find.descendant(
+      of: firstCard,
+      matching: find.byKey(const ValueKey("stream_skeleton_thumbnail")),
+    );
+    final viewers = find.descendant(
+      of: firstCard,
+      matching: find.byKey(const ValueKey("stream_skeleton_viewers")),
+    );
+    final avatar = find.descendant(
+      of: firstCard,
+      matching: find.byKey(const ValueKey("stream_skeleton_avatar")),
+    );
+    final verified = find.descendant(
+      of: firstCard,
+      matching: find.byKey(const ValueKey("stream_skeleton_verified")),
+    );
+    final title = find.descendant(
+      of: firstCard,
+      matching: find.byKey(const ValueKey("stream_skeleton_title")),
+    );
+    final metadata = find.descendant(
+      of: firstCard,
+      matching: find.byKey(const ValueKey("stream_skeleton_metadata")),
+    );
+
+    expect(liveSkeleton, findsOneWidget);
+    expect(tester.getSize(firstCard).height, 93);
+    expect(tester.getSize(thumbnail), const Size(116, 65.25));
+    expect(tester.getSize(viewers), const Size(49, 17));
+    expect(tester.getSize(avatar), const Size(28, 28));
+    expect(tester.getSize(verified), const Size(14, 14));
+    expect(tester.getSize(title).height, 17);
+    expect(tester.getSize(metadata), const Size(104, 15));
+  });
+
+  testWidgets("shows skeletons for category streams and search results", (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 1200);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+      ),
+    );
+    const category = BrowseCategory(
+      id: "category-1",
+      name: "Just Chatting",
+      viewerCount: 1,
+      viewers: "1",
+      imageUrl: null,
+      colors: [Colors.purple, Colors.pink],
+    );
+    final categoryStore = CategoryStreamsStore(apiCache: apiCache, category: category)
+      ..isLoading = true;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: CategoryStreamsScreen(
+          apiCache: apiCache,
+          category: category,
+          categoryStreamsStore: categoryStore,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey("category_streams_skeleton")), findsOneWidget);
+    expect(find.byType(StreamCardSkeleton), findsNWidgets(13));
+    expect(
+      tester.getBottomLeft(find.byType(StreamCardSkeleton).at(12)).dy,
+      greaterThanOrEqualTo(1200),
+    );
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.text("No live channels streaming Just Chatting."), findsNothing);
+
+    final searchStore =
+        BrowseSearchStore(
+            apiCache: apiCache,
+            preferences: _MemorySearchHistoryStore(),
+          )
+          ..query = "flow"
+          ..isSearching = true;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: BrowseSearchScreen(
+          authController: _authController(),
+          apiCache: apiCache,
+          preferences: searchStore.preferences,
+          searchStore: searchStore,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final channelsHeader = find.byKey(
+      const ValueKey("browse_search_channels_skeleton_header"),
+    );
+    final categoriesHeader = find.byKey(
+      const ValueKey("browse_search_categories_skeleton_header"),
+    );
+    final firstChannelRow = find.byKey(const ValueKey("browse_search_channel_skeleton_0"));
+    final secondChannelRow = find.byKey(const ValueKey("browse_search_channel_skeleton_1"));
+    final firstCategoryRow = find.byKey(const ValueKey("browse_search_category_skeleton_0"));
+    final secondCategoryRow = find.byKey(const ValueKey("browse_search_category_skeleton_1"));
+    final channelAvatar = find.descendant(
+      of: firstChannelRow,
+      matching: find.byWidgetPredicate(
+        (widget) => widget is SkeletonBox && widget.width == 42 && widget.height == 42,
+      ),
+    );
+    final channelTitle = find.descendant(
+      of: firstChannelRow,
+      matching: find.byWidgetPredicate(
+        (widget) => widget is SkeletonBox && widget.height == 16,
+      ),
+    );
+    final categoryThumbnail = find.descendant(
+      of: firstCategoryRow,
+      matching: find.byWidgetPredicate(
+        (widget) => widget is SkeletonBox && widget.height == 1,
+      ),
+    );
+    final categoryTitle = find.descendant(
+      of: firstCategoryRow,
+      matching: find.byWidgetPredicate(
+        (widget) => widget is SkeletonBox && widget.height == 16,
+      ),
+    );
+
+    expect(find.byKey(const ValueKey("browse_search_skeleton")), findsOneWidget);
+    expect(find.byKey(const ValueKey("browse_search_channel_skeleton_6")), findsOneWidget);
+    expect(find.byKey(const ValueKey("browse_search_channel_skeleton_7")), findsNothing);
+    expect(find.byKey(const ValueKey("browse_search_category_skeleton_3")), findsOneWidget);
+    expect(find.byKey(const ValueKey("browse_search_category_skeleton_4")), findsNothing);
+    expect(tester.getSize(channelsHeader).height, 35);
+    expect(tester.getSize(categoriesHeader).height, 35);
+    expect(
+      tester.getSize(find.descendant(of: channelsHeader, matching: find.byType(SkeletonBox))),
+      const Size(68, 14),
+    );
+    expect(
+      tester.getSize(find.descendant(of: categoriesHeader, matching: find.byType(SkeletonBox))),
+      const Size(82, 14),
+    );
+    expect(tester.getSize(firstChannelRow).height, 72);
+    expect(tester.getTopLeft(secondChannelRow).dy - tester.getTopLeft(firstChannelRow).dy, 72);
+    expect(tester.getSize(channelAvatar), const Size(42, 42));
+    expect(
+      tester.getTopLeft(channelTitle).dx - tester.getTopRight(channelAvatar).dx,
+      closeTo(AppSpacing.lg, 0.1),
+    );
+    expect(tester.getSize(firstCategoryRow).height, 144);
+    expect(tester.getTopLeft(secondCategoryRow).dy - tester.getTopLeft(firstCategoryRow).dy, 144);
+    expect(tester.getSize(categoryThumbnail), const Size(96, 128));
+    expect(
+      tester.getTopLeft(categoryTitle).dx - tester.getTopRight(categoryThumbnail).dx,
+      closeTo(AppSpacing.md, 0.1),
+    );
+    expect(
+      tester.getBottomLeft(find.byKey(const ValueKey("browse_search_category_skeleton_3"))).dy,
+      greaterThanOrEqualTo(1200),
+    );
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.text("No matching channels."), findsNothing);
+  });
+
+  testWidgets("shows search skeleton immediately during debounce", (tester) async {
+    final requestedRequests = <http.Request>[];
+    final response = Completer<http.Response>();
+    final preferences = _MemorySearchHistoryStore();
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+        httpClient: MockClient((request) {
+          requestedRequests.add(request);
+          return response.future;
+        }),
+      ),
+    );
+    final searchStore =
+        BrowseSearchStore(
+            apiCache: apiCache,
+            preferences: preferences,
+          )
+          ..query = "old"
+          ..channels = const [
+            TwitchSearchChannel(
+              id: "old-1",
+              broadcasterLogin: "oldcreator",
+              displayName: "OldCreator",
+              gameName: "",
+              title: "",
+              isLive: false,
+            ),
+          ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: BrowseSearchScreen(
+          authController: _authController(),
+          apiCache: apiCache,
+          preferences: preferences,
+          searchStore: searchStore,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey("browse_search_channel_OldCreator")), findsOneWidget);
+
+    await tester.enterText(
+      find.byKey(const ValueKey("browse_search_page_field")),
+      "new",
+    );
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey("browse_search_skeleton")), findsOneWidget);
+    expect(find.byKey(const ValueKey("browse_search_channel_OldCreator")), findsNothing);
+    expect(requestedRequests, isEmpty);
+
+    await tester.pump(const Duration(milliseconds: 299));
+    expect(requestedRequests, isEmpty);
+
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump();
+    expect(requestedRequests, isNotEmpty);
+
+    response.complete(http.Response("{}", 500));
+    await tester.pumpAndSettle();
+  });
+
   testWidgets("opens live channels for a tapped category", (tester) async {
     final requestedRequests = <http.Request>[];
 
@@ -195,8 +522,10 @@ void main() {
     tester,
   ) async {
     final requestedRequests = <http.Request>[];
-    await tester.binding.setSurfaceSize(const Size(390, 1200));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 1200);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -352,6 +681,13 @@ void main() {
 
     expect(find.byKey(const ValueKey("browse_search_channels_header")), findsOneWidget);
     expect(find.byKey(const ValueKey("browse_search_categories_header")), findsOneWidget);
+    final offlineAvatar = tester.widget<AvatarRing>(
+      find.descendant(
+        of: find.byKey(const ValueKey("browse_search_channel_avatar_MinecraftCreator")),
+        matching: find.byType(AvatarRing),
+      ),
+    );
+    expect(offlineAvatar.statusColor, isNull);
 
     final highChannelTop = tester.getTopLeft(
       find.byKey(const ValueKey("browse_search_channel_HighCreator")),
