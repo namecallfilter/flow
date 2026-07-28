@@ -8,6 +8,7 @@ import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/widgets/avatar_ring.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
+import "package:flow/shared/widgets/skeleton.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:http/http.dart" as http;
@@ -156,9 +157,12 @@ void main() {
     );
   });
 
-  testWidgets("does not open stale preview playback before channel details load", (
-    tester,
-  ) async {
+  testWidgets("shows a skeleton until channel details load", (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 1200);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
     final response = Completer<http.Response>();
     await tester.pumpWidget(
       MaterialApp(
@@ -181,12 +185,26 @@ void main() {
     );
     await tester.pump();
 
-    await tester.tap(find.byKey(const ValueKey("channel_profile_avatar")));
-    await tester.pump();
+    final broadcastSkeletons = find.byWidgetPredicate(
+      (widget) => widget is SkeletonBox && widget.width == 132 && widget.height == 74.25,
+    );
+    expect(find.byKey(const ValueKey("channel_skeleton")), findsOneWidget);
+    expect(find.byKey(const ValueKey("channel_header_skeleton")), findsOneWidget);
+    expect(broadcastSkeletons, findsNWidgets(11));
+    expect(
+      tester.getBottomLeft(broadcastSkeletons.at(10)).dy,
+      greaterThanOrEqualTo(1200),
+    );
+    expect(find.byKey(const ValueKey("channel_header_card")), findsNothing);
+    expect(find.byKey(const ValueKey("channel_profile_avatar")), findsNothing);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
     expect(find.byType(StreamPlayerScreen), findsNothing);
 
     response.complete(_channelDetailsResponse(isLive: false));
     await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey("channel_skeleton")), findsNothing);
+    expect(find.byKey(const ValueKey("channel_header_card")), findsOneWidget);
   });
 
   testWidgets("does not open the player from an offline channel avatar", (

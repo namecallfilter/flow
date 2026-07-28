@@ -5,6 +5,7 @@ import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/following/following_screen.dart";
+import "package:flow/features/following/following_store.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
@@ -12,6 +13,70 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  testWidgets("uses skeleton only for the initial Following load", (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 1200);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final initialStore = FollowingStore(authController: _authController(clientId: ""))
+      ..isLoadingFollowing = true;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: FollowingScreen(followingStore: initialStore),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey("following_skeleton")), findsOneWidget);
+    expect(find.byType(StreamCardSkeleton), findsNWidgets(11));
+    final offlineSkeleton = find.byKey(const ValueKey("following_offline_skeleton"));
+    expect(offlineSkeleton, findsOneWidget);
+    expect(tester.getBottomLeft(offlineSkeleton).dy, greaterThanOrEqualTo(1200));
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.text("No followed channels are live now."), findsNothing);
+    expect(find.byKey(const ValueKey("offline_toggle")), findsNothing);
+
+    final refreshStore = FollowingStore(authController: _authController(clientId: ""))
+      ..connection = _connection(
+        followedStreams: const [
+          TwitchFollowedStream(
+            id: "stream-1",
+            userId: "live-1",
+            userLogin: "liveone",
+            userName: "LiveOne",
+            gameName: "Minecraft",
+            title: "Building with chat",
+            viewerCount: 321,
+          ),
+        ],
+        followedChannels: const [
+          TwitchFollowedChannel(
+            broadcasterId: "live-1",
+            broadcasterLogin: "liveone",
+            broadcasterName: "LiveOne",
+          ),
+        ],
+      )
+      ..isLoadingFollowing = true;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: FollowingScreen(
+          key: const ValueKey("refresh_following_screen"),
+          followingStore: refreshStore,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey("following_skeleton")), findsNothing);
+    expect(find.text("LiveOne"), findsOneWidget);
+    expect(find.byType(StreamCard), findsOneWidget);
+  });
+
   testWidgets("renders live streams and expands offline channels from auth data", (
     tester,
   ) async {
@@ -183,11 +248,11 @@ Widget _followingScreen({
   ),
 );
 
-TwitchAuthController _authController() => TwitchAuthController(
-  config: const TwitchAuthConfig(clientId: "client-123"),
+TwitchAuthController _authController({String clientId = "client-123"}) => TwitchAuthController(
+  config: TwitchAuthConfig(clientId: clientId),
   secureStore: _MemoryTwitchStore(),
   apiClientFactory: (accessToken, {gqlAccessToken}) => TwitchApiClient(
-    clientId: "client-123",
+    clientId: clientId,
     accessToken: accessToken,
     gqlAccessToken: gqlAccessToken,
   ),

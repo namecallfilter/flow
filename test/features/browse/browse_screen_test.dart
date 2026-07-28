@@ -5,6 +5,7 @@ import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/browse/browse_screen.dart";
+import "package:flow/features/browse/browse_search_store.dart";
 import "package:flow/features/browse/browse_store.dart";
 import "package:flow/features/browse/category_streams_store.dart";
 import "package:flow/features/following/following_screen.dart";
@@ -12,6 +13,7 @@ import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
+import "package:flow/shared/widgets/skeleton.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:http/http.dart" as http;
@@ -20,6 +22,135 @@ import "package:http/testing.dart";
 typedef _RequestObserver = void Function(http.Request request);
 
 void main() {
+  testWidgets("shows category skeleton until initial Browse content loads", (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 1200);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+      ),
+    );
+    final store = BrowseStore(apiCache: apiCache)..isLoadingCategories = true;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: BrowseScreen(apiCache: apiCache, browseStore: store),
+      ),
+    );
+    await tester.pump();
+
+    final categorySkeleton = find.byKey(const ValueKey("browse_categories_skeleton"));
+    final categorySkeletonBoxes = find.descendant(
+      of: categorySkeleton,
+      matching: find.byType(SkeletonBox),
+    );
+    expect(categorySkeleton, findsOneWidget);
+    expect(categorySkeletonBoxes, findsNWidgets(54));
+    expect(tester.getBottomLeft(categorySkeletonBoxes.at(53)).dy, greaterThanOrEqualTo(1200));
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.text("No categories found."), findsNothing);
+
+    store
+      ..categories = const [
+        BrowseCategory(
+          id: "category-1",
+          name: "Just Chatting",
+          viewerCount: 1,
+          viewers: "1",
+          imageUrl: null,
+          colors: [Colors.purple, Colors.pink],
+        ),
+      ]
+      ..categoriesLoaded = true
+      ..isLoadingCategories = false;
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey("browse_categories_skeleton")), findsNothing);
+    expect(find.byKey(const ValueKey("browse_category_card_Just Chatting")), findsOneWidget);
+  });
+
+  testWidgets("shows skeletons for category streams and search results", (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 1200);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+      ),
+    );
+    const category = BrowseCategory(
+      id: "category-1",
+      name: "Just Chatting",
+      viewerCount: 1,
+      viewers: "1",
+      imageUrl: null,
+      colors: [Colors.purple, Colors.pink],
+    );
+    final categoryStore = CategoryStreamsStore(apiCache: apiCache, category: category)
+      ..isLoading = true;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: CategoryStreamsScreen(
+          apiCache: apiCache,
+          category: category,
+          categoryStreamsStore: categoryStore,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey("category_streams_skeleton")), findsOneWidget);
+    expect(find.byType(StreamCardSkeleton), findsNWidgets(13));
+    expect(
+      tester.getBottomLeft(find.byType(StreamCardSkeleton).at(12)).dy,
+      greaterThanOrEqualTo(1200),
+    );
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.text("No live channels streaming Just Chatting."), findsNothing);
+
+    final searchStore =
+        BrowseSearchStore(
+            apiCache: apiCache,
+            preferences: _MemorySearchHistoryStore(),
+          )
+          ..query = "flow"
+          ..isSearching = true;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: BrowseSearchScreen(
+          authController: _authController(),
+          apiCache: apiCache,
+          preferences: searchStore.preferences,
+          searchStore: searchStore,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final searchCategorySkeletons = find.byWidgetPredicate(
+      (widget) => widget is SkeletonBox && widget.width == 48 && widget.height == 64,
+    );
+    expect(find.byKey(const ValueKey("browse_search_skeleton")), findsOneWidget);
+    expect(searchCategorySkeletons, findsNWidgets(13));
+    expect(
+      tester.getBottomLeft(searchCategorySkeletons.at(12)).dy,
+      greaterThanOrEqualTo(1200),
+    );
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(find.text("No matching channels."), findsNothing);
+  });
+
   testWidgets("opens live channels for a tapped category", (tester) async {
     final requestedRequests = <http.Request>[];
 
@@ -195,8 +326,10 @@ void main() {
     tester,
   ) async {
     final requestedRequests = <http.Request>[];
-    await tester.binding.setSurfaceSize(const Size(390, 1200));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 1200);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
 
     await tester.pumpWidget(
       MaterialApp(

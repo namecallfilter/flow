@@ -1,4 +1,5 @@
 import "dart:async";
+import "dart:math" as math;
 import "dart:ui";
 
 import "package:flow/api/twitch_api.dart";
@@ -20,6 +21,7 @@ import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flow/shared/widgets/page_header_title.dart";
 import "package:flow/shared/widgets/pull_to_refresh.dart";
 import "package:flow/shared/widgets/section_header.dart";
+import "package:flow/shared/widgets/skeleton.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:flutter_mobx/flutter_mobx.dart";
@@ -220,32 +222,32 @@ class _FollowingScreenState extends State<FollowingScreen> {
                     bottom: bottomScrollPadding,
                   ),
                   children: [
-                    if (_store.isLoadingFollowing) ...[
-                      const LinearProgressIndicator(minHeight: 3),
-                      const SizedBox(height: AppSpacing.lg),
+                    if (_store.isLoadingFollowing && _store.connection == null)
+                      const _FollowingSkeleton()
+                    else ...[
+                      if (_store.followingError != null) ...[
+                        _StatusBanner(message: _store.followingError!),
+                        const SizedBox(height: AppSpacing.lg),
+                      ],
+                      if (showLiveEmptyState)
+                        const _EmptyState(
+                          message: "No followed channels are live now.",
+                        )
+                      else
+                        for (final channel in liveChannels)
+                          StreamCard(
+                            channel: channel,
+                            onChannelSelected: _openLiveChannel,
+                            onStreamSelected: _openPlayer,
+                          ),
+                      const SizedBox(height: AppSpacing.sm),
+                      _OfflineCard(
+                        channels: offlineChannels,
+                        expanded: offlineExpanded,
+                        onToggle: _store.toggleOfflineExpanded,
+                        onChannelSelected: _openOfflineChannel,
+                      ),
                     ],
-                    if (_store.followingError != null) ...[
-                      _StatusBanner(message: _store.followingError!),
-                      const SizedBox(height: AppSpacing.lg),
-                    ],
-                    if (showLiveEmptyState)
-                      const _EmptyState(
-                        message: "No followed channels are live now.",
-                      )
-                    else
-                      for (final channel in liveChannels)
-                        StreamCard(
-                          channel: channel,
-                          onChannelSelected: _openLiveChannel,
-                          onStreamSelected: _openPlayer,
-                        ),
-                    const SizedBox(height: AppSpacing.sm),
-                    _OfflineCard(
-                      channels: offlineChannels,
-                      expanded: offlineExpanded,
-                      onToggle: _store.toggleOfflineExpanded,
-                      onChannelSelected: _openOfflineChannel,
-                    ),
                   ],
                 ),
               ),
@@ -267,6 +269,89 @@ class _FollowingScreenState extends State<FollowingScreen> {
       );
     },
   );
+}
+
+class _FollowingSkeleton extends StatelessWidget {
+  const _FollowingSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    const streamCardExtent = 93.0;
+    const offlineCardExtent = 118.0;
+    const fixedExtent =
+        PageHeaderLayout.largeTitleContentTopPadding + AppSpacing.sm + offlineCardExtent;
+    final streamCount = math.max(
+      3,
+      ((MediaQuery.sizeOf(context).height - fixedExtent) / streamCardExtent).ceil(),
+    );
+
+    return SkeletonShimmer(
+      child: Semantics(
+        key: const ValueKey("following_skeleton"),
+        label: "Loading following channels",
+        child: Column(
+          children: [
+            for (var index = 0; index < streamCount; index++) const StreamCardSkeleton(),
+            const SizedBox(height: AppSpacing.sm),
+            const _OfflineCardSkeleton(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _OfflineCardSkeleton extends StatelessWidget {
+  const _OfflineCardSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    return DecoratedBox(
+      key: const ValueKey("following_offline_skeleton"),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withValues(
+            alpha: isDark ? 0.14 : 0.42,
+          ),
+        ),
+      ),
+      child: const Padding(
+        padding: EdgeInsets.fromLTRB(18, 14, 18, 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SkeletonBox(width: 82, height: 16),
+            SizedBox(height: AppSpacing.lg),
+            Row(
+              children: [
+                SkeletonBox(
+                  width: 54,
+                  height: 54,
+                  borderRadius: BorderRadius.all(Radius.circular(AppRadius.pill)),
+                ),
+                SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SkeletonBox(height: 14),
+                      SizedBox(height: AppSpacing.sm),
+                      SkeletonBox(width: 140, height: 11),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _FrostedTopBar extends StatelessWidget {
@@ -529,6 +614,80 @@ class StreamCard extends StatelessWidget {
       ObjectFlagProperty<ValueChanged<StreamChannel>?>.has(
         "onStreamSelected",
         onStreamSelected,
+      ),
+    );
+  }
+}
+
+class StreamCardSkeleton extends StatelessWidget {
+  const StreamCardSkeleton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final borderRadius = BorderRadius.circular(12);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 7),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          borderRadius: borderRadius,
+          border: Border.all(
+            color: theme.colorScheme.outlineVariant.withValues(
+              alpha: isDark ? 0.14 : 0.34,
+            ),
+            width: 0.8,
+          ),
+        ),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 86),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 350;
+                final thumbnailWidth = compact ? 116.0 : 124.0;
+
+                return Row(
+                  children: [
+                    SkeletonBox(
+                      width: thumbnailWidth,
+                      height: thumbnailWidth * 9 / 16,
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              SkeletonBox(
+                                width: 28,
+                                height: 28,
+                                borderRadius: BorderRadius.all(
+                                  Radius.circular(AppRadius.pill),
+                                ),
+                              ),
+                              SizedBox(width: 8),
+                              Expanded(child: SkeletonBox(height: 14)),
+                            ],
+                          ),
+                          SizedBox(height: 7),
+                          SkeletonBox(height: 12),
+                          SizedBox(height: 6),
+                          SkeletonBox(width: 104, height: 11),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
       ),
     );
   }

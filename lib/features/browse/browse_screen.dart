@@ -1,4 +1,5 @@
 import "dart:async";
+import "dart:math" as math;
 import "dart:ui";
 
 import "package:flow/api/twitch_api.dart";
@@ -21,6 +22,7 @@ import "package:flow/shared/widgets/avatar_ring.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flow/shared/widgets/page_header_title.dart";
 import "package:flow/shared/widgets/pull_to_refresh.dart";
+import "package:flow/shared/widgets/skeleton.dart";
 import "package:flutter/cupertino.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
@@ -269,11 +271,15 @@ class _BrowseScreenState extends State<BrowseScreen> {
                       onSectionSelected: _selectSection,
                     ),
                     const SizedBox(height: AppSpacing.md),
-                    if (_store.activeLoading && _store.activeItemsEmpty) ...[
-                      const LinearProgressIndicator(minHeight: 3),
-                      const SizedBox(height: AppSpacing.md),
-                    ],
-                    if (_store.activeError != null)
+                    if (_store.activeLoading && _store.activeItemsEmpty)
+                      switch (_store.selectedSection) {
+                        BrowseSection.categories => const _CategoryGridSkeleton(),
+                        BrowseSection.liveChannels => const _StreamListSkeleton(
+                          key: ValueKey("browse_live_channels_skeleton"),
+                          semanticLabel: "Loading live channels",
+                        ),
+                      }
+                    else if (_store.activeError != null)
                       _StatusMessage(message: _store.activeError!)
                     else if (_store.selectedSection == BrowseSection.categories)
                       _CategoryGrid(
@@ -446,7 +452,6 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
                 child: _SearchPageTopBar(
                   controller: _searchController,
                   focusNode: _focusNode,
-                  isSearching: _store.isSearching,
                   onChanged: _handleQueryChanged,
                   onClear: _clearSearch,
                 ),
@@ -519,14 +524,12 @@ class _SearchPageTopBar extends StatelessWidget {
   const _SearchPageTopBar({
     required this.controller,
     required this.focusNode,
-    required this.isSearching,
     required this.onChanged,
     required this.onClear,
   });
 
   final TextEditingController controller;
   final FocusNode focusNode;
-  final bool isSearching;
   final ValueChanged<String> onChanged;
   final VoidCallback onClear;
 
@@ -558,58 +561,52 @@ class _SearchPageTopBar extends StatelessWidget {
               ),
             ),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.sm,
-                  AppSpacing.md,
-                  AppSpacing.lg,
-                  AppSpacing.md,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.sm,
+              AppSpacing.md,
+              AppSpacing.lg,
+              AppSpacing.md,
+            ),
+            child: Row(
+              children: [
+                SizedBox.square(
+                  dimension: PageHeaderLayout.searchFieldHeight,
+                  child: IconButton(
+                    tooltip: "Back",
+                    onPressed: Navigator.of(context).pop,
+                    icon: Icon(Icons.adaptive.arrow_back),
+                  ),
                 ),
-                child: Row(
-                  children: [
-                    SizedBox.square(
-                      dimension: PageHeaderLayout.searchFieldHeight,
-                      child: IconButton(
-                        tooltip: "Back",
-                        onPressed: Navigator.of(context).pop,
-                        icon: Icon(Icons.adaptive.arrow_back),
+                const SizedBox(width: AppSpacing.xs),
+                Expanded(
+                  child: SizedBox(
+                    height: PageHeaderLayout.searchFieldHeight,
+                    child: TextField(
+                      key: const ValueKey("browse_search_page_field"),
+                      controller: controller,
+                      focusNode: focusNode,
+                      autocorrect: false,
+                      textAlignVertical: TextAlignVertical.center,
+                      textInputAction: TextInputAction.search,
+                      onChanged: onChanged,
+                      decoration: InputDecoration(
+                        hintText: "Search channels or categories",
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: controller.text.isEmpty
+                            ? null
+                            : IconButton(
+                                key: const ValueKey("browse_search_clear_button"),
+                                tooltip: "Clear search",
+                                onPressed: onClear,
+                                icon: const Icon(Icons.close),
+                              ),
                       ),
                     ),
-                    const SizedBox(width: AppSpacing.xs),
-                    Expanded(
-                      child: SizedBox(
-                        height: PageHeaderLayout.searchFieldHeight,
-                        child: TextField(
-                          key: const ValueKey("browse_search_page_field"),
-                          controller: controller,
-                          focusNode: focusNode,
-                          autocorrect: false,
-                          textAlignVertical: TextAlignVertical.center,
-                          textInputAction: TextInputAction.search,
-                          onChanged: onChanged,
-                          decoration: InputDecoration(
-                            hintText: "Search channels or categories",
-                            prefixIcon: const Icon(Icons.search),
-                            suffixIcon: controller.text.isEmpty
-                                ? null
-                                : IconButton(
-                                    key: const ValueKey("browse_search_clear_button"),
-                                    tooltip: "Clear search",
-                                    onPressed: onClear,
-                                    icon: const Icon(Icons.close),
-                                  ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-              if (isSearching) const LinearProgressIndicator(minHeight: 3),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -621,7 +618,6 @@ class _SearchPageTopBar extends StatelessWidget {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<TextEditingController>("controller", controller));
     properties.add(DiagnosticsProperty<FocusNode>("focusNode", focusNode));
-    properties.add(DiagnosticsProperty<bool>("isSearching", isSearching));
     properties.add(ObjectFlagProperty<ValueChanged<String>>.has("onChanged", onChanged));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onClear", onClear));
   }
@@ -738,6 +734,121 @@ class _SearchHistoryView extends StatelessWidget {
   }
 }
 
+class _SearchResultsSkeleton extends StatelessWidget {
+  const _SearchResultsSkeleton({required this.topPadding});
+
+  final double topPadding;
+
+  @override
+  Widget build(BuildContext context) {
+    const fixedResultsExtent = 222.0;
+    const categoryRowExtent = 72.0;
+    final viewportHeight = MediaQuery.sizeOf(context).height;
+    final availableCategoryHeight = math.max(
+      0.0,
+      viewportHeight - topPadding - fixedResultsExtent,
+    );
+    final categoryCount = math.max(
+      2,
+      (availableCategoryHeight / categoryRowExtent).ceil(),
+    );
+
+    return SkeletonShimmer(
+      child: Semantics(
+        key: const ValueKey("browse_search_skeleton"),
+        label: "Loading search results",
+        child: ListView(
+          padding: EdgeInsets.only(
+            top: topPadding,
+            left: AppSpacing.lg,
+            right: AppSpacing.lg,
+            bottom: 96 + MediaQuery.of(context).padding.bottom,
+          ),
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(top: AppSpacing.sm, bottom: AppSpacing.sm),
+              child: SkeletonBox(width: 76, height: 14),
+            ),
+            const _SearchRowSkeleton(
+              leadingWidth: 42,
+              leadingHeight: 42,
+              circular: true,
+            ),
+            const _SearchRowSkeleton(
+              leadingWidth: 42,
+              leadingHeight: 42,
+              circular: true,
+            ),
+            const _SearchRowSkeleton(
+              leadingWidth: 42,
+              leadingHeight: 42,
+              circular: true,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            const Padding(
+              padding: EdgeInsets.only(top: AppSpacing.sm, bottom: AppSpacing.sm),
+              child: SkeletonBox(width: 88, height: 14),
+            ),
+            for (var index = 0; index < categoryCount; index++)
+              const _SearchRowSkeleton(leadingWidth: 48, leadingHeight: 64),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(DoubleProperty("topPadding", topPadding));
+  }
+}
+
+class _SearchRowSkeleton extends StatelessWidget {
+  const _SearchRowSkeleton({
+    required this.leadingWidth,
+    required this.leadingHeight,
+    this.circular = false,
+  });
+
+  final double leadingWidth;
+  final double leadingHeight;
+  final bool circular;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+    child: Row(
+      children: [
+        SkeletonBox(
+          width: leadingWidth,
+          height: leadingHeight,
+          borderRadius: BorderRadius.circular(circular ? AppRadius.pill : AppRadius.sm),
+        ),
+        const SizedBox(width: AppSpacing.md),
+        const Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SkeletonBox(height: 14),
+              SizedBox(height: AppSpacing.sm),
+              SkeletonBox(width: 132, height: 11),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(DoubleProperty("leadingWidth", leadingWidth));
+    properties.add(DoubleProperty("leadingHeight", leadingHeight));
+    properties.add(DiagnosticsProperty<bool>("circular", circular));
+  }
+}
+
 class _SearchResults extends StatelessWidget {
   const _SearchResults({
     required this.channels,
@@ -761,6 +872,10 @@ class _SearchResults extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (isSearching) {
+      return _SearchResultsSkeleton(topPadding: topPadding);
+    }
+
     final error = errorMessage;
     if (error != null) {
       return Padding(
@@ -768,7 +883,7 @@ class _SearchResults extends StatelessWidget {
         child: _StatusMessage(message: error),
       );
     }
-    if (channels.isEmpty && categories.isEmpty && !isSearching) {
+    if (channels.isEmpty && categories.isEmpty) {
       return Padding(
         padding: EdgeInsets.only(top: topPadding),
         child: const _StatusMessage(message: "No matching channels."),
@@ -1165,13 +1280,14 @@ class _CategoryStreamsScreenState extends State<CategoryStreamsScreen> {
                     bottom: bottomScrollPadding,
                   ),
                   children: [
-                    if (_store.isLoading && _store.channels.isEmpty) ...[
-                      const LinearProgressIndicator(minHeight: 3),
-                      const SizedBox(height: AppSpacing.md),
-                    ],
-                    if (_store.errorMessage != null)
+                    if (_store.isLoading && _store.channels.isEmpty)
+                      const _StreamListSkeleton(
+                        key: ValueKey("category_streams_skeleton"),
+                        semanticLabel: "Loading category streams",
+                      )
+                    else if (_store.errorMessage != null)
                       _StatusMessage(message: _store.errorMessage!)
-                    else if (_store.channels.isEmpty && !_store.isLoading)
+                    else if (_store.channels.isEmpty)
                       _StatusMessage(
                         message: "No live channels streaming ${widget.category.name}.",
                       )
@@ -1509,6 +1625,97 @@ void _openStreamPlayer(
   );
 }
 
+class _StreamListSkeleton extends StatelessWidget {
+  const _StreamListSkeleton({
+    required this.semanticLabel,
+    super.key,
+  });
+
+  final String semanticLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    const streamCardExtent = 93.0;
+    final itemCount = math.max(
+      3,
+      (MediaQuery.sizeOf(context).height / streamCardExtent).ceil(),
+    );
+
+    return SkeletonShimmer(
+      child: Semantics(
+        label: semanticLabel,
+        child: Column(
+          children: [
+            for (var index = 0; index < itemCount; index++) const StreamCardSkeleton(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(StringProperty("semanticLabel", semanticLabel));
+  }
+}
+
+class _CategoryGridSkeleton extends StatelessWidget {
+  const _CategoryGridSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    final rowExtent = _categoryTileExtent(context) + 16;
+    final rowCount = math.max(
+      2,
+      (MediaQuery.sizeOf(context).height / rowExtent).ceil(),
+    );
+
+    return SkeletonShimmer(
+      child: Semantics(
+        key: const ValueKey("browse_categories_skeleton"),
+        label: "Loading categories",
+        child: GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: rowCount * 3,
+          gridDelegate: _categoryGridDelegate(context),
+          itemBuilder: (context, index) => const _CategoryCardSkeleton(),
+        ),
+      ),
+    );
+  }
+}
+
+class _CategoryCardSkeleton extends StatelessWidget {
+  const _CategoryCardSkeleton();
+
+  @override
+  Widget build(BuildContext context) => const Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      AspectRatio(
+        aspectRatio: 3 / 4,
+        child: SkeletonBox(height: 1),
+      ),
+      SizedBox(height: 7),
+      Align(
+        child: FractionallySizedBox(
+          widthFactor: 0.82,
+          child: SkeletonBox(height: 12),
+        ),
+      ),
+      SizedBox(height: 7),
+      Align(
+        child: FractionallySizedBox(
+          widthFactor: 0.58,
+          child: SkeletonBox(height: 10),
+        ),
+      ),
+    ],
+  );
+}
+
 class _CategoryGrid extends StatelessWidget {
   const _CategoryGrid({
     required this.categories,
@@ -1529,12 +1736,7 @@ class _CategoryGrid extends StatelessWidget {
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       itemCount: categories.length,
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 16,
-        mainAxisExtent: _categoryTileExtent(context),
-      ),
+      gridDelegate: _categoryGridDelegate(context),
       itemBuilder: (context, index) => _CategoryCard(
         category: categories[index],
         onTap: () => onCategorySelected(categories[index]),
@@ -1554,6 +1756,14 @@ class _CategoryGrid extends StatelessWidget {
     );
   }
 }
+
+SliverGridDelegateWithFixedCrossAxisCount _categoryGridDelegate(BuildContext context) =>
+    SliverGridDelegateWithFixedCrossAxisCount(
+      crossAxisCount: 3,
+      crossAxisSpacing: 10,
+      mainAxisSpacing: 16,
+      mainAxisExtent: _categoryTileExtent(context),
+    );
 
 double _categoryTileExtent(BuildContext context) {
   final horizontalPadding = MediaQuery.of(context).padding.horizontal + (AppSpacing.lg * 2);
