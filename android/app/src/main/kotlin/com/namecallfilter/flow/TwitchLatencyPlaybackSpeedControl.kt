@@ -62,7 +62,9 @@ internal class TwitchLatencyPlaybackSpeedControl(
     }
 
     @Synchronized
-    override fun notifyRebuffer() = delegate.notifyRebuffer()
+    override fun notifyRebuffer() {
+        // Rebuffering must not move the validated transc_r correction target.
+    }
 
     @Synchronized
     override fun getAdjustedPlaybackSpeed(
@@ -82,7 +84,7 @@ internal class TwitchLatencyPlaybackSpeedControl(
     }
 
     @Synchronized
-    override fun getTargetLiveOffsetUs(): Long = delegate.targetLiveOffsetUs
+    override fun getTargetLiveOffsetUs(): Long = Util.msToUs(LOAD_CONTROL_TARGET_LIVE_OFFSET_MS)
 
     private data class Measurement(
         val latencyMs: Long,
@@ -91,6 +93,8 @@ internal class TwitchLatencyPlaybackSpeedControl(
 
     internal companion object {
         const val TARGET_LIVE_OFFSET_MS = 1_650L
+        // DefaultLoadControl caps readiness at half the reported live target.
+        const val LOAD_CONTROL_TARGET_LIVE_OFFSET_MS = 3_000L
         const val MIN_PLAYBACK_SPEED = 1.0f
         const val MAX_PLAYBACK_SPEED = 1.03f
         const val MIN_PLAYBACK_SPEED_UPDATE_INTERVAL_MS = 5_000L

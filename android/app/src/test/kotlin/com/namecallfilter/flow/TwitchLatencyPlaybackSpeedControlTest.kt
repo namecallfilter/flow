@@ -101,7 +101,7 @@ class TwitchLatencyPlaybackSpeedControlTest {
     }
 
     @Test
-    fun forwardsConfigurationAndRebufferButIgnoresTargetOverride() {
+    fun forwardsConfigurationButKeepsRebufferAndLoadControlTargetsIndependent() {
         val delegates = mutableListOf<RecordingLivePlaybackSpeedControl>()
         val controller = controller(clockMs = { 10_000L }, delegates = delegates)
         val liveConfiguration = liveConfiguration()
@@ -112,9 +112,9 @@ class TwitchLatencyPlaybackSpeedControlTest {
 
         val delegate = delegates.single()
         assertSame(liveConfiguration, delegate.receivedLiveConfiguration)
-        assertEquals(1, delegate.rebufferCount)
+        assertEquals(0, delegate.rebufferCount)
         assertTrue(delegate.targetLiveOffsetOverridesUs.isEmpty())
-        assertEquals(DELEGATE_TARGET_LIVE_OFFSET_US, controller.targetLiveOffsetUs)
+        assertEquals(3_000_000L, controller.targetLiveOffsetUs)
         assertEquals(1_650L, liveConfiguration.targetOffsetMs)
         assertEquals(1.0f, liveConfiguration.minPlaybackSpeed, 0.0001f)
         assertEquals(1.03f, liveConfiguration.maxPlaybackSpeed, 0.0001f)
