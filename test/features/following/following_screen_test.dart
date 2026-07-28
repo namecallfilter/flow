@@ -31,10 +31,49 @@ void main() {
     await tester.pump();
 
     expect(find.byKey(const ValueKey("following_skeleton")), findsOneWidget);
-    expect(find.byType(StreamCardSkeleton), findsNWidgets(11));
+    expect(find.byType(StreamCardSkeleton), findsNWidgets(9));
+    final firstStreamSkeleton = find.byKey(const ValueKey("following_stream_skeleton_0"));
+    final thumbnail = find.descendant(
+      of: firstStreamSkeleton,
+      matching: find.byKey(const ValueKey("stream_skeleton_thumbnail")),
+    );
+    final viewers = find.descendant(
+      of: firstStreamSkeleton,
+      matching: find.byKey(const ValueKey("stream_skeleton_viewers")),
+    );
+    final avatar = find.descendant(
+      of: firstStreamSkeleton,
+      matching: find.byKey(const ValueKey("stream_skeleton_avatar")),
+    );
+    final verified = find.descendant(
+      of: firstStreamSkeleton,
+      matching: find.byKey(const ValueKey("stream_skeleton_verified")),
+    );
+    final title = find.descendant(
+      of: firstStreamSkeleton,
+      matching: find.byKey(const ValueKey("stream_skeleton_title")),
+    );
+    final metadata = find.descendant(
+      of: firstStreamSkeleton,
+      matching: find.byKey(const ValueKey("stream_skeleton_metadata")),
+    );
     final offlineSkeleton = find.byKey(const ValueKey("following_offline_skeleton"));
-    expect(offlineSkeleton, findsOneWidget);
-    expect(tester.getBottomLeft(offlineSkeleton).dy, greaterThanOrEqualTo(1200));
+    final offlineSkeletonRect = tester.getRect(offlineSkeleton);
+    final scrollPosition = Scrollable.of(tester.element(offlineSkeleton)).position;
+
+    expect(tester.getSize(firstStreamSkeleton).height, 93);
+    expect(tester.getSize(thumbnail), const Size(116, 65.25));
+    expect(tester.getSize(viewers), const Size(49, 17));
+    expect(tester.getTopLeft(viewers).dx - tester.getTopLeft(thumbnail).dx, 6);
+    expect(tester.getBottomRight(thumbnail).dy - tester.getBottomRight(viewers).dy, 3);
+    expect(tester.getSize(avatar), const Size(28, 28));
+    expect(tester.getSize(verified), const Size(14, 14));
+    expect(tester.getSize(title).height, 17);
+    expect(tester.getSize(metadata), const Size(104, 15));
+    expect(tester.getTopLeft(title).dy - tester.getBottomLeft(avatar).dy, 6);
+    expect(tester.getTopLeft(metadata).dy - tester.getBottomLeft(title).dy, 5);
+    expect(offlineSkeletonRect.height, 72);
+    expect(scrollPosition.maxScrollExtent, 0);
     expect(find.byType(LinearProgressIndicator), findsNothing);
     expect(find.text("No followed channels are live now."), findsNothing);
     expect(find.byKey(const ValueKey("offline_toggle")), findsNothing);
@@ -72,9 +111,14 @@ void main() {
     );
     await tester.pump();
 
+    final loadedOfflineCard = find.byKey(const ValueKey("following_offline_card"));
+    final loadedOfflineRect = tester.getRect(loadedOfflineCard);
     expect(find.byKey(const ValueKey("following_skeleton")), findsNothing);
     expect(find.text("LiveOne"), findsOneWidget);
     expect(find.byType(StreamCard), findsOneWidget);
+    expect(loadedOfflineRect.height, offlineSkeletonRect.height);
+    expect(loadedOfflineRect.width, offlineSkeletonRect.width);
+    expect(loadedOfflineRect.left, offlineSkeletonRect.left);
   });
 
   testWidgets("renders live streams and expands offline channels from auth data", (

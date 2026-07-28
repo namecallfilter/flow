@@ -352,6 +352,7 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
   final FocusNode _focusNode = FocusNode();
   Timer? _debounceTimer;
   late final BrowseSearchStore _store;
+  bool _isDebouncing = false;
 
   @override
   void initState() {
@@ -387,12 +388,21 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
     _debounceTimer?.cancel();
     final trimmedQuery = query.trim();
     if (trimmedQuery.isEmpty) {
+      setState(() => _isDebouncing = false);
       _store.clearSearch();
       return;
     }
 
+    _store.invalidatePendingSearch();
+    if (!_isDebouncing) {
+      setState(() => _isDebouncing = true);
+    }
     _debounceTimer = Timer(const Duration(milliseconds: 300), () {
-      unawaited(_store.search(trimmedQuery));
+      final search = _store.search(trimmedQuery);
+      if (mounted) {
+        setState(() => _isDebouncing = false);
+      }
+      unawaited(search);
     });
   }
 
@@ -438,7 +448,7 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
                         channels: _store.channels,
                         categories: _store.categories,
                         errorMessage: _store.errorMessage,
-                        isSearching: _store.isSearching,
+                        isSearching: _isDebouncing || _store.isSearching,
                         topPadding: topScrollPadding,
                         onChannelSelected: _openChannel,
                         onStreamSelected: _openPlayer,
@@ -740,62 +750,61 @@ class _SearchResultsSkeleton extends StatelessWidget {
   final double topPadding;
 
   @override
-  Widget build(BuildContext context) {
-    const fixedResultsExtent = 222.0;
-    const categoryRowExtent = 72.0;
-    final viewportHeight = MediaQuery.sizeOf(context).height;
-    final availableCategoryHeight = math.max(
-      0.0,
-      viewportHeight - topPadding - fixedResultsExtent,
-    );
-    final categoryCount = math.max(
-      2,
-      (availableCategoryHeight / categoryRowExtent).ceil(),
-    );
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      const channelCount = 7;
+      const sectionHeaderExtent = 35.0;
+      const channelRowExtent = 72.0;
+      const categoryRowExtent = 144.0;
+      const fixedResultsExtent =
+          sectionHeaderExtent +
+          (channelCount * channelRowExtent) +
+          AppSpacing.md +
+          sectionHeaderExtent;
+      final availableCategoryHeight = math.max(
+        0.0,
+        constraints.maxHeight - topPadding - fixedResultsExtent,
+      );
+      final categoryCount = math.max(
+        1,
+        (availableCategoryHeight / categoryRowExtent).ceil(),
+      );
 
-    return SkeletonShimmer(
-      child: Semantics(
-        key: const ValueKey("browse_search_skeleton"),
-        label: "Loading search results",
-        child: ListView(
-          padding: EdgeInsets.only(
-            top: topPadding,
-            left: AppSpacing.lg,
-            right: AppSpacing.lg,
-            bottom: 96 + MediaQuery.of(context).padding.bottom,
+      return SkeletonShimmer(
+        child: Semantics(
+          key: const ValueKey("browse_search_skeleton"),
+          label: "Loading search results",
+          child: ListView(
+            padding: EdgeInsets.only(
+              top: topPadding,
+              left: AppSpacing.lg,
+              right: AppSpacing.lg,
+              bottom: 96 + MediaQuery.of(context).padding.bottom,
+            ),
+            children: [
+              const _SearchSectionHeaderSkeleton(
+                key: ValueKey("browse_search_channels_skeleton_header"),
+                width: 68,
+              ),
+              for (var index = 0; index < channelCount; index++)
+                _SearchChannelRowSkeleton(
+                  key: ValueKey("browse_search_channel_skeleton_$index"),
+                ),
+              const SizedBox(height: AppSpacing.md),
+              const _SearchSectionHeaderSkeleton(
+                key: ValueKey("browse_search_categories_skeleton_header"),
+                width: 82,
+              ),
+              for (var index = 0; index < categoryCount; index++)
+                _SearchCategoryRowSkeleton(
+                  key: ValueKey("browse_search_category_skeleton_$index"),
+                ),
+            ],
           ),
-          children: [
-            const Padding(
-              padding: EdgeInsets.only(top: AppSpacing.sm, bottom: AppSpacing.sm),
-              child: SkeletonBox(width: 76, height: 14),
-            ),
-            const _SearchRowSkeleton(
-              leadingWidth: 42,
-              leadingHeight: 42,
-              circular: true,
-            ),
-            const _SearchRowSkeleton(
-              leadingWidth: 42,
-              leadingHeight: 42,
-              circular: true,
-            ),
-            const _SearchRowSkeleton(
-              leadingWidth: 42,
-              leadingHeight: 42,
-              circular: true,
-            ),
-            const SizedBox(height: AppSpacing.md),
-            const Padding(
-              padding: EdgeInsets.only(top: AppSpacing.sm, bottom: AppSpacing.sm),
-              child: SkeletonBox(width: 88, height: 14),
-            ),
-            for (var index = 0; index < categoryCount; index++)
-              const _SearchRowSkeleton(leadingWidth: 48, leadingHeight: 64),
-          ],
         ),
-      ),
-    );
-  }
+      );
+    },
+  );
 
   @override
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
@@ -804,49 +813,104 @@ class _SearchResultsSkeleton extends StatelessWidget {
   }
 }
 
-class _SearchRowSkeleton extends StatelessWidget {
-  const _SearchRowSkeleton({
-    required this.leadingWidth,
-    required this.leadingHeight,
-    this.circular = false,
+class _SearchSectionHeaderSkeleton extends StatelessWidget {
+  const _SearchSectionHeaderSkeleton({
+    required this.width,
+    super.key,
   });
 
-  final double leadingWidth;
-  final double leadingHeight;
-  final bool circular;
+  final double width;
 
   @override
   Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-    child: Row(
-      children: [
-        SkeletonBox(
-          width: leadingWidth,
-          height: leadingHeight,
-          borderRadius: BorderRadius.circular(circular ? AppRadius.pill : AppRadius.sm),
-        ),
-        const SizedBox(width: AppSpacing.md),
-        const Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SkeletonBox(height: 14),
-              SizedBox(height: AppSpacing.sm),
-              SkeletonBox(width: 132, height: 11),
-            ],
-          ),
-        ),
-      ],
+    padding: const EdgeInsets.only(top: AppSpacing.sm, bottom: AppSpacing.xs),
+    child: SizedBox(
+      height: 23,
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: SkeletonBox(width: width, height: 14),
+      ),
     ),
   );
 
   @override
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
-    properties.add(DoubleProperty("leadingWidth", leadingWidth));
-    properties.add(DoubleProperty("leadingHeight", leadingHeight));
-    properties.add(DiagnosticsProperty<bool>("circular", circular));
+    properties.add(DoubleProperty("width", width));
   }
+}
+
+class _SearchChannelRowSkeleton extends StatelessWidget {
+  const _SearchChannelRowSkeleton({super.key});
+
+  @override
+  Widget build(BuildContext context) => const SizedBox(
+    height: 72,
+    child: ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: SkeletonBox(
+        width: 42,
+        height: 42,
+        borderRadius: BorderRadius.all(Radius.circular(AppRadius.pill)),
+      ),
+      title: FractionallySizedBox(
+        widthFactor: 0.62,
+        alignment: Alignment.centerLeft,
+        child: SkeletonBox(height: 16),
+      ),
+      subtitle: FractionallySizedBox(
+        widthFactor: 0.34,
+        alignment: Alignment.centerLeft,
+        child: SkeletonBox(height: 13),
+      ),
+    ),
+  );
+}
+
+class _SearchCategoryRowSkeleton extends StatelessWidget {
+  const _SearchCategoryRowSkeleton({super.key});
+
+  @override
+  Widget build(BuildContext context) => const Padding(
+    padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
+    child: Row(
+      children: [
+        SizedBox(
+          width: 96,
+          child: AspectRatio(
+            aspectRatio: 3 / 4,
+            child: SkeletonBox(height: 1),
+          ),
+        ),
+        SizedBox(width: AppSpacing.md),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              FractionallySizedBox(
+                widthFactor: 0.82,
+                alignment: Alignment.centerLeft,
+                child: SkeletonBox(height: 16),
+              ),
+              SizedBox(height: AppSpacing.sm),
+              Row(
+                children: [
+                  SkeletonBox(
+                    width: 7,
+                    height: 7,
+                    borderRadius: BorderRadius.all(Radius.circular(AppRadius.pill)),
+                  ),
+                  SizedBox(width: 5),
+                  SkeletonBox(width: 52, height: 12),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _SearchResults extends StatelessWidget {
@@ -1030,7 +1094,6 @@ class _SearchChannelRow extends StatelessWidget {
           size: 42,
           avatarColors: colorsForText(channel.id),
           imageUrl: channel.thumbnailUrl,
-          statusColor: channel.isLive ? null : mutedColor,
         ),
       ),
       title: Text(

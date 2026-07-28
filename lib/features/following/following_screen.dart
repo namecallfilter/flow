@@ -205,65 +205,67 @@ class _FollowingScreenState extends State<FollowingScreen> {
             widget.bottomNavigationBar ?? const AppBottomNav(currentRoute: FlowRoutes.following),
         body: SafeArea(
           bottom: false,
-          child: Stack(
-            children: [
-              FlowPullToRefresh(
-                scrollController: _scrollController,
-                onRefresh: _refreshFollowing,
-                indicatorStartTop: PageHeaderLayout.largeTitleRefreshIndicatorStartTop,
-                indicatorMaxTravel: 52,
-                child: ListView(
-                  controller: _scrollController,
-                  physics: const AlwaysScrollableScrollPhysics(
-                    parent: ClampingScrollPhysics(),
-                  ),
-                  padding: PageHeaderLayout.scrollPadding(
-                    top: PageHeaderLayout.largeTitleContentTopPadding,
-                    bottom: bottomScrollPadding,
-                  ),
-                  children: [
-                    if (_store.isLoadingFollowing && _store.connection == null)
-                      const _FollowingSkeleton()
-                    else ...[
-                      if (_store.followingError != null) ...[
-                        _StatusBanner(message: _store.followingError!),
-                        const SizedBox(height: AppSpacing.lg),
+          child: LayoutBuilder(
+            builder: (context, constraints) => Stack(
+              children: [
+                FlowPullToRefresh(
+                  scrollController: _scrollController,
+                  onRefresh: _refreshFollowing,
+                  indicatorStartTop: PageHeaderLayout.largeTitleRefreshIndicatorStartTop,
+                  indicatorMaxTravel: 52,
+                  child: ListView(
+                    controller: _scrollController,
+                    physics: const AlwaysScrollableScrollPhysics(
+                      parent: ClampingScrollPhysics(),
+                    ),
+                    padding: PageHeaderLayout.scrollPadding(
+                      top: PageHeaderLayout.largeTitleContentTopPadding,
+                      bottom: bottomScrollPadding,
+                    ),
+                    children: [
+                      if (_store.isLoadingFollowing && _store.connection == null)
+                        _FollowingSkeleton(viewportHeight: constraints.maxHeight)
+                      else ...[
+                        if (_store.followingError != null) ...[
+                          _StatusBanner(message: _store.followingError!),
+                          const SizedBox(height: AppSpacing.lg),
+                        ],
+                        if (showLiveEmptyState)
+                          const _EmptyState(
+                            message: "No followed channels are live now.",
+                          )
+                        else
+                          for (final channel in liveChannels)
+                            StreamCard(
+                              channel: channel,
+                              onChannelSelected: _openLiveChannel,
+                              onStreamSelected: _openPlayer,
+                            ),
+                        const SizedBox(height: AppSpacing.sm),
+                        _OfflineCard(
+                          channels: offlineChannels,
+                          expanded: offlineExpanded,
+                          onToggle: _store.toggleOfflineExpanded,
+                          onChannelSelected: _openOfflineChannel,
+                        ),
                       ],
-                      if (showLiveEmptyState)
-                        const _EmptyState(
-                          message: "No followed channels are live now.",
-                        )
-                      else
-                        for (final channel in liveChannels)
-                          StreamCard(
-                            channel: channel,
-                            onChannelSelected: _openLiveChannel,
-                            onStreamSelected: _openPlayer,
-                          ),
-                      const SizedBox(height: AppSpacing.sm),
-                      _OfflineCard(
-                        channels: offlineChannels,
-                        expanded: offlineExpanded,
-                        onToggle: _store.toggleOfflineExpanded,
-                        onChannelSelected: _openOfflineChannel,
-                      ),
                     ],
-                  ],
-                ),
-              ),
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: _FrostedTopBar(
-                  onProfilePressed: _startTwitchAuth,
-                  profileInitials: initialsForName(
-                    profileUser?.displayName ?? "Me",
                   ),
-                  profileImageUrl: profileUser?.profileImageUrl,
                 ),
-              ),
-            ],
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: _FrostedTopBar(
+                    onProfilePressed: _startTwitchAuth,
+                    profileInitials: initialsForName(
+                      profileUser?.displayName ?? "Me",
+                    ),
+                    profileImageUrl: profileUser?.profileImageUrl,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       );
@@ -271,19 +273,24 @@ class _FollowingScreenState extends State<FollowingScreen> {
   );
 }
 
+const _streamCardExtent = 93.0;
+const _offlineCardExtent = 72.0;
+const _offlineCardPadding = EdgeInsets.fromLTRB(18, 11, 18, 11);
+
 class _FollowingSkeleton extends StatelessWidget {
-  const _FollowingSkeleton();
+  const _FollowingSkeleton({required this.viewportHeight});
+
+  final double viewportHeight;
 
   @override
   Widget build(BuildContext context) {
-    const streamCardExtent = 93.0;
-    const offlineCardExtent = 118.0;
     const fixedExtent =
-        PageHeaderLayout.largeTitleContentTopPadding + AppSpacing.sm + offlineCardExtent;
-    final streamCount = math.max(
-      3,
-      ((MediaQuery.sizeOf(context).height - fixedExtent) / streamCardExtent).ceil(),
-    );
+        PageHeaderLayout.largeTitleContentTopPadding +
+        PageHeaderLayout.bottomNavigationScrollPadding +
+        AppSpacing.sm +
+        _offlineCardExtent;
+    final availableHeight = math.max(0.0, viewportHeight - fixedExtent);
+    final streamCount = (availableHeight / _streamCardExtent).floor();
 
     return SkeletonShimmer(
       child: Semantics(
@@ -291,7 +298,8 @@ class _FollowingSkeleton extends StatelessWidget {
         label: "Loading following channels",
         child: Column(
           children: [
-            for (var index = 0; index < streamCount; index++) const StreamCardSkeleton(),
+            for (var index = 0; index < streamCount; index++)
+              StreamCardSkeleton(key: ValueKey("following_stream_skeleton_$index")),
             const SizedBox(height: AppSpacing.sm),
             const _OfflineCardSkeleton(),
           ],
@@ -299,18 +307,58 @@ class _FollowingSkeleton extends StatelessWidget {
       ),
     );
   }
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(DoubleProperty("viewportHeight", viewportHeight));
+  }
 }
 
 class _OfflineCardSkeleton extends StatelessWidget {
   const _OfflineCardSkeleton();
 
   @override
+  Widget build(BuildContext context) => const _OfflineCardShell(
+    key: ValueKey("following_offline_skeleton"),
+    child: SizedBox(
+      height: 48,
+      child: Row(
+        children: [
+          SkeletonBox(
+            key: ValueKey("following_offline_skeleton_title"),
+            width: 82,
+            height: 18,
+          ),
+          Spacer(),
+          SizedBox.square(
+            dimension: 48,
+            child: Center(
+              child: SkeletonBox(
+                key: ValueKey("following_offline_skeleton_control"),
+                width: 10,
+                height: 18,
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _OfflineCardShell extends StatelessWidget {
+  const _OfflineCardShell({required this.child, super.key});
+
+  final Widget child;
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    return DecoratedBox(
-      key: const ValueKey("following_offline_skeleton"),
+    return Container(
+      padding: _offlineCardPadding,
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
         borderRadius: BorderRadius.circular(AppRadius.lg),
@@ -319,38 +367,22 @@ class _OfflineCardSkeleton extends StatelessWidget {
             alpha: isDark ? 0.14 : 0.42,
           ),
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.05),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+          ),
+        ],
       ),
-      child: const Padding(
-        padding: EdgeInsets.fromLTRB(18, 14, 18, 18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SkeletonBox(width: 82, height: 16),
-            SizedBox(height: AppSpacing.lg),
-            Row(
-              children: [
-                SkeletonBox(
-                  width: 54,
-                  height: 54,
-                  borderRadius: BorderRadius.all(Radius.circular(AppRadius.pill)),
-                ),
-                SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SkeletonBox(height: 14),
-                      SizedBox(height: AppSpacing.sm),
-                      SkeletonBox(width: 140, height: 11),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
+      child: child,
     );
+  }
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(DiagnosticsProperty<Widget>("child", child));
   }
 }
 
@@ -461,6 +493,8 @@ class _TopBarContent extends StatelessWidget {
   }
 }
 
+double _streamThumbnailWidth(double availableWidth) => availableWidth < 350 ? 116 : 124;
+
 class StreamCard extends StatelessWidget {
   const StreamCard({
     required this.channel,
@@ -505,8 +539,7 @@ class StreamCard extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  final compact = constraints.maxWidth < 350;
-                  final thumbnailWidth = compact ? 116.0 : 124.0;
+                  final thumbnailWidth = _streamThumbnailWidth(constraints.maxWidth);
 
                   return Row(
                     key: ValueKey("stream_card_content_row_${channel.name}"),
@@ -647,38 +680,76 @@ class StreamCardSkeleton extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final compact = constraints.maxWidth < 350;
-                final thumbnailWidth = compact ? 116.0 : 124.0;
+                final thumbnailWidth = _streamThumbnailWidth(constraints.maxWidth);
+                final detailsWidth = constraints.maxWidth - thumbnailWidth - 12;
+                final nameWidth = math.min(116.0, math.max(0.0, detailsWidth - 55));
 
                 return Row(
                   children: [
-                    SkeletonBox(
+                    SizedBox(
+                      key: const ValueKey("stream_skeleton_thumbnail"),
                       width: thumbnailWidth,
                       height: thumbnailWidth * 9 / 16,
+                      child: const Stack(
+                        children: [
+                          Positioned.fill(child: SkeletonBox(height: 1)),
+                          Positioned(
+                            left: 6,
+                            bottom: 3,
+                            child: SkeletonBox(
+                              key: ValueKey("stream_skeleton_viewers"),
+                              width: 49,
+                              height: 17,
+                              borderRadius: BorderRadius.all(
+                                Radius.circular(AppRadius.pill),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                     const SizedBox(width: 12),
-                    const Expanded(
+                    Expanded(
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Row(
                             children: [
-                              SkeletonBox(
+                              const SkeletonBox(
+                                key: ValueKey("stream_skeleton_avatar"),
                                 width: 28,
                                 height: 28,
                                 borderRadius: BorderRadius.all(
                                   Radius.circular(AppRadius.pill),
                                 ),
                               ),
-                              SizedBox(width: 8),
-                              Expanded(child: SkeletonBox(height: 14)),
+                              const SizedBox(width: 8),
+                              SkeletonBox(
+                                key: const ValueKey("stream_skeleton_name"),
+                                width: nameWidth,
+                                height: 18,
+                              ),
+                              const SizedBox(width: 5),
+                              const SkeletonBox(
+                                key: ValueKey("stream_skeleton_verified"),
+                                width: 14,
+                                height: 14,
+                              ),
                             ],
                           ),
-                          SizedBox(height: 7),
-                          SkeletonBox(height: 12),
-                          SizedBox(height: 6),
-                          SkeletonBox(width: 104, height: 11),
+                          const SizedBox(height: 6),
+                          SkeletonBox(
+                            key: const ValueKey("stream_skeleton_title"),
+                            width: detailsWidth * 0.92,
+                            height: 17,
+                          ),
+                          const SizedBox(height: 5),
+                          const SkeletonBox(
+                            key: ValueKey("stream_skeleton_metadata"),
+                            width: 104,
+                            height: 15,
+                          ),
                         ],
                       ),
                     ),
@@ -898,67 +969,46 @@ class _OfflineCard extends StatelessWidget {
   final ValueChanged<OfflineChannel> onChannelSelected;
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(18, 11, 18, 11),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(
-          color: theme.colorScheme.outlineVariant.withValues(
-            alpha: isDark ? 0.14 : 0.42,
-          ),
+  Widget build(BuildContext context) => _OfflineCardShell(
+    key: const ValueKey("following_offline_card"),
+    child: Column(
+      children: [
+        SectionHeader(
+          title: "Offline",
+          collapsible: true,
+          expanded: expanded,
+          onToggle: onToggle,
+          toggleKey: const ValueKey("offline_toggle"),
         ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.05),
-            blurRadius: 24,
-            offset: const Offset(0, 12),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          SectionHeader(
-            title: "Offline",
-            collapsible: true,
-            expanded: expanded,
-            onToggle: onToggle,
-            toggleKey: const ValueKey("offline_toggle"),
-          ),
-          AnimatedSize(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOut,
-            child: expanded
-                ? channels.isEmpty
-                      ? const Padding(
-                          padding: EdgeInsets.symmetric(
-                            vertical: AppSpacing.lg,
-                          ),
-                          child: _EmptyState(
-                            message: "No offline followed channels.",
-                          ),
-                        )
-                      : Column(
-                          children: [
-                            const SizedBox(height: AppSpacing.sm),
-                            for (var index = 0; index < channels.length; index++)
-                              OfflineChannelRow(
-                                channel: channels[index],
-                                showDivider: index != channels.length - 1,
-                                onTap: () => onChannelSelected(channels[index]),
-                              ),
-                          ],
-                        )
-                : const SizedBox(width: double.infinity),
-          ),
-        ],
-      ),
-    );
-  }
+        AnimatedSize(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          child: expanded
+              ? channels.isEmpty
+                    ? const Padding(
+                        padding: EdgeInsets.symmetric(
+                          vertical: AppSpacing.lg,
+                        ),
+                        child: _EmptyState(
+                          message: "No offline followed channels.",
+                        ),
+                      )
+                    : Column(
+                        children: [
+                          const SizedBox(height: AppSpacing.sm),
+                          for (var index = 0; index < channels.length; index++)
+                            OfflineChannelRow(
+                              channel: channels[index],
+                              showDivider: index != channels.length - 1,
+                              onTap: () => onChannelSelected(channels[index]),
+                            ),
+                        ],
+                      )
+              : const SizedBox(width: double.infinity),
+        ),
+      ],
+    ),
+  );
 
   @override
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
