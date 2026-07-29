@@ -165,6 +165,61 @@ class TwitchPlaybackCoordinatorTest {
     }
 
     @Test
+    fun finiteMediaPlaylistIsRejectedForLivePlayback() {
+        val session = sessionWithMaster()
+
+        assertThrows(IOException::class.java) {
+            session.resolve(DIRECT_VARIANT) { _, uri ->
+                payload(cleanPlaylist() + "\n#EXT-X-ENDLIST", uri)
+            }
+        }
+    }
+
+    @Test
+    fun finiteFirstReplacementFallsBackWithoutStoringTheAssignment() {
+        val session = TwitchPlaybackSession(
+            ROOT,
+            proxyCount = 1,
+            freshRootUsherUri = { FRESH_ROOT },
+        )
+        session.resolve(ROOT) { _, uri -> payload(directMaster(), uri) }
+
+        val first = session.resolve(DIRECT_VARIANT) { route, uri ->
+            when {
+                route == TwitchManifestRoute.Direct && uri == FRESH_ROOT ->
+                    payload(master(DIRECT_REPLACEMENT, "1280x720", "720p60"), uri)
+                route == TwitchManifestRoute.Direct && uri == DIRECT_REPLACEMENT ->
+                    payload(cleanPlaylist(200) + "\n#EXT-X-ENDLIST", uri)
+                else -> payload(adPlaylist(), uri)
+            }
+        }
+        val retryRequests = mutableListOf<Pair<TwitchManifestRoute, String>>()
+        session.resolve(DIRECT_VARIANT) { route, uri ->
+            retryRequests += route to uri
+            payload(cleanPlaylist(201), uri)
+        }
+
+        assertEquals(DIRECT_VARIANT, first.finalUri)
+        assertTrue(containsTwitchStitchedAd(first.text))
+        assertEquals(
+            listOf(TwitchManifestRoute.Direct to DIRECT_VARIANT),
+            retryRequests,
+        )
+    }
+
+    @Test
+    fun finitePlaylistIsAcceptedAfterTheLiveStreamStarted() {
+        val session = sessionWithMaster()
+        session.resolve(DIRECT_VARIANT) { _, uri -> payload(cleanPlaylist(), uri) }
+
+        val ended = session.resolve(DIRECT_VARIANT) { _, uri ->
+            payload(cleanPlaylist(101) + "\n#EXT-X-ENDLIST", uri)
+        }
+
+        assertTrue(ended.text.contains("#EXT-X-ENDLIST"))
+    }
+
+    @Test
     fun proxiedAdGetsFreshDirectAssignment() {
         var refreshes = 0
         val session = TwitchPlaybackSession(

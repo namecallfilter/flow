@@ -12,7 +12,7 @@ class InitialLiveLatencyCorrectionTest {
         val plan = plan(
             measuredLatencyMs = 5_000L,
             currentPositionMs = 10_000L,
-            bufferedPositionMs = 15_000L,
+            bufferedPositionMs = 16_000L,
             windowDurationMs = 16_000L,
         )
 
@@ -118,6 +118,25 @@ class InitialLiveLatencyCorrectionTest {
             measurement(latencyMs = 1_700L, sequence = 1_002L),
         )
         assertEquals(LiveLatencyCorrectionOutcome.COMPLETE, verified.outcome)
+        assertFalse(coordinator.hasPendingRequest)
+    }
+
+    @Test
+    fun qualityChangeRequiresAPostChangeLatencyMeasurement() {
+        val coordinator = LiveLatencyCorrectionCoordinator(maximumSeekAttempts = 3)
+        coordinator.arm(
+            reason = LiveLatencyCorrectionReason.QUALITY_CHANGE,
+            targetLatencyMs = 1_650L,
+            requireMeasurementAfterSequence = 10L,
+        )
+
+        val stale = evaluate(coordinator, measurement(latencyMs = 1_700L, sequence = 10L))
+        assertEquals(LiveLatencyCorrectionOutcome.WAIT_FOR_FRESH_MEASUREMENT, stale.outcome)
+        assertEquals(LiveLatencyCorrectionReason.QUALITY_CHANGE, stale.reason)
+
+        val fresh = evaluate(coordinator, measurement(latencyMs = 1_700L, sequence = 11L))
+        assertEquals(LiveLatencyCorrectionOutcome.COMPLETE, fresh.outcome)
+        assertEquals(LiveLatencyCorrectionReason.QUALITY_CHANGE, fresh.reason)
         assertFalse(coordinator.hasPendingRequest)
     }
 
@@ -240,7 +259,7 @@ class InitialLiveLatencyCorrectionTest {
         currentPositionMs = currentPositionMs,
         bufferedPositionMs = bufferedPositionMs,
         windowDurationMs = windowDurationMs,
-        bufferedSafetyMs = 1_000L,
+        bufferedSafetyMs = 2_000L,
         partialBufferedSafetyMs = 2_000L,
         minimumAdvanceMs = 100L,
         targetToleranceMs = 100L,
@@ -252,9 +271,9 @@ class InitialLiveLatencyCorrectionTest {
     ): LiveLatencyCorrectionDecision = coordinator.evaluate(
         measurement = measurement,
         currentPositionMs = 10_000L,
-        bufferedPositionMs = 15_000L,
+        bufferedPositionMs = 16_000L,
         windowDurationMs = 16_000L,
-        bufferedSafetyMs = 1_000L,
+        bufferedSafetyMs = 2_000L,
         partialBufferedSafetyMs = 2_000L,
         minimumAdvanceMs = 100L,
         targetToleranceMs = 100L,

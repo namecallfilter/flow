@@ -20,6 +20,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.util.Clock
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -28,6 +29,8 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.DefaultHlsDataSourceFactory
 import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.ui.PlayerView
 import io.flutter.plugin.common.BinaryMessenger
@@ -141,6 +144,17 @@ internal class TwitchPlayerView(
     }
 
     init {
+        val trackSelector = DefaultTrackSelector(
+            context,
+            AdaptiveTrackSelection.Factory(
+                AUTO_QUALITY_MIN_DURATION_FOR_INCREASE_MS,
+                AUTO_QUALITY_MAX_DURATION_FOR_DECREASE_MS,
+                AUTO_QUALITY_MIN_DURATION_TO_RETAIN_MS,
+                AUTO_QUALITY_BANDWIDTH_FRACTION,
+                AUTO_QUALITY_BUFFERED_FRACTION_TO_LIVE_EDGE,
+                Clock.DEFAULT,
+            ),
+        )
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
                 MIN_BUFFER_MS,
@@ -151,6 +165,7 @@ internal class TwitchPlayerView(
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
         player = ExoPlayer.Builder(context)
+            .setTrackSelector(trackSelector)
             .setLoadControl(loadControl)
             .setLivePlaybackSpeedControl(liveSpeedControl)
             .build()
@@ -340,7 +355,7 @@ internal class TwitchPlayerView(
         val mediaSource = HlsMediaSource.Factory(hlsDataSourceFactory)
             .setExtractorFactory(TwitchEmsgMetadataBridgeExtractorFactory())
             .setMetadataType(HlsMediaSource.METADATA_TYPE_ID3)
-            .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(MINIMUM_LOAD_RETRY_COUNT))
+            .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy())
             .setPlaylistParserFactory(
                 ServerTimePlaylistParserFactory(
                     latencySession = session,
@@ -711,11 +726,13 @@ internal class TwitchPlayerView(
     }
 
     private fun setQuality(id: String?, result: MethodChannel.Result) {
+        if (id == selectedQualityId) {
+            result.success(null)
+            return
+        }
         if (id == AUTO_QUALITY_ID) {
             clearVideoTrackOverride()
-            selectedQualityId = AUTO_QUALITY_ID
-            emitQualities()
-            result.success(null)
+            finishQualityChange(AUTO_QUALITY_ID, result)
             return
         }
 
@@ -729,8 +746,15 @@ internal class TwitchPlayerView(
             .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
             .setOverrideForType(override)
             .build()
+        finishQualityChange(id, result)
+    }
+
+    private fun finishQualityChange(id: String, result: MethodChannel.Result) {
         selectedQualityId = id
         emitQualities()
+        if (player.playWhenReady) {
+            requestLatencyCorrection(LiveLatencyCorrectionReason.QUALITY_CHANGE)
+        }
         result.success(null)
     }
 
@@ -828,18 +852,23 @@ internal class TwitchPlayerView(
         const val TARGET_LIVE_OFFSET_MS = TwitchLatencyPlaybackSpeedControl.TARGET_LIVE_OFFSET_MS
         const val MIN_LIVE_OFFSET_MS = 1500L
         const val MAX_LIVE_OFFSET_MS = 3500L
-        const val MIN_BUFFER_MS = 6000
-        const val MAX_BUFFER_MS = 12000
+        const val MIN_BUFFER_MS = 2000
+        const val MAX_BUFFER_MS = 6000
         const val BUFFER_FOR_PLAYBACK_MS = 1000
         const val BUFFER_AFTER_REBUFFER_MS = 1500
-        const val MINIMUM_LOAD_RETRY_COUNT = 6
+        const val AUTO_QUALITY_MIN_DURATION_FOR_INCREASE_MS = 10_000
+        // Keep the downgrade guard inside Twitch's 1.65-second live-edge buffer.
+        const val AUTO_QUALITY_MAX_DURATION_FOR_DECREASE_MS = 1_000
+        const val AUTO_QUALITY_MIN_DURATION_TO_RETAIN_MS = 10_000
+        const val AUTO_QUALITY_BANDWIDTH_FRACTION = 0.60f
+        const val AUTO_QUALITY_BUFFERED_FRACTION_TO_LIVE_EDGE = 0.90f
         const val PLAYBACK_URI_REFRESH_TIMEOUT_SECONDS = 15L
         const val AD_PROGRESS_INTERVAL_MS = 500L
         const val EXPIRED_AD_CUE_RETENTION_MS = 30 * 60_000L
         const val PRIMARY_LATENCY_FRESHNESS_MS = 2500L
-        const val CORRECTION_EDGE_GUARD_MS = 1000L
-        // Keep partial seeks above Media3's post-rebuffer threshold after millisecond rounding.
-        const val CORRECTION_PARTIAL_BUFFER_SAFETY_MS = BUFFER_AFTER_REBUFFER_MS + 500L
+        // Keep every correction seek above Media3's post-rebuffer threshold.
+        const val CORRECTION_EDGE_GUARD_MS = BUFFER_AFTER_REBUFFER_MS + 500L
+        const val CORRECTION_PARTIAL_BUFFER_SAFETY_MS = CORRECTION_EDGE_GUARD_MS
         const val CORRECTION_MINIMUM_ADVANCE_MS = 100L
         const val CORRECTION_TARGET_TOLERANCE_MS = 100L
         const val CORRECTION_MEASUREMENT_MAX_AGE_MS = 2500L
