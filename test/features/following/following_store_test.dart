@@ -2,6 +2,7 @@ import "dart:async";
 import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
+import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
 import "package:flow/features/following/following_store.dart";
 import "package:flutter_test/flutter_test.dart";
@@ -67,32 +68,63 @@ void main() {
     final store = FollowingStore(authController: authController);
     final restore = store.loadSavedConnection();
     final duplicateRestore = store.loadSavedConnection();
+    final queuedRefresh = store.loadSavedConnection(refresh: true);
     final loginConnection = _connection("new-user");
 
     expect(authController.loadCalls, 1);
     store.applyConnection(loginConnection);
     authController.restore.complete(_connection("old-user"));
-    await Future.wait([restore, duplicateRestore]);
+    await Future.wait([restore, duplicateRestore, queuedRefresh]);
 
+    expect(authController.loadCalls, 1);
     expect(store.connection, same(loginConnection));
     expect(store.sessionStatus, TwitchSessionStatus.authenticated);
     expect(store.isLoadingFollowing, isFalse);
   });
 
-  test("coalesces a refresh with session restoration", () async {
+  test("honors a refresh requested after login while an older restore finishes", () async {
     final authController = _DelayedAuthController();
     final store = FollowingStore(authController: authController);
     final restore = store.loadSavedConnection();
+    final loginConnection = _connection("new-user");
+
+    store.applyConnection(loginConnection);
     final refresh = store.loadSavedConnection(refresh: true);
+    authController.restore.complete(_connection("old-user"));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(authController.loadCalls, 2);
+    authController.refreshedRestore.complete(loginConnection);
+    await Future.wait([restore, refresh]);
+
+    expect(store.connection, same(loginConnection));
+    expect(store.sessionStatus, TwitchSessionStatus.authenticated);
+  });
+
+  test("queues and coalesces refreshes during session restoration", () async {
+    final authController = _DelayedAuthController();
+    final apiCache = _CountingApiCache();
+    final store = FollowingStore(
+      authController: authController,
+      apiCache: apiCache,
+    );
+    final restore = store.loadSavedConnection();
+    final refresh = store.loadSavedConnection(refresh: true);
+    final duplicateRefresh = store.loadSavedConnection(refresh: true);
 
     await Future<void>.delayed(Duration.zero);
     expect(authController.loadCalls, 1);
 
-    authController.restore.complete(_connection("saved-user"));
-    await Future.wait([restore, refresh]);
+    authController.restore.complete(_connection("stale-user"));
+    await Future<void>.delayed(Duration.zero);
 
-    expect(authController.loadCalls, 1);
-    expect(store.connection?.user.id, "saved-user");
+    expect(authController.loadCalls, 2);
+    expect(apiCache.clearCalls, 1);
+    authController.refreshedRestore.complete(_connection("fresh-user"));
+    await Future.wait([restore, refresh, duplicateRefresh]);
+
+    expect(authController.loadCalls, 2);
+    expect(store.connection?.user.id, "fresh-user");
     expect(store.sessionStatus, TwitchSessionStatus.authenticated);
   });
 
@@ -335,6 +367,21 @@ class _StaticCookieExtractor implements TwitchCookieExtractor {
   Future<String?> extractTwitchAuthToken() async => null;
 }
 
+class _CountingApiCache extends TwitchApiCache {
+  _CountingApiCache()
+    : super(
+        clientLoader: () async => throw StateError("Unexpected API client load."),
+      );
+
+  int clearCalls = 0;
+
+  @override
+  void clear() {
+    clearCalls++;
+    super.clear();
+  }
+}
+
 class _DelayedAuthController extends TwitchAuthController {
   _DelayedAuthController()
     : super(
@@ -348,11 +395,18 @@ class _DelayedAuthController extends TwitchAuthController {
       );
 
   final restore = Completer<TwitchAuthConnection?>();
+  final refreshedRestore = Completer<TwitchAuthConnection?>();
   int loadCalls = 0;
 
   @override
   Future<TwitchAuthConnection?> loadSavedConnection() {
     loadCalls++;
-    return restore.future;
+    if (loadCalls == 1) {
+      return restore.future;
+    }
+    if (loadCalls == 2) {
+      return refreshedRestore.future;
+    }
+    return Future.error(StateError("Unexpected saved connection load."));
   }
 }

@@ -29,6 +29,7 @@ abstract class FollowingStoreBase with Store {
   final TwitchApiCache? apiCache;
   bool _hasAttemptedSavedConnection = false;
   Future<void>? _savedConnectionLoad;
+  Future<void>? _savedConnectionRefresh;
   int _sessionRevision = 0;
 
   @observable
@@ -84,7 +85,32 @@ abstract class FollowingStoreBase with Store {
   Future<void> loadSavedConnection({bool refresh = false}) async {
     final activeLoad = _savedConnectionLoad;
     if (activeLoad != null) {
-      await activeLoad;
+      if (!refresh) {
+        await activeLoad;
+        return;
+      }
+      final activeRefresh = _savedConnectionRefresh;
+      if (activeRefresh != null) {
+        await activeRefresh;
+        return;
+      }
+
+      final operation = Completer<void>();
+      final operationFuture = operation.future;
+      final revision = _sessionRevision;
+      _savedConnectionRefresh = operationFuture;
+      try {
+        await activeLoad;
+        if (revision != _sessionRevision) {
+          return;
+        }
+        await loadSavedConnection(refresh: true);
+      } finally {
+        if (identical(_savedConnectionRefresh, operationFuture)) {
+          _savedConnectionRefresh = null;
+        }
+        operation.complete();
+      }
       return;
     }
     if (!refresh && (_hasAttemptedSavedConnection || connection != null)) {
@@ -149,6 +175,7 @@ abstract class FollowingStoreBase with Store {
   @action
   void applyConnection(TwitchAuthConnection nextConnection) {
     _sessionRevision++;
+    _savedConnectionRefresh = null;
     apiCache?.clear();
     _hasAttemptedSavedConnection = true;
     connection = nextConnection;
@@ -160,6 +187,7 @@ abstract class FollowingStoreBase with Store {
   @action
   Future<void> signOut() async {
     final revision = ++_sessionRevision;
+    _savedConnectionRefresh = null;
     apiCache?.clear();
     _hasAttemptedSavedConnection = true;
     isLoadingFollowing = false;
