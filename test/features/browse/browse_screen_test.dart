@@ -133,8 +133,13 @@ void main() {
       of: firstCard,
       matching: find.byKey(const ValueKey("stream_skeleton_metadata")),
     );
+    final secondTitleLine = find.descendant(
+      of: firstCard,
+      matching: find.byKey(const ValueKey("stream_skeleton_title_second_line")),
+    );
 
     expect(liveSkeleton, findsOneWidget);
+    expect(tester.widget<StreamCardSkeleton>(firstCard).showCategory, isTrue);
     expect(tester.getSize(firstCard).height, 93);
     expect(tester.getSize(thumbnail), const Size(116, 65.25));
     expect(tester.getSize(viewers), const Size(49, 17));
@@ -142,6 +147,7 @@ void main() {
     expect(tester.getSize(verified), const Size(14, 14));
     expect(tester.getSize(title).height, 17);
     expect(tester.getSize(metadata), const Size(104, 15));
+    expect(secondTitleLine, findsNothing);
   });
 
   testWidgets("shows skeletons for category streams and search results", (tester) async {
@@ -179,8 +185,37 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.byKey(const ValueKey("category_streams_skeleton")), findsOneWidget);
+    final categorySkeleton = find.byKey(const ValueKey("category_streams_skeleton"));
+    final firstCategoryCard = find
+        .descendant(
+          of: categorySkeleton,
+          matching: find.byType(StreamCardSkeleton),
+        )
+        .first;
+    final firstTitleLine = find.descendant(
+      of: firstCategoryCard,
+      matching: find.byKey(const ValueKey("stream_skeleton_title")),
+    );
+    final secondTitleLine = find.descendant(
+      of: firstCategoryCard,
+      matching: find.byKey(const ValueKey("stream_skeleton_title_second_line")),
+    );
+    final metadata = find.descendant(
+      of: firstCategoryCard,
+      matching: find.byKey(const ValueKey("stream_skeleton_metadata")),
+    );
+
+    expect(categorySkeleton, findsOneWidget);
     expect(find.byType(StreamCardSkeleton), findsNWidgets(13));
+    expect(tester.widget<StreamCardSkeleton>(firstCategoryCard).showCategory, isFalse);
+    expect(tester.getSize(firstCategoryCard).height, 93);
+    expect(tester.getSize(firstTitleLine).height, 17);
+    expect(tester.getSize(secondTitleLine).height, 15);
+    expect(
+      tester.getTopLeft(secondTitleLine).dy - tester.getBottomLeft(firstTitleLine).dy,
+      5,
+    );
+    expect(metadata, findsNothing);
     expect(
       tester.getBottomLeft(find.byType(StreamCardSkeleton).at(12)).dy,
       greaterThanOrEqualTo(1200),
@@ -378,6 +413,8 @@ void main() {
     expect(find.byType(StreamCard), findsWidgets);
     expect(find.text("AussieAntics"), findsOneWidget);
     expect(find.text("NovaSkye"), findsOneWidget);
+    expect(find.byKey(const ValueKey("stream_category_AussieAntics")), findsNothing);
+    expect(find.byKey(const ValueKey("stream_category_NovaSkye")), findsNothing);
     _expectVisibleHeaderGap(
       tester,
       header: find.ancestor(
@@ -447,6 +484,7 @@ void main() {
 
     expect(find.byKey(const ValueKey("browse_live_channels")), findsOneWidget);
     expect(find.byKey(const ValueKey("stream_channel_identity_AussieAntics")), findsOneWidget);
+    expect(find.byKey(const ValueKey("stream_category_AussieAntics")), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey("stream_channel_identity_AussieAntics")));
     await tester.pumpAndSettle();

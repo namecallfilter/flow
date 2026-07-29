@@ -493,6 +493,8 @@ class _TopBarContent extends StatelessWidget {
   }
 }
 
+const double _streamTitleAreaHeight = 37;
+
 double _streamThumbnailWidth(double availableWidth) => availableWidth < 350 ? 116 : 124;
 
 class StreamCard extends StatelessWidget {
@@ -501,11 +503,13 @@ class StreamCard extends StatelessWidget {
     super.key,
     this.onChannelSelected,
     this.onStreamSelected,
+    this.showCategory = true,
   });
 
   final StreamChannel channel;
   final ValueChanged<StreamChannel>? onChannelSelected;
   final ValueChanged<StreamChannel>? onStreamSelected;
+  final bool showCategory;
 
   @override
   Widget build(BuildContext context) {
@@ -515,6 +519,9 @@ class StreamCard extends StatelessWidget {
     final primaryColor = theme.colorScheme.onSurface;
     final mutedColor = theme.colorScheme.onSurface.withValues(alpha: 0.58);
     final borderRadius = BorderRadius.circular(12);
+    final VoidCallback? onChannelTap = onChannelSelected == null
+        ? null
+        : () => onChannelSelected!(channel);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 7),
@@ -557,22 +564,23 @@ class StreamCard extends StatelessWidget {
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            GestureDetector(
-                              key: ValueKey("stream_channel_identity_${channel.name}"),
-                              behavior: HitTestBehavior.opaque,
-                              onTap: onChannelSelected == null
-                                  ? null
-                                  : () => onChannelSelected!(channel),
-                              child: Row(
-                                children: [
-                                  AvatarRing(
+                            Row(
+                              children: [
+                                GestureDetector(
+                                  key: ValueKey("stream_channel_avatar_${channel.name}"),
+                                  onTap: onChannelTap,
+                                  child: AvatarRing(
                                     initials: channel.initials,
                                     size: 28,
                                     avatarColors: channel.avatarColors,
                                     imageUrl: channel.avatarImageUrl,
                                   ),
-                                  const SizedBox(width: 8),
-                                  Flexible(
+                                ),
+                                const SizedBox(width: 8),
+                                Flexible(
+                                  child: GestureDetector(
+                                    key: ValueKey("stream_channel_identity_${channel.name}"),
+                                    onTap: onChannelTap,
                                     child: Text(
                                       channel.name,
                                       maxLines: 1,
@@ -585,40 +593,53 @@ class StreamCard extends StatelessWidget {
                                       ),
                                     ),
                                   ),
-                                  const SizedBox(width: 5),
-                                  Icon(
+                                ),
+                                const SizedBox(width: 5),
+                                GestureDetector(
+                                  key: ValueKey("stream_channel_badge_${channel.name}"),
+                                  onTap: onChannelTap,
+                                  child: Icon(
                                     Icons.verified,
                                     color: theme.colorScheme.primary.withValues(
                                       alpha: isDark ? 0.72 : 0.66,
                                     ),
                                     size: 14,
                                   ),
-                                ],
-                              ),
+                                ),
+                              ],
                             ),
                             const SizedBox(height: 6),
-                            Text(
-                              channel.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                height: 1.18,
-                                color: primaryColor.withValues(alpha: 0.86),
-                                fontWeight: FontWeight.w500,
+                            ConstrainedBox(
+                              constraints: BoxConstraints(
+                                minHeight: showCategory ? 0 : _streamTitleAreaHeight,
+                              ),
+                              child: Text(
+                                channel.title,
+                                key: ValueKey("stream_title_${channel.name}"),
+                                maxLines: showCategory ? 1 : 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  height: 1.18,
+                                  color: primaryColor.withValues(alpha: 0.86),
+                                  fontWeight: FontWeight.w500,
+                                ),
                               ),
                             ),
-                            const SizedBox(height: 5),
-                            Text(
-                              _metadataFor(channel),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                fontSize: 13,
-                                color: mutedColor,
-                                fontWeight: FontWeight.w500,
-                                height: 1.15,
+                            if (showCategory) ...[
+                              const SizedBox(height: 5),
+                              Text(
+                                channel.category,
+                                key: ValueKey("stream_category_${channel.name}"),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  fontSize: 13,
+                                  color: mutedColor,
+                                  fontWeight: FontWeight.w500,
+                                  height: 1.15,
+                                ),
                               ),
-                            ),
+                            ],
                           ],
                         ),
                       ),
@@ -649,11 +670,17 @@ class StreamCard extends StatelessWidget {
         onStreamSelected,
       ),
     );
+    properties.add(DiagnosticsProperty<bool>("showCategory", showCategory));
   }
 }
 
 class StreamCardSkeleton extends StatelessWidget {
-  const StreamCardSkeleton({super.key});
+  const StreamCardSkeleton({
+    super.key,
+    this.showCategory = true,
+  });
+
+  final bool showCategory;
 
   @override
   Widget build(BuildContext context) {
@@ -745,11 +772,18 @@ class StreamCardSkeleton extends StatelessWidget {
                             height: 17,
                           ),
                           const SizedBox(height: 5),
-                          const SkeletonBox(
-                            key: ValueKey("stream_skeleton_metadata"),
-                            width: 104,
-                            height: 15,
-                          ),
+                          if (showCategory)
+                            const SkeletonBox(
+                              key: ValueKey("stream_skeleton_metadata"),
+                              width: 104,
+                              height: 15,
+                            )
+                          else
+                            SkeletonBox(
+                              key: const ValueKey("stream_skeleton_title_second_line"),
+                              width: detailsWidth * 0.68,
+                              height: 15,
+                            ),
                         ],
                       ),
                     ),
@@ -762,9 +796,13 @@ class StreamCardSkeleton extends StatelessWidget {
       ),
     );
   }
-}
 
-String _metadataFor(StreamChannel channel) => channel.category;
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(DiagnosticsProperty<bool>("showCategory", showCategory));
+  }
+}
 
 class _StreamThumbnail extends StatelessWidget {
   const _StreamThumbnail({

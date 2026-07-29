@@ -169,6 +169,7 @@ class TwitchChannelLiveStream {
   const TwitchChannelLiveStream({
     required this.id,
     required this.title,
+    required this.categoryId,
     required this.category,
     required this.viewerCount,
     this.thumbnailUrl,
@@ -177,6 +178,7 @@ class TwitchChannelLiveStream {
 
   final String id;
   final String title;
+  final String categoryId;
   final String category;
   final int viewerCount;
   final String? thumbnailUrl;
@@ -949,6 +951,7 @@ class TwitchApiClient {
     return TwitchChannelLiveStream(
       id: _stringValue(stream["id"]),
       title: title.isEmpty ? "Live now" : title,
+      categoryId: _stringValue(game?["id"]),
       category: _gameName(game, fallback: "Live"),
       viewerCount: _intValue(stream["viewersCount"]),
       thumbnailUrl: stream["previewImageURL"] as String?,
