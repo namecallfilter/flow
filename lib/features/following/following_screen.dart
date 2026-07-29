@@ -781,7 +781,7 @@ class StreamCardSkeleton extends StatelessWidget {
                           else
                             SkeletonBox(
                               key: const ValueKey("stream_skeleton_title_second_line"),
-                              width: detailsWidth * 0.68,
+                              width: detailsWidth * 0.92,
                               height: 15,
                             ),
                         ],

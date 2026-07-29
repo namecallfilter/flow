@@ -117,7 +117,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
       colors: colorsForText(categoryId),
     );
     unawaited(
-      Navigator.of(context, rootNavigator: true).push<void>(
+      Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
           builder: (_) => CategoryStreamsScreen(
             apiCache: widget.apiCache,

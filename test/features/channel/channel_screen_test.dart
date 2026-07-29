@@ -3,10 +3,12 @@ import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
+import "package:flow/app/routes.dart";
 import "package:flow/app/spacing.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/player/player_screen.dart";
+import "package:flow/shared/widgets/app_bottom_nav.dart";
 import "package:flow/shared/widgets/avatar_ring.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flutter/material.dart";
@@ -128,60 +130,85 @@ void main() {
     expect(viewers.overflow, isNot(TextOverflow.ellipsis));
   });
 
-  testWidgets("opens the live category from the Channel page", (tester) async {
+  testWidgets("keeps live category navigation in the active tab stack", (tester) async {
     final requestedGameIds = <String>[];
+    final rootNavigatorKey = GlobalKey<NavigatorState>();
+    final tabNavigatorKey = GlobalKey<NavigatorState>();
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+        httpClient: MockClient((request) async {
+          final body = jsonDecode(request.body) as Map<String, Object?>;
+          final query = body["query"]?.toString() ?? "";
+          if (query.contains("FlowGameStreams")) {
+            final variables =
+                (body["variables"] as Map<String, Object?>?) ??
+                const <String, Object?>{};
+            requestedGameIds.add(variables["id"]?.toString() ?? "");
+            return http.Response(
+              jsonEncode({
+                "data": {
+                  "game": {
+                    "streams": {
+                      "edges": <Object?>[],
+                      "pageInfo": {"hasNextPage": false},
+                    },
+                  },
+                },
+              }),
+              200,
+              headers: {"content-type": "application/json"},
+            );
+          }
+          return _channelDetailsResponse();
+        }),
+      ),
+    );
     await tester.pumpWidget(
       MaterialApp(
+        navigatorKey: rootNavigatorKey,
         theme: buildFlowTheme(Brightness.dark),
-        home: ChannelScreen(
-          apiCache: TwitchApiCache(
-            clientLoader: () async => TwitchApiClient(
-              clientId: "client-123",
-              accessToken: "token-123",
-              httpClient: MockClient((request) async {
-                final body = jsonDecode(request.body) as Map<String, Object?>;
-                final query = body["query"]?.toString() ?? "";
-                if (query.contains("FlowGameStreams")) {
-                  final variables =
-                      (body["variables"] as Map<String, Object?>?) ??
-                      const <String, Object?>{};
-                  requestedGameIds.add(variables["id"]?.toString() ?? "");
-                  return http.Response(
-                    jsonEncode({
-                      "data": {
-                        "game": {
-                          "streams": {
-                            "edges": <Object?>[],
-                            "pageInfo": {"hasNextPage": false},
-                          },
-                        },
-                      },
-                    }),
-                    200,
-                    headers: {"content-type": "application/json"},
-                  );
-                }
-                return _channelDetailsResponse();
-              }),
+        home: Scaffold(
+          body: Navigator(
+            key: tabNavigatorKey,
+            onGenerateRoute: (_) => MaterialPageRoute<void>(
+              builder: (_) => ChannelScreen(
+                apiCache: apiCache,
+                initialChannel: const ChannelPreview(
+                  login: "jason",
+                  displayName: "Jason",
+                  isLive: true,
+                ),
+              ),
             ),
           ),
-          initialChannel: const ChannelPreview(
-            login: "jason",
-            displayName: "Jason",
-            isLive: true,
+          bottomNavigationBar: const AppBottomNav(
+            currentRoute: FlowRoutes.following,
           ),
         ),
       ),
     );
     await tester.pumpAndSettle();
 
+    expect(find.byKey(const ValueKey("app_bottom_nav_bar")), findsOneWidget);
+    expect(rootNavigatorKey.currentState?.canPop(), isFalse);
+    expect(tabNavigatorKey.currentState?.canPop(), isFalse);
+
     await tester.tap(find.byKey(const ValueKey("channel_category_button")));
     await tester.pumpAndSettle();
 
-    expect(
-      find.byKey(const ValueKey("category_streams_page_Just Chatting")),
-      findsOneWidget,
+    final categoryPage = find.byKey(
+      const ValueKey("category_streams_page_Just Chatting"),
     );
+    expect(categoryPage, findsOneWidget);
+    expect(find.byKey(const ValueKey("app_bottom_nav_bar")), findsOneWidget);
+    expect(
+      Navigator.of(tester.element(categoryPage)),
+      same(tabNavigatorKey.currentState),
+    );
+    expect(rootNavigatorKey.currentState?.canPop(), isFalse);
+    expect(tabNavigatorKey.currentState?.canPop(), isTrue);
     expect(requestedGameIds, ["509658"]);
   });
 

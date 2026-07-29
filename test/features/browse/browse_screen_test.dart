@@ -211,6 +211,7 @@ void main() {
     expect(tester.getSize(firstCategoryCard).height, 93);
     expect(tester.getSize(firstTitleLine).height, 17);
     expect(tester.getSize(secondTitleLine).height, 15);
+    expect(tester.getSize(secondTitleLine).width, tester.getSize(firstTitleLine).width);
     expect(
       tester.getTopLeft(secondTitleLine).dy - tester.getBottomLeft(firstTitleLine).dy,
       5,
