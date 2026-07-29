@@ -680,6 +680,37 @@ void main() {
     expect(player._playCount, 1);
   });
 
+  testWidgets("ignores inactive state until the app is backgrounded", (tester) async {
+    final player = _FakePlayerController();
+    await tester.pumpWidget(_playerApp(player: player));
+    await tester.pump();
+
+    player.emit(
+      const TwitchPlaybackStateEvent(
+        isPlaying: true,
+        isBuffering: false,
+        playWhenReady: true,
+      ),
+    );
+    await tester.pump();
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump();
+    expect(player._pauseCount, 0);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(player._playCount, 0);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    expect(player._pauseCount, 1);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(player._playCount, 1);
+  });
+
   testWidgets("does not resume beneath an open destination after lifecycle changes", (
     tester,
   ) async {
