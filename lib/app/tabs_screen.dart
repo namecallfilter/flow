@@ -1,4 +1,5 @@
 import "dart:async";
+import "dart:math" as math;
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
@@ -16,6 +17,7 @@ import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/widgets/app_bottom_nav.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:flutter_mobx/flutter_mobx.dart";
 
 class FlowTabsScreen extends StatefulWidget {
@@ -84,7 +86,7 @@ class FlowTabsScreen extends StatefulWidget {
   }
 }
 
-class _FlowTabsScreenState extends State<FlowTabsScreen> {
+class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObserver {
   final _followingNavigatorKey = GlobalKey<NavigatorState>();
   final _browseNavigatorKey = GlobalKey<NavigatorState>();
   final _settingsNavigatorKey = GlobalKey<NavigatorState>();
@@ -99,8 +101,9 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> {
   late final _TabNavigatorObserver _followingNavigatorObserver;
   late final _TabNavigatorObserver _browseNavigatorObserver;
   late final _TabNavigatorObserver _settingsNavigatorObserver;
-  LocalHistoryEntry? _tabHistoryEntry;
-  bool _isDisposing = false;
+  late final ValueNotifier<double> _tabBackProgress;
+  String? _predictiveBackTab;
+  SwipeEdge _predictiveBackSwipeEdge = SwipeEdge.left;
 
   @override
   void initState() {
@@ -110,7 +113,9 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> {
     _authController = widget.authController ?? _buildDefaultAuthController();
     _apiCache = TwitchApiCache(clientLoader: () => _loadApiClient(_authController));
     _tabsStore = widget.tabsStore ?? TabsStore(initialRoute: widget.initialRoute);
-    _visitedRoutes.add(_tabsStore.currentRoute);
+    _visitedRoutes
+      ..add(FlowRoutes.following)
+      ..add(_tabsStore.currentRoute);
     _browseStore = widget.browseStore ?? BrowseStore(apiCache: _apiCache);
     _followingStore =
         widget.followingStore ??
@@ -124,7 +129,8 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> {
     _followingNavigatorObserver = _TabNavigatorObserver(_handleTabNavigatorChanged);
     _browseNavigatorObserver = _TabNavigatorObserver(_handleTabNavigatorChanged);
     _settingsNavigatorObserver = _TabNavigatorObserver(_handleTabNavigatorChanged);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _syncTabHistory());
+    _tabBackProgress = ValueNotifier(0);
+    WidgetsBinding.instance.addObserver(this);
   }
 
   TwitchAuthController _buildDefaultAuthController() {
@@ -143,6 +149,11 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> {
   }
 
   void _selectRoute(String routeName) {
+    if (_predictiveBackTab != null ||
+        (_navigatorKeyFor(_tabsStore.currentRoute).currentState?.userGestureInProgress ?? false)) {
+      return;
+    }
+
     final nextRoute = normalizeFlowRoute(routeName);
     if (nextRoute == _tabsStore.currentRoute) {
       return;
@@ -152,48 +163,12 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> {
       _visitedRoutes.add(nextRoute);
     });
     _tabsStore.setCurrentRoute(nextRoute);
-    _syncTabHistory();
-  }
-
-  void _syncTabHistory() {
-    if (!mounted || _isDisposing) {
-      return;
-    }
-
-    if (_tabsStore.currentRoute == FlowRoutes.following) {
-      final entry = _tabHistoryEntry;
-      _tabHistoryEntry = null;
-      entry?.remove();
-      return;
-    }
-    if (_tabHistoryEntry != null) {
-      return;
-    }
-    final route = ModalRoute.of(context);
-    if (route == null) {
-      return;
-    }
-
-    late final LocalHistoryEntry entry;
-    entry = LocalHistoryEntry(
-      onRemove: () {
-        if (identical(_tabHistoryEntry, entry)) {
-          _tabHistoryEntry = null;
-        }
-        if (mounted && !_isDisposing && _tabsStore.currentRoute != FlowRoutes.following) {
-          _selectRoute(FlowRoutes.following);
-        }
-      },
-    );
-    _tabHistoryEntry = entry;
-    route.addLocalHistoryEntry(entry);
   }
 
   @override
   void dispose() {
-    _isDisposing = true;
-    _tabHistoryEntry?.remove();
-    _tabHistoryEntry = null;
+    WidgetsBinding.instance.removeObserver(this);
+    _tabBackProgress.dispose();
     super.dispose();
   }
 
@@ -203,51 +178,60 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> {
       extendBody: true,
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: PopScope<void>(
-        canPop: !_activeNavigatorCanPop(),
+        canPop: _tabsStore.currentRoute == FlowRoutes.following && !_activeNavigatorCanPop(),
         onPopInvokedWithResult: (didPop, _) {
           if (didPop) {
             return;
           }
           unawaited(_handleBackNavigation());
         },
-        child: IndexedStack(
-          index: _routeIndex(_tabsStore.currentRoute),
+        child: Stack(
+          fit: StackFit.expand,
           children: [
-            _buildTabNavigator(
+            _buildTabSlot(
               routeName: FlowRoutes.following,
-              navigatorKey: _followingNavigatorKey,
-              observers: [
-                ...widget.navigatorObservers,
-                _followingNavigatorObserver,
-              ],
-              rootBuilder: (_) => FollowingScreen(
-                authController: _authController,
-                apiCache: _apiCache,
-                followingStore: _followingStore,
-                openTwitchLogin: widget.openTwitchLogin,
-                bottomNavigationBar: const SizedBox.shrink(),
+              child: _buildTabNavigator(
+                routeName: FlowRoutes.following,
+                navigatorKey: _followingNavigatorKey,
+                observers: [
+                  ...widget.navigatorObservers,
+                  _followingNavigatorObserver,
+                ],
+                rootBuilder: (_) => FollowingScreen(
+                  authController: _authController,
+                  apiCache: _apiCache,
+                  followingStore: _followingStore,
+                  openTwitchLogin: widget.openTwitchLogin,
+                  bottomNavigationBar: const SizedBox.shrink(),
+                ),
               ),
             ),
-            _buildTabNavigator(
+            _buildTabSlot(
               routeName: FlowRoutes.browse,
-              navigatorKey: _browseNavigatorKey,
-              observers: [_browseNavigatorObserver],
-              rootBuilder: (_) => BrowseScreen(
-                authController: _authController,
-                apiCache: _apiCache,
-                browseStore: _browseStore,
-                preferences: _preferences,
-                bottomNavigationBar: const SizedBox.shrink(),
+              child: _buildTabNavigator(
+                routeName: FlowRoutes.browse,
+                navigatorKey: _browseNavigatorKey,
+                observers: [_browseNavigatorObserver],
+                rootBuilder: (_) => BrowseScreen(
+                  authController: _authController,
+                  apiCache: _apiCache,
+                  browseStore: _browseStore,
+                  preferences: _preferences,
+                  bottomNavigationBar: const SizedBox.shrink(),
+                ),
               ),
             ),
-            _buildTabNavigator(
+            _buildTabSlot(
               routeName: FlowRoutes.settings,
-              navigatorKey: _settingsNavigatorKey,
-              observers: [_settingsNavigatorObserver],
-              rootBuilder: (_) => SettingsScreen(
-                settingsStore: _settingsStore,
-                openExternalUrl: widget.openExternalUrl,
-                bottomNavigationBar: const SizedBox.shrink(),
+              child: _buildTabNavigator(
+                routeName: FlowRoutes.settings,
+                navigatorKey: _settingsNavigatorKey,
+                observers: [_settingsNavigatorObserver],
+                rootBuilder: (_) => SettingsScreen(
+                  settingsStore: _settingsStore,
+                  openExternalUrl: widget.openExternalUrl,
+                  bottomNavigationBar: const SizedBox.shrink(),
+                ),
               ),
             ),
           ],
@@ -260,6 +244,43 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> {
     ),
   );
 
+  Widget _buildTabSlot({
+    required String routeName,
+    required Widget child,
+  }) {
+    final isPredictiveBackTab = routeName == _predictiveBackTab;
+    final isVisible =
+        routeName == _tabsStore.currentRoute ||
+        (routeName == FlowRoutes.following && _predictiveBackTab != null);
+    final routeTransitionsEnabled =
+        routeName == _tabsStore.currentRoute && (ModalRoute.isCurrentOf(context) ?? false);
+    final theme = Theme.of(context);
+    final tabChild = Theme(
+      data: routeTransitionsEnabled
+          ? theme
+          : theme.copyWith(
+              pageTransitionsTheme: const PageTransitionsTheme(
+                builders: {
+                  TargetPlatform.android: _InstantPageTransitionsBuilder(),
+                },
+              ),
+            ),
+      child: child,
+    );
+    final tab = isPredictiveBackTab
+        ? _PredictiveTabBackTransition(
+            progress: _tabBackProgress,
+            swipeEdge: _predictiveBackSwipeEdge,
+            child: tabChild,
+          )
+        : tabChild;
+
+    return Offstage(
+      offstage: !isVisible,
+      child: TickerMode(enabled: isVisible, child: tab),
+    );
+  }
+
   Widget _buildTabNavigator({
     required String routeName,
     required GlobalKey<NavigatorState> navigatorKey,
@@ -270,20 +291,84 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> {
       return const SizedBox.shrink();
     }
 
-    return Navigator(
-      key: navigatorKey,
-      observers: observers,
-      onGenerateInitialRoutes: (_, _) => [
-        MaterialPageRoute<void>(
-          settings: RouteSettings(name: routeName),
+    return NotificationListener<NavigationNotification>(
+      onNotification: (_) => true,
+      child: Navigator(
+        key: navigatorKey,
+        observers: observers,
+        onGenerateInitialRoutes: (_, _) => [
+          MaterialPageRoute<void>(
+            settings: RouteSettings(name: routeName),
+            builder: rootBuilder,
+          ),
+        ],
+        onGenerateRoute: (settings) => MaterialPageRoute<void>(
+          settings: settings,
           builder: rootBuilder,
         ),
-      ],
-      onGenerateRoute: (settings) => MaterialPageRoute<void>(
-        settings: settings,
-        builder: rootBuilder,
       ),
     );
+  }
+
+  @override
+  bool handleStartBackGesture(PredictiveBackEvent backEvent) {
+    if (backEvent.isButtonEvent || !(ModalRoute.of(context)?.isCurrent ?? false)) {
+      return false;
+    }
+
+    final activeNavigator = _navigatorKeyFor(_tabsStore.currentRoute).currentState;
+    if (activeNavigator?.canPop() ?? false) {
+      return false;
+    }
+
+    final activeRoute = _navigatorObserverFor(_tabsStore.currentRoute).currentRoute;
+    if (_tabsStore.currentRoute == FlowRoutes.following ||
+        !(activeRoute?.isFirst ?? false) ||
+        activeRoute?.popDisposition != RoutePopDisposition.bubble) {
+      return false;
+    }
+
+    setState(() {
+      _predictiveBackTab = _tabsStore.currentRoute;
+      _predictiveBackSwipeEdge = backEvent.swipeEdge;
+      _tabBackProgress.value = backEvent.progress;
+    });
+    return true;
+  }
+
+  @override
+  void handleUpdateBackGestureProgress(PredictiveBackEvent backEvent) {
+    if (_predictiveBackTab != null) {
+      _tabBackProgress.value = backEvent.progress;
+    }
+  }
+
+  @override
+  void handleCancelBackGesture() {
+    if (_predictiveBackTab != null) {
+      _finishTabBackGesture(commit: false);
+    }
+  }
+
+  @override
+  void handleCommitBackGesture() {
+    if (_predictiveBackTab != null) {
+      _finishTabBackGesture(commit: true);
+    }
+  }
+
+  void _finishTabBackGesture({required bool commit}) {
+    if (_predictiveBackTab == null) {
+      return;
+    }
+
+    setState(() {
+      _predictiveBackTab = null;
+      _tabBackProgress.value = 0;
+    });
+    if (commit) {
+      _selectRoute(FlowRoutes.following);
+    }
   }
 
   Future<void> _handleBackNavigation() async {
@@ -297,7 +382,9 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> {
   }
 
   bool _activeNavigatorCanPop() =>
-      _navigatorKeyFor(_tabsStore.currentRoute).currentState?.canPop() ?? false;
+      (_navigatorKeyFor(_tabsStore.currentRoute).currentState?.canPop() ?? false) ||
+      _navigatorObserverFor(_tabsStore.currentRoute).currentRoute?.popDisposition ==
+          RoutePopDisposition.doNotPop;
 
   GlobalKey<NavigatorState> _navigatorKeyFor(String routeName) => switch (routeName) {
     FlowRoutes.browse => _browseNavigatorKey,
@@ -305,10 +392,10 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> {
     _ => _followingNavigatorKey,
   };
 
-  int _routeIndex(String routeName) => switch (routeName) {
-    FlowRoutes.browse => 1,
-    FlowRoutes.settings => 2,
-    _ => 0,
+  _TabNavigatorObserver _navigatorObserverFor(String routeName) => switch (routeName) {
+    FlowRoutes.browse => _browseNavigatorObserver,
+    FlowRoutes.settings => _settingsNavigatorObserver,
+    _ => _followingNavigatorObserver,
   };
 
   void _handleTabNavigatorChanged() {
@@ -328,30 +415,105 @@ class _TabNavigatorObserver extends NavigatorObserver {
   _TabNavigatorObserver(this.onRouteStackChanged);
 
   final VoidCallback onRouteStackChanged;
+  Route<dynamic>? currentRoute;
 
   @override
   void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
     super.didPush(route, previousRoute);
+    currentRoute = route;
     onRouteStackChanged();
   }
 
   @override
   void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
     super.didPop(route, previousRoute);
+    currentRoute = previousRoute;
     onRouteStackChanged();
   }
 
   @override
   void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
     super.didRemove(route, previousRoute);
+    if (identical(currentRoute, route)) {
+      currentRoute = previousRoute;
+    }
     onRouteStackChanged();
   }
 
   @override
   void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
     super.didReplace(newRoute: newRoute, oldRoute: oldRoute);
+    if (identical(currentRoute, oldRoute)) {
+      currentRoute = newRoute;
+    }
     onRouteStackChanged();
   }
+}
+
+class _PredictiveTabBackTransition extends StatelessWidget {
+  const _PredictiveTabBackTransition({
+    required this.progress,
+    required this.swipeEdge,
+    required this.child,
+  });
+
+  final ValueListenable<double> progress;
+  final SwipeEdge swipeEdge;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final maxHorizontalShift = math.max(0, constraints.maxWidth / 20 - 8);
+      return AnimatedBuilder(
+        key: const ValueKey("predictive_tab_back_transition"),
+        animation: progress,
+        child: child,
+        builder: (context, child) {
+          final gestureProgress = progress.value;
+          final horizontalShift =
+              maxHorizontalShift * gestureProgress * (swipeEdge == SwipeEdge.right ? -1 : 1);
+          return Transform.scale(
+            scale: 1 - 0.1 * gestureProgress,
+            child: Transform.translate(
+              offset: Offset(horizontalShift, 0),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(32 * gestureProgress),
+                child: child,
+              ),
+            ),
+          );
+        },
+      );
+    },
+  );
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(DiagnosticsProperty<ValueListenable<double>>("progress", progress));
+    properties.add(EnumProperty<SwipeEdge>("swipeEdge", swipeEdge));
+    properties.add(DiagnosticsProperty<Widget>("child", child));
+  }
+}
+
+class _InstantPageTransitionsBuilder extends PageTransitionsBuilder {
+  const _InstantPageTransitionsBuilder();
+
+  @override
+  Duration get transitionDuration => Duration.zero;
+
+  @override
+  Duration get reverseTransitionDuration => Duration.zero;
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) => child;
 }
 
 Future<TwitchApiClient> _loadApiClient(TwitchAuthController authController) async {

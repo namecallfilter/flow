@@ -3,10 +3,13 @@ import "dart:convert";
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_auth.dart";
 import "package:flow/app/app_settings_store.dart";
+import "package:flow/app/routes.dart";
 import "package:flow/app/tabs_screen.dart";
+import "package:flow/app/tabs_store.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:http/http.dart" as http;
 import "package:http/testing.dart";
@@ -119,37 +122,177 @@ void main() {
     expect(categoryStreamsRequests, categoryStreamsRequestsAfterOpen);
   });
 
-  testWidgets("allows predictive back from Browse and Settings to Following", (
-    tester,
-  ) async {
-    final store = _MemoryTwitchStore()
-      ..accessToken = "token-123"
-      ..webSessionToken = "gql-token-123";
+  testWidgets(
+    "predictive back previews Following and leaves Following to Android",
+    (
+      tester,
+    ) async {
+      final store = _MemoryTwitchStore()
+        ..accessToken = "token-123"
+        ..webSessionToken = "gql-token-123";
+      final tabsStore = TabsStore();
+      final backPlatform = _BackPlatformSpy();
+      await backPlatform.install(tester);
+      addTearDown(backPlatform.dispose);
 
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFlowTheme(Brightness.light),
-        home: FlowTabsScreen(
-          authController: _authController(secureStore: store),
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFlowTheme(Brightness.light),
+          home: FlowTabsScreen(
+            authController: _authController(secureStore: store),
+            tabsStore: tabsStore,
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    for (final tab in ["Browse", "Settings"]) {
-      await tester.tap(find.byKey(ValueKey("bottom_nav_item_$tab")));
-      await tester.pumpAndSettle();
-
-      expect(tester.widget<PopScope<void>>(find.byType(PopScope<void>)).canPop, isTrue);
-      await tester.binding.handlePopRoute();
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey("bottom_nav_item_Following")),
-        findsOneWidget,
       );
+      await tester.pumpAndSettle();
+      expect(backPlatform.frameworkHandlesBack, isFalse);
+
+      for (final entry in {
+        "Browse": const ValueKey("browse_title"),
+        "Settings": const ValueKey("settings_title"),
+      }.entries) {
+        final tab = entry.key;
+        await tester.tap(find.byKey(ValueKey("bottom_nav_item_$tab")));
+        await tester.pumpAndSettle();
+
+        final title = find.byKey(entry.value);
+        final initialTitleX = tester.getTopLeft(title).dx;
+        expect(backPlatform.frameworkHandlesBack, isTrue);
+        expect(await _startBackGesture(tester), isTrue);
+        await tester.pump();
+        expect(find.byKey(const ValueKey("predictive_tab_back_transition")), findsOneWidget);
+
+        await _updateBackGesture(tester, progress: 0.45);
+        await tester.pump();
+        expect(find.byKey(const ValueKey("following_title")), findsOneWidget);
+        expect(title, findsOneWidget);
+        expect(tester.getTopLeft(title).dx, greaterThan(initialTitleX));
+
+        await _sendBackGestureMessage(tester, const MethodCall("cancelBackGesture"));
+        await tester.pump();
+        expect(find.byKey(const ValueKey("predictive_tab_back_transition")), findsNothing);
+        expect(title, findsOneWidget);
+        expect(tester.getTopLeft(title).dx, closeTo(initialTitleX, 0.01));
+        expect(backPlatform.frameworkHandlesBack, isTrue);
+
+        expect(await _startBackGesture(tester), isTrue);
+        await tester.pump();
+        await _updateBackGesture(tester, progress: 0.08);
+        await tester.pump();
+        await _sendBackGestureMessage(tester, const MethodCall("commitBackGesture"));
+        expect(tabsStore.currentRoute, FlowRoutes.following);
+        await tester.pump();
+        expect(find.byKey(const ValueKey("following_title")), findsOneWidget);
+        await tester.pumpAndSettle();
+        expect(backPlatform.frameworkHandlesBack, isFalse);
+      }
+
+      expect(await _startBackGesture(tester), isFalse);
+      backPlatform.systemPops = 0;
+      expect(await tester.binding.handlePopRoute(), isFalse);
+      await tester.pump();
+      expect(backPlatform.systemPops, 1);
       expect(find.byKey(const ValueKey("following_title")), findsOneWidget);
-    }
-  });
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  testWidgets(
+    "predictive back only changes the active retained tab stack",
+    (tester) async {
+      final store = _MemoryTwitchStore()
+        ..accessToken = "token-123"
+        ..webSessionToken = "gql-token-123";
+      final backPlatform = _BackPlatformSpy();
+      await backPlatform.install(tester);
+      addTearDown(backPlatform.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFlowTheme(Brightness.light),
+          home: FlowTabsScreen(
+            authController: _authController(secureStore: store),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey("stream_channel_identity_AussieAntics")));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey("channel_page_aussieantics")), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Browse")));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey("browse_category_card_Just Chatting")));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey("category_streams_page_Just Chatting")), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Settings")));
+      await tester.pumpAndSettle();
+      expect(backPlatform.frameworkHandlesBack, isTrue);
+
+      final hiddenFollowingChannel = find.byKey(
+        const ValueKey("channel_page_aussieantics"),
+        skipOffstage: false,
+      );
+      final hiddenBrowseCategory = find.byKey(
+        const ValueKey("category_streams_page_Just Chatting"),
+        skipOffstage: false,
+      );
+      final followingNavigator = Navigator.of(tester.element(hiddenFollowingChannel));
+      final browseNavigator = Navigator.of(tester.element(hiddenBrowseCategory));
+
+      expect(await _startBackGesture(tester), isTrue);
+      await tester.pump();
+      expect(followingNavigator.userGestureInProgress, isFalse);
+      expect(browseNavigator.userGestureInProgress, isFalse);
+      await _updateBackGesture(tester, progress: 0.4);
+      await tester.pump();
+      await _sendBackGestureMessage(tester, const MethodCall("cancelBackGesture"));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey("settings_title")), findsOneWidget);
+      expect(hiddenFollowingChannel, findsOneWidget);
+      expect(hiddenBrowseCategory, findsOneWidget);
+
+      expect(await _startBackGesture(tester), isTrue);
+      await tester.pump();
+      await _updateBackGesture(tester, progress: 0.4);
+      await tester.pump();
+      await _sendBackGestureMessage(tester, const MethodCall("commitBackGesture"));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey("channel_page_aussieantics")), findsOneWidget);
+      expect(hiddenBrowseCategory, findsOneWidget);
+      expect(backPlatform.frameworkHandlesBack, isTrue);
+
+      expect(await _startBackGesture(tester), isTrue);
+      await tester.pump();
+      expect(followingNavigator.userGestureInProgress, isTrue);
+      expect(browseNavigator.userGestureInProgress, isFalse);
+      await _updateBackGesture(tester, progress: 0.4);
+      await tester.pump();
+      await _sendBackGestureMessage(tester, const MethodCall("commitBackGesture"));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey("following_title")), findsOneWidget);
+      expect(hiddenFollowingChannel, findsNothing);
+      expect(hiddenBrowseCategory, findsOneWidget);
+      expect(backPlatform.frameworkHandlesBack, isFalse);
+
+      await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Browse")));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey("category_streams_page_Just Chatting")), findsOneWidget);
+
+      expect(await _startBackGesture(tester), isTrue);
+      await tester.pump();
+      expect(browseNavigator.userGestureInProgress, isTrue);
+      await _sendBackGestureMessage(tester, const MethodCall("commitBackGesture"));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey("browse_title")), findsOneWidget);
+      expect(backPlatform.frameworkHandlesBack, isTrue);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
 
   testWidgets("does not reload settings preferences when navigating to Settings", (
     tester,
@@ -176,6 +319,72 @@ void main() {
 
     expect(preferencesStore.readCount, initialReadCount);
   });
+}
+
+Future<Object?> _startBackGesture(WidgetTester tester) => _sendBackGestureMessage(
+  tester,
+  const MethodCall("startBackGesture", <String, dynamic>{
+    "touchOffset": <double>[5, 300],
+    "progress": 0.0,
+    "swipeEdge": 0,
+  }),
+);
+
+Future<Object?> _updateBackGesture(
+  WidgetTester tester, {
+  required double progress,
+}) => _sendBackGestureMessage(
+  tester,
+  MethodCall("updateBackGestureProgress", <String, dynamic>{
+    "touchOffset": const <double>[120, 300],
+    "progress": progress,
+    "swipeEdge": 0,
+  }),
+);
+
+Future<Object?> _sendBackGestureMessage(
+  WidgetTester tester,
+  MethodCall methodCall,
+) async {
+  ByteData? response;
+  await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+    "flutter/backgesture",
+    const StandardMethodCodec().encodeMethodCall(methodCall),
+    (data) => response = data,
+  );
+  return response == null ? null : const StandardMethodCodec().decodeEnvelope(response!);
+}
+
+class _BackPlatformSpy {
+  final _frameworkHandlesBackValues = <bool>[];
+  late final TestDefaultBinaryMessenger _messenger;
+  int systemPops = 0;
+
+  bool get frameworkHandlesBack => _frameworkHandlesBackValues.last;
+
+  Future<void> install(WidgetTester tester) async {
+    _messenger = tester.binding.defaultBinaryMessenger;
+    _messenger.setMockMethodCallHandler(SystemChannels.platform, (MethodCall methodCall) {
+      switch (methodCall.method) {
+        case "SystemNavigator.setFrameworkHandlesBack":
+          _frameworkHandlesBackValues.add(methodCall.arguments! as bool);
+          break;
+        case "SystemNavigator.pop":
+          systemPops++;
+          break;
+      }
+      return Future<void>.value();
+    });
+    await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+      "flutter/lifecycle",
+      const StringCodec().encodeMessage("AppLifecycleState.resumed"),
+      (_) {},
+    );
+  }
+
+  void dispose() {
+    _messenger.setMockMethodCallHandler(SystemChannels.platform, null);
+  }
 }
 
 TwitchAuthController _authController({
