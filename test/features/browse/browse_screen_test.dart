@@ -632,6 +632,82 @@ void main() {
     );
   });
 
+  testWidgets("retains Browse content and images when switching sections", (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 1200);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    var topCategoriesRequests = 0;
+    var topLiveStreamsRequests = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: BrowseScreen(
+          authController: _authController(
+            onRequest: (request) {
+              if (_isGraphQlOperation(request, "FlowTopGames") &&
+                  _graphQlVariables(request)["after"] == null) {
+                topCategoriesRequests++;
+              }
+              if (_isGraphQlOperation(request, "FlowTopStreams") &&
+                  _graphQlVariables(request)["after"] == null) {
+                topLiveStreamsRequests++;
+              }
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.drag(find.byType(ListView), const Offset(0, -800));
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(ListView), const Offset(0, 800));
+    await tester.pumpAndSettle();
+
+    final categoryImage = find.descendant(
+      of: find.byKey(
+        const ValueKey("browse_category_card_Just Chatting"),
+        skipOffstage: false,
+      ),
+      matching: find.byType(Image, skipOffstage: false),
+      skipOffstage: false,
+    );
+    final categoryImageElement = tester.element(categoryImage);
+
+    await tester.tap(find.byKey(const ValueKey("browse_segment_live_channels")));
+    await tester.pumpAndSettle();
+
+    final liveImage = find.descendant(
+      of: find.byKey(
+        const ValueKey("stream_thumbnail_AussieAntics"),
+        skipOffstage: false,
+      ),
+      matching: find.byType(Image, skipOffstage: false),
+      skipOffstage: false,
+    );
+    final liveImageElement = tester.element(liveImage);
+    expect(topCategoriesRequests, 1);
+    expect(topLiveStreamsRequests, 1);
+
+    await tester.tap(find.byKey(const ValueKey("browse_segment_categories")));
+    await tester.pumpAndSettle();
+
+    expect(tester.element(categoryImage), same(categoryImageElement));
+    expect(tester.element(liveImage), same(liveImageElement));
+    expect(find.byKey(const ValueKey("stream_thumbnail_AussieAntics")), findsNothing);
+    expect(topCategoriesRequests, 1);
+    expect(topLiveStreamsRequests, 1);
+
+    await tester.tap(find.byKey(const ValueKey("browse_segment_live_channels")));
+    await tester.pumpAndSettle();
+
+    expect(tester.element(liveImage), same(liveImageElement));
+    expect(topCategoriesRequests, 1);
+    expect(topLiveStreamsRequests, 1);
+  });
+
   testWidgets("shows recent search history and clears it", (tester) async {
     final searchHistoryStore = _MemorySearchHistoryStore();
 
@@ -747,6 +823,12 @@ void main() {
         (request) => _isGraphQlOperation(request, "FlowSearchCategories"),
       ),
       isTrue,
+    );
+    expect(
+      requestedRequests.where(
+        (request) => _isGraphQlOperation(request, "FlowGameStreams"),
+      ),
+      isEmpty,
     );
     expect(
       requestedRequests.any(
@@ -960,7 +1042,7 @@ MockClient _browseHttpClient({_RequestObserver? onRequest}) => MockClient((reque
 
       return _categoryConnectionResponse(
         [
-          _categoryJson(id: "509658", name: "Just Chatting"),
+          _categoryJson(id: "509658", name: "Just Chatting", viewerCount: 31000),
           _categoryJson(id: "21779", name: "League of Legends"),
           _categoryJson(id: "32399", name: "Counter-Strike"),
           _categoryJson(id: "29595", name: "Dota 2"),
@@ -1032,6 +1114,7 @@ MockClient _browseHttpClient({_RequestObserver? onRequest}) => MockClient((reque
             id: "27471",
             name: "Minecraft",
             boxArtUrl: "https://static-cdn.jtvnw.net/ttv-boxart/27471-52x72.jpg",
+            viewerCount: 4200,
           ),
         ],
         fieldName: "searchCategories",
@@ -1199,10 +1282,12 @@ Map<String, Object?> _categoryJson({
   required String id,
   required String name,
   String? boxArtUrl,
+  int viewerCount = 0,
 }) => {
   "id": id,
   "displayName": name,
   "boxArtURL": boxArtUrl ?? "https://static-cdn.jtvnw.net/ttv-boxart/$id-{width}x{height}.jpg",
+  "viewersCount": viewerCount,
 };
 
 Map<String, Object?> _streamJson({

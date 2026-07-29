@@ -37,6 +37,19 @@ void main() {
     expect(followedRequests, 2);
   });
 
+  test("does not clear the shared API cache during a Following refresh", () async {
+    final apiCache = _TrackingApiCache();
+    final store = FollowingStore(
+      authController: _authController(),
+      apiCache: apiCache,
+    );
+
+    await store.loadSavedConnection();
+    await store.loadSavedConnection(refresh: true);
+
+    expect(apiCache.clearCount, 0);
+  });
+
   test("tracks logged-out sessions and clears authenticated state", () async {
     final secureStore = _MemoryTwitchStore();
     final store = FollowingStore(
@@ -103,7 +116,7 @@ void main() {
 
   test("queues and coalesces refreshes during session restoration", () async {
     final authController = _DelayedAuthController();
-    final apiCache = _CountingApiCache();
+    final apiCache = _TrackingApiCache();
     final store = FollowingStore(
       authController: authController,
       apiCache: apiCache,
@@ -119,11 +132,11 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(authController.loadCalls, 2);
-    expect(apiCache.clearCalls, 1);
     authController.refreshedRestore.complete(_connection("fresh-user"));
     await Future.wait([restore, refresh, duplicateRefresh]);
 
     expect(authController.loadCalls, 2);
+    expect(apiCache.clearCount, 1);
     expect(store.connection?.user.id, "fresh-user");
     expect(store.sessionStatus, TwitchSessionStatus.authenticated);
   });
@@ -367,17 +380,17 @@ class _StaticCookieExtractor implements TwitchCookieExtractor {
   Future<String?> extractTwitchAuthToken() async => null;
 }
 
-class _CountingApiCache extends TwitchApiCache {
-  _CountingApiCache()
+class _TrackingApiCache extends TwitchApiCache {
+  _TrackingApiCache()
     : super(
-        clientLoader: () async => throw StateError("Unexpected API client load."),
+        clientLoader: () async => throw StateError("API cache should not load"),
       );
 
-  int clearCalls = 0;
+  int clearCount = 0;
 
   @override
   void clear() {
-    clearCalls++;
+    clearCount++;
     super.clear();
   }
 }

@@ -15,8 +15,14 @@ abstract class BrowseStoreBase with Store {
   BrowseStoreBase({required this.apiCache});
 
   final TwitchApiCache apiCache;
+  int _categoriesFirstPageLength = 0;
+  int _liveChannelsFirstPageLength = 0;
+  Future<void>? _categoriesLoad;
+  bool _categoriesRefreshQueued = false;
+  bool _categoriesQueuedPreserveTail = true;
   Future<void>? _liveChannelsLoad;
-  Future<void>? _liveChannelsRefresh;
+  bool _liveChannelsRefreshQueued = false;
+  bool _liveChannelsQueuedPreserveTail = true;
 
   @observable
   List<BrowseCategory> categories = const <BrowseCategory>[];
@@ -96,14 +102,67 @@ abstract class BrowseStoreBase with Store {
   Future<void> loadCategories({
     bool reset = false,
     bool refresh = false,
+    bool preserveTail = false,
   }) async {
+    final activeLoad = _categoriesLoad;
+    if (activeLoad != null) {
+      if (refresh) {
+        _queueCategoriesRefresh(preserveTail: preserveTail);
+      }
+      await activeLoad;
+      return;
+    }
     if (isLoadingCategories || (!reset && categoriesLoaded && categoriesCursor == null)) {
       return;
     }
 
+    final operation = Completer<void>();
+    final operationFuture = operation.future;
+    _categoriesLoad = operationFuture;
+    var nextReset = reset;
+    var nextRefresh = refresh;
+    var nextPreserveTail = preserveTail;
+
+    try {
+      while (true) {
+        await _loadCategoriesOnce(
+          reset: nextReset,
+          refresh: nextRefresh,
+          preserveTail: nextPreserveTail,
+        );
+        if (!_categoriesRefreshQueued) {
+          break;
+        }
+
+        nextReset = true;
+        nextRefresh = true;
+        nextPreserveTail = _categoriesQueuedPreserveTail;
+        _categoriesRefreshQueued = false;
+        _categoriesQueuedPreserveTail = true;
+      }
+    } finally {
+      if (identical(_categoriesLoad, operationFuture)) {
+        _categoriesLoad = null;
+      }
+      operation.complete();
+    }
+  }
+
+  Future<void> _loadCategoriesOnce({
+    required bool reset,
+    required bool refresh,
+    required bool preserveTail,
+  }) async {
     isLoadingCategories = true;
     categoriesError = null;
-    if (reset) {
+    final preservedCursor = categoriesCursor;
+    final tailStart = _categoriesFirstPageLength > categories.length
+        ? categories.length
+        : _categoriesFirstPageLength;
+    final preservedTail = preserveTail
+        ? categories.skip(tailStart).toList(growable: false)
+        : const <BrowseCategory>[];
+    if (reset && !preserveTail) {
       categoriesCursor = null;
     }
 
@@ -112,13 +171,25 @@ abstract class BrowseStoreBase with Store {
         cursor: reset ? null : categoriesCursor,
         refresh: refresh,
       );
-      final nextCategories = await Future.wait([
-        for (final category in page.data)
-          browseCategoryFromApi(apiCache, category, refresh: refresh),
-      ]);
+      final nextCategories = [
+        for (final category in page.data) browseCategoryFromApi(category),
+      ];
+      var hasPreservedTail = false;
 
-      categories = reset ? nextCategories : [...categories, ...nextCategories];
-      categoriesCursor = page.cursor;
+      if (reset) {
+        final firstPageCategories = _mergeCategories(
+          const <BrowseCategory>[],
+          nextCategories,
+        );
+        categories = preserveTail
+            ? _prependUniqueCategories(firstPageCategories, preservedTail)
+            : firstPageCategories;
+        hasPreservedTail = categories.length > firstPageCategories.length;
+        _categoriesFirstPageLength = firstPageCategories.length;
+      } else {
+        categories = _mergeCategories(categories, nextCategories);
+      }
+      categoriesCursor = hasPreservedTail ? preservedCursor : page.cursor;
       categoriesLoaded = true;
     } on Object catch (error) {
       categoriesError = browseErrorMessage(error);
@@ -127,34 +198,25 @@ abstract class BrowseStoreBase with Store {
     }
   }
 
+  void _queueCategoriesRefresh({required bool preserveTail}) {
+    _categoriesQueuedPreserveTail = _categoriesRefreshQueued
+        ? _categoriesQueuedPreserveTail && preserveTail
+        : preserveTail;
+    _categoriesRefreshQueued = true;
+  }
+
   @action
   Future<void> loadLiveChannels({
     bool reset = false,
     bool refresh = false,
+    bool preserveTail = false,
   }) async {
     final activeLoad = _liveChannelsLoad;
     if (activeLoad != null) {
-      if (!refresh) {
-        return;
+      if (refresh) {
+        _queueLiveChannelsRefresh(preserveTail: preserveTail);
       }
-      final activeRefresh = _liveChannelsRefresh;
-      if (activeRefresh != null) {
-        await activeRefresh;
-        return;
-      }
-
-      final operation = Completer<void>();
-      final operationFuture = operation.future;
-      _liveChannelsRefresh = operationFuture;
-      try {
-        await activeLoad;
-        await loadLiveChannels(reset: true, refresh: true);
-      } finally {
-        if (identical(_liveChannelsRefresh, operationFuture)) {
-          _liveChannelsRefresh = null;
-        }
-        operation.complete();
-      }
+      await activeLoad;
       return;
     }
     if (isLoadingLiveChannels || (!reset && liveChannelsLoaded && liveChannelsCursor == null)) {
@@ -164,9 +226,50 @@ abstract class BrowseStoreBase with Store {
     final operation = Completer<void>();
     final operationFuture = operation.future;
     _liveChannelsLoad = operationFuture;
+    var nextReset = reset;
+    var nextRefresh = refresh;
+    var nextPreserveTail = preserveTail;
+
+    try {
+      while (true) {
+        await _loadLiveChannelsOnce(
+          reset: nextReset,
+          refresh: nextRefresh,
+          preserveTail: nextPreserveTail,
+        );
+        if (!_liveChannelsRefreshQueued) {
+          break;
+        }
+
+        nextReset = true;
+        nextRefresh = true;
+        nextPreserveTail = _liveChannelsQueuedPreserveTail;
+        _liveChannelsRefreshQueued = false;
+        _liveChannelsQueuedPreserveTail = true;
+      }
+    } finally {
+      if (identical(_liveChannelsLoad, operationFuture)) {
+        _liveChannelsLoad = null;
+      }
+      operation.complete();
+    }
+  }
+
+  Future<void> _loadLiveChannelsOnce({
+    required bool reset,
+    required bool refresh,
+    required bool preserveTail,
+  }) async {
     isLoadingLiveChannels = true;
     liveChannelsError = null;
-    if (reset) {
+    final preservedCursor = liveChannelsCursor;
+    final tailStart = _liveChannelsFirstPageLength > liveChannels.length
+        ? liveChannels.length
+        : _liveChannelsFirstPageLength;
+    final preservedTail = preserveTail
+        ? liveChannels.skip(tailStart).toList(growable: false)
+        : const <StreamChannel>[];
+    if (reset && !preserveTail) {
       liveChannelsCursor = null;
     }
 
@@ -186,19 +289,35 @@ abstract class BrowseStoreBase with Store {
               avatarImageUrl: usersById[stream.userId]?.profileImageUrl,
             ),
       ];
+      var hasPreservedTail = false;
 
-      liveChannels = reset ? nextChannels : [...liveChannels, ...nextChannels];
-      liveChannelsCursor = page.cursor;
+      if (reset) {
+        final firstPageChannels = _mergeLiveChannels(
+          const <StreamChannel>[],
+          nextChannels,
+        );
+        liveChannels = preserveTail
+            ? _prependUniqueLiveChannels(firstPageChannels, preservedTail)
+            : firstPageChannels;
+        hasPreservedTail = liveChannels.length > firstPageChannels.length;
+        _liveChannelsFirstPageLength = firstPageChannels.length;
+      } else {
+        liveChannels = _mergeLiveChannels(liveChannels, nextChannels);
+      }
+      liveChannelsCursor = hasPreservedTail ? preservedCursor : page.cursor;
       liveChannelsLoaded = true;
     } on Object catch (error) {
       liveChannelsError = browseErrorMessage(error);
     } finally {
       isLoadingLiveChannels = false;
-      if (identical(_liveChannelsLoad, operationFuture)) {
-        _liveChannelsLoad = null;
-      }
-      operation.complete();
     }
+  }
+
+  void _queueLiveChannelsRefresh({required bool preserveTail}) {
+    _liveChannelsQueuedPreserveTail = _liveChannelsRefreshQueued
+        ? _liveChannelsQueuedPreserveTail && preserveTail
+        : preserveTail;
+    _liveChannelsRefreshQueued = true;
   }
 
   Future<void> refreshActiveSection() {
@@ -207,4 +326,85 @@ abstract class BrowseStoreBase with Store {
     }
     return loadLiveChannels(reset: true, refresh: true);
   }
+
+  Future<void> refreshCategoriesFirstPage() =>
+      loadCategories(reset: true, refresh: true, preserveTail: true);
+
+  Future<void> refreshLiveChannelsFirstPage() =>
+      loadLiveChannels(reset: true, refresh: true, preserveTail: true);
+}
+
+List<BrowseCategory> _prependUniqueCategories(
+  List<BrowseCategory> firstPage,
+  List<BrowseCategory> tail,
+) {
+  final seen = <String>{};
+  return [
+    for (final category in firstPage.followedBy(tail))
+      if (seen.add(category.id)) category,
+  ];
+}
+
+List<BrowseCategory> _mergeCategories(
+  List<BrowseCategory> current,
+  List<BrowseCategory> next,
+) {
+  final merged = <BrowseCategory>[];
+  final indicesById = <String, int>{};
+
+  for (final category in current.followedBy(next)) {
+    final existingIndex = indicesById[category.id];
+    if (existingIndex == null) {
+      indicesById[category.id] = merged.length;
+      merged.add(category);
+    } else {
+      merged[existingIndex] = category;
+    }
+  }
+
+  return merged;
+}
+
+List<StreamChannel> _prependUniqueLiveChannels(
+  List<StreamChannel> firstPage,
+  List<StreamChannel> tail,
+) {
+  final seen = <String>{};
+  return [
+    for (final channel in firstPage.followedBy(tail))
+      if (seen.add(_liveChannelIdentity(channel))) channel,
+  ];
+}
+
+List<StreamChannel> _mergeLiveChannels(
+  List<StreamChannel> current,
+  List<StreamChannel> next,
+) {
+  final merged = <StreamChannel>[];
+  final indicesByIdentity = <String, int>{};
+
+  for (final channel in current.followedBy(next)) {
+    final identity = _liveChannelIdentity(channel);
+    final existingIndex = indicesByIdentity[identity];
+    if (existingIndex == null) {
+      indicesByIdentity[identity] = merged.length;
+      merged.add(channel);
+    } else {
+      merged[existingIndex] = channel;
+    }
+  }
+
+  return merged;
+}
+
+String _liveChannelIdentity(StreamChannel channel) {
+  final id = channel.id.trim();
+  if (id.isNotEmpty) {
+    return "id:$id";
+  }
+  final login = channel.login.trim().toLowerCase();
+  if (login.isNotEmpty) {
+    return "login:$login";
+  }
+  return "name:${channel.name.trim().toLowerCase()}";
 }

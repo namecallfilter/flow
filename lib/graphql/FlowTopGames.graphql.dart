@@ -308,6 +308,13 @@ const documentNodeQueryFlowTopGames = DocumentNode(
                               directives: [],
                               selectionSet: null,
                             ),
+                            FieldNode(
+                              name: NameNode(value: 'viewersCount'),
+                              alias: null,
+                              arguments: [],
+                              directives: [],
+                              selectionSet: null,
+                            ),
                           ],
                         ),
                       ),
@@ -773,6 +780,7 @@ class Query$FlowTopGames$games$edges$node {
     this.id,
     this.displayName,
     this.boxArtURL,
+    this.viewersCount,
   });
 
   factory Query$FlowTopGames$games$edges$node.fromJson(
@@ -785,10 +793,14 @@ class Query$FlowTopGames$games$edges$node {
     final l$boxArtURL = json.containsKey('boxArtURL')
         ? json['boxArtURL']
         : null;
+    final l$viewersCount = json.containsKey('viewersCount')
+        ? json['viewersCount']
+        : null;
     return Query$FlowTopGames$games$edges$node(
       id: (l$id as String?),
       displayName: (l$displayName as String?),
       boxArtURL: (l$boxArtURL as String?),
+      viewersCount: (l$viewersCount as int?),
     );
   }
 
@@ -798,6 +810,8 @@ class Query$FlowTopGames$games$edges$node {
 
   final String? boxArtURL;
 
+  final int? viewersCount;
+
   Map<String, dynamic> toJson() {
     final _resultData = <String, dynamic>{};
     final l$id = id;
@@ -806,6 +820,8 @@ class Query$FlowTopGames$games$edges$node {
     _resultData['displayName'] = l$displayName;
     final l$boxArtURL = boxArtURL;
     _resultData['boxArtURL'] = l$boxArtURL;
+    final l$viewersCount = viewersCount;
+    _resultData['viewersCount'] = l$viewersCount;
     return _resultData;
   }
 
@@ -814,7 +830,8 @@ class Query$FlowTopGames$games$edges$node {
     final l$id = id;
     final l$displayName = displayName;
     final l$boxArtURL = boxArtURL;
-    return Object.hashAll([l$id, l$displayName, l$boxArtURL]);
+    final l$viewersCount = viewersCount;
+    return Object.hashAll([l$id, l$displayName, l$boxArtURL, l$viewersCount]);
   }
 
   @override
@@ -841,6 +858,11 @@ class Query$FlowTopGames$games$edges$node {
     if (l$boxArtURL != lOther$boxArtURL) {
       return false;
     }
+    final l$viewersCount = viewersCount;
+    final lOther$viewersCount = other.viewersCount;
+    if (l$viewersCount != lOther$viewersCount) {
+      return false;
+    }
     return true;
   }
 }
@@ -862,7 +884,12 @@ abstract class CopyWith$Query$FlowTopGames$games$edges$node<TRes> {
   factory CopyWith$Query$FlowTopGames$games$edges$node.stub(TRes res) =
       _CopyWithStubImpl$Query$FlowTopGames$games$edges$node;
 
-  TRes call({String? id, String? displayName, String? boxArtURL});
+  TRes call({
+    String? id,
+    String? displayName,
+    String? boxArtURL,
+    int? viewersCount,
+  });
 }
 
 class _CopyWithImpl$Query$FlowTopGames$games$edges$node<TRes>
@@ -879,6 +906,7 @@ class _CopyWithImpl$Query$FlowTopGames$games$edges$node<TRes>
     Object? id = _undefined,
     Object? displayName = _undefined,
     Object? boxArtURL = _undefined,
+    Object? viewersCount = _undefined,
   }) => _then(
     Query$FlowTopGames$games$edges$node(
       id: id == _undefined ? _instance.id : (id as String?),
@@ -888,6 +916,9 @@ class _CopyWithImpl$Query$FlowTopGames$games$edges$node<TRes>
       boxArtURL: boxArtURL == _undefined
           ? _instance.boxArtURL
           : (boxArtURL as String?),
+      viewersCount: viewersCount == _undefined
+          ? _instance.viewersCount
+          : (viewersCount as int?),
     ),
   );
 }
@@ -898,7 +929,12 @@ class _CopyWithStubImpl$Query$FlowTopGames$games$edges$node<TRes>
 
   TRes _res;
 
-  call({String? id, String? displayName, String? boxArtURL}) => _res;
+  call({
+    String? id,
+    String? displayName,
+    String? boxArtURL,
+    int? viewersCount,
+  }) => _res;
 }
 
 class Query$FlowTopGames$games$pageInfo {

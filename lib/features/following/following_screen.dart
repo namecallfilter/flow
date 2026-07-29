@@ -41,6 +41,7 @@ class FollowingScreen extends StatefulWidget {
     this.openTwitchLogin,
     this.onMeRequested,
     this.bottomNavigationBar,
+    this.periodicRefreshInterval = const Duration(seconds: 30),
   });
 
   final TwitchAuthController? authController;
@@ -50,6 +51,7 @@ class FollowingScreen extends StatefulWidget {
   final TwitchLoginOpener? openTwitchLogin;
   final AsyncCallback? onMeRequested;
   final Widget? bottomNavigationBar;
+  final Duration? periodicRefreshInterval;
 
   @override
   State<FollowingScreen> createState() => _FollowingScreenState();
@@ -64,6 +66,9 @@ class FollowingScreen extends StatefulWidget {
     properties.add(ObjectFlagProperty<TwitchLoginOpener?>.has("openTwitchLogin", openTwitchLogin));
     properties.add(ObjectFlagProperty<AsyncCallback?>.has("onMeRequested", onMeRequested));
     properties.add(DiagnosticsProperty<Widget?>("bottomNavigationBar", bottomNavigationBar));
+    properties.add(
+      DiagnosticsProperty<Duration?>("periodicRefreshInterval", periodicRefreshInterval),
+    );
   }
 }
 
@@ -291,6 +296,7 @@ class _FollowingScreenState extends State<FollowingScreen> {
                   onRefresh: _refreshFollowing,
                   indicatorStartTop: PageHeaderLayout.largeTitleRefreshIndicatorStartTop,
                   indicatorMaxTravel: 52,
+                  periodicRefreshInterval: widget.periodicRefreshInterval,
                   child: ListView(
                     controller: _scrollController,
                     physics: const AlwaysScrollableScrollPhysics(
@@ -323,6 +329,11 @@ class _FollowingScreenState extends State<FollowingScreen> {
                         else
                           for (final channel in liveChannels)
                             StreamCard(
+                              key: ValueKey((
+                                channel.id,
+                                channel.login,
+                                channel.name,
+                              )),
                               channel: channel,
                               onChannelSelected: _openLiveChannel,
                               onStreamSelected: _openPlayer,
@@ -1046,6 +1057,7 @@ class _ThumbnailBackground extends StatelessWidget {
     return Image.network(
       url,
       fit: BoxFit.cover,
+      gaplessPlayback: true,
       errorBuilder: (_, _, _) => fallback,
     );
   }

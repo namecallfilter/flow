@@ -2,6 +2,7 @@ import "dart:async";
 import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
+import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
 import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/routes.dart";
@@ -9,6 +10,8 @@ import "package:flow/app/spacing.dart";
 import "package:flow/app/tabs_screen.dart";
 import "package:flow/app/tabs_store.dart";
 import "package:flow/app/theme.dart";
+import "package:flow/features/browse/browse_store.dart";
+import "package:flow/features/following/following_store.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
@@ -142,6 +145,72 @@ void main() {
       expect(find.text("Welcome to Flow"), findsOneWidget);
     });
   }
+
+  testWidgets("dismisses the startup login offer after a resumed restore succeeds", (
+    tester,
+  ) async {
+    final authController = _DelayedTopLevelAuthController();
+    final browseCache = _DelayedTopLevelBrowseCache();
+    final followingStore = FollowingStore(authController: authController);
+    final browseStore = BrowseStore(apiCache: browseCache)
+      ..categoriesLoaded = true
+      ..liveChannelsLoaded = true;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.light),
+        home: FlowTabsScreen(
+          followingStore: followingStore,
+          browseStore: browseStore,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(authController.loads, hasLength(1));
+    expect(browseCache.categoryLoads, isEmpty);
+    expect(browseCache.liveLoads, isEmpty);
+    authController.loads.single.completeError(StateError("Temporary restore failure."));
+    await tester.pumpAndSettle();
+
+    expect(followingStore.sessionStatus, TwitchSessionStatus.restoreFailed);
+    expect(find.byKey(const ValueKey("login_offer_screen")), findsOneWidget);
+    expect(find.textContaining("couldn't restore"), findsOneWidget);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+
+    expect(authController.loads, hasLength(2));
+    expect(browseCache.categoryLoads, hasLength(1));
+    expect(browseCache.liveLoads, hasLength(1));
+    authController.loads[1].complete(_sessionConnection());
+    await tester.pump();
+    await tester.pump();
+
+    expect(followingStore.sessionStatus, TwitchSessionStatus.authenticated);
+    expect(find.byKey(const ValueKey("login_offer_screen")), findsNothing);
+    expect(find.byKey(const ValueKey("following_title")), findsOneWidget);
+    expect(browseCache.categoryLoads.single.response.isCompleted, isFalse);
+    expect(browseCache.liveLoads.single.response.isCompleted, isFalse);
+
+    browseCache.categoryLoads.single.response.complete(
+      const TwitchPage(data: <TwitchCategory>[], cursor: null),
+    );
+    browseCache.liveLoads.single.response.complete(
+      const TwitchPage(data: <TwitchFollowedStream>[], cursor: null),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey("login_offer_screen")), findsNothing);
+    expect(find.byKey(const ValueKey("following_title")), findsOneWidget);
+    expect(authController.loads, hasLength(2));
+  });
 
   testWidgets("can bypass the startup gate when launch login is disabled", (tester) async {
     final secureStore = _DelayedAccessTwitchStore();
@@ -542,6 +611,12 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(followedLiveRequests, 1);
+    expect(topCategoriesRequests, 1);
+    expect(topLiveStreamsRequests, 1);
+    expect(
+      find.byKey(const ValueKey("browse_title"), skipOffstage: false),
+      findsOneWidget,
+    );
 
     await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Browse")));
     await tester.pumpAndSettle();
@@ -566,6 +641,167 @@ void main() {
     expect(topCategoriesRequests, 1);
     expect(topLiveStreamsRequests, 1);
     expect(followedLiveRequests, 1);
+  });
+
+  testWidgets("refreshes Following and Browse roots while hidden and on resume", (
+    tester,
+  ) async {
+    var topCategoriesRequests = 0;
+    var topLiveStreamsRequests = 0;
+    var followedLiveRequests = 0;
+    var categoryStreamsRequests = 0;
+    var channelDetailsRequests = 0;
+    final store = _MemoryTwitchStore()
+      ..accessToken = "token-123"
+      ..webSessionToken = "gql-token-123";
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.light),
+        home: FlowTabsScreen(
+          authController: _authController(
+            secureStore: store,
+            onRequest: (request) {
+              if (_isGraphQlOperation(request, "FlowTopGames") &&
+                  _graphQlVariables(request)["after"] == null) {
+                topCategoriesRequests++;
+              }
+              if (_isGraphQlOperation(request, "FlowTopStreams") &&
+                  _graphQlVariables(request)["after"] == null) {
+                topLiveStreamsRequests++;
+              }
+              if (_isGraphQlOperation(request, "FlowFollowedLiveUsers")) {
+                followedLiveRequests++;
+              }
+              if (_isGraphQlOperation(request, "FlowGameStreams")) {
+                categoryStreamsRequests++;
+              }
+              if (_isGraphQlOperation(request, "FlowChannelDetails")) {
+                channelDetailsRequests++;
+              }
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(topCategoriesRequests, 1);
+    expect(topLiveStreamsRequests, 1);
+    expect(followedLiveRequests, 1);
+    expect(categoryStreamsRequests, 0);
+    expect(channelDetailsRequests, 0);
+
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pumpAndSettle();
+
+    expect(topCategoriesRequests, 2);
+    expect(topLiveStreamsRequests, 2);
+    expect(followedLiveRequests, 2);
+
+    await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Browse")));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pumpAndSettle();
+
+    expect(topCategoriesRequests, 3);
+    expect(topLiveStreamsRequests, 3);
+    expect(followedLiveRequests, 3);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pumpAndSettle();
+
+    expect(topCategoriesRequests, 3);
+    expect(topLiveStreamsRequests, 3);
+    expect(followedLiveRequests, 3);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(topCategoriesRequests, 4);
+    expect(topLiveStreamsRequests, 4);
+    expect(followedLiveRequests, 4);
+    expect(categoryStreamsRequests, 0);
+    expect(channelDetailsRequests, 0);
+  });
+
+  testWidgets("coalesces timer and resume refreshes during initial root loads", (
+    tester,
+  ) async {
+    final authController = _DelayedTopLevelAuthController();
+    final browseCache = _DelayedTopLevelBrowseCache();
+    final followingStore = FollowingStore(authController: authController);
+    final browseStore = BrowseStore(apiCache: browseCache);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.light),
+        home: FlowTabsScreen(
+          followingStore: followingStore,
+          browseStore: browseStore,
+          showLoginOnLaunch: false,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(authController.loads, hasLength(1));
+    expect(browseCache.categoryLoads, hasLength(1));
+    expect(browseCache.liveLoads, hasLength(1));
+
+    await tester.pump(const Duration(seconds: 30));
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+
+    expect(authController.loads, hasLength(1));
+    expect(browseCache.categoryLoads, hasLength(1));
+    expect(browseCache.liveLoads, hasLength(1));
+
+    authController.loads.single.complete(_sessionConnection());
+    browseCache.categoryLoads.single.response.complete(
+      const TwitchPage(data: <TwitchCategory>[], cursor: null),
+    );
+    browseCache.liveLoads.single.response.complete(
+      const TwitchPage(data: <TwitchFollowedStream>[], cursor: null),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(authController.loads, hasLength(2));
+    expect(browseCache.categoryLoads, hasLength(2));
+    expect(browseCache.liveLoads, hasLength(2));
+    expect(
+      browseCache.categoryLoads.map((load) => load.refresh),
+      [false, true],
+    );
+    expect(
+      browseCache.liveLoads.map((load) => load.refresh),
+      [false, true],
+    );
+
+    authController.loads[1].complete(_sessionConnection());
+    browseCache.categoryLoads[1].response.complete(
+      const TwitchPage(data: <TwitchCategory>[], cursor: null),
+    );
+    browseCache.liveLoads[1].response.complete(
+      const TwitchPage(data: <TwitchFollowedStream>[], cursor: null),
+    );
+    await tester.pumpAndSettle();
+
+    expect(authController.loads, hasLength(2));
+    expect(browseCache.categoryLoads, hasLength(2));
+    expect(browseCache.liveLoads, hasLength(2));
   });
 
   testWidgets("keeps Browse category route when switching tabs", (tester) async {
@@ -1121,6 +1357,80 @@ http.Response _jsonResponse(Map<String, Object?> body) => http.Response(
   200,
   headers: {"content-type": "application/json"},
 );
+
+class _DelayedTopLevelAuthController extends TwitchAuthController {
+  _DelayedTopLevelAuthController()
+    : super(
+        config: const TwitchAuthConfig(clientId: "client-123"),
+        secureStore: _MemoryTwitchStore(),
+        apiClientFactory: (accessToken, {gqlAccessToken}) => TwitchApiClient(
+          clientId: "client-123",
+          accessToken: accessToken,
+        ),
+        cookieExtractor: const _StaticCookieExtractor(),
+      );
+
+  final loads = <Completer<TwitchAuthConnection?>>[];
+
+  @override
+  Future<TwitchAuthConnection?> loadSavedConnection() {
+    final load = Completer<TwitchAuthConnection?>();
+    loads.add(load);
+    return load.future;
+  }
+}
+
+class _DelayedTopLevelBrowseCache extends TwitchApiCache {
+  _DelayedTopLevelBrowseCache()
+    : super(
+        clientLoader: () async => throw StateError("Unexpected API client load."),
+      );
+
+  final categoryLoads =
+      <
+        ({
+          bool refresh,
+          Completer<TwitchPage<TwitchCategory>> response,
+        })
+      >[];
+  final liveLoads =
+      <
+        ({
+          bool refresh,
+          Completer<TwitchPage<TwitchFollowedStream>> response,
+        })
+      >[];
+
+  @override
+  Future<TwitchPage<TwitchCategory>> fetchTopCategoriesPage({
+    int first = 12,
+    String? cursor,
+    bool refresh = false,
+  }) {
+    final response = Completer<TwitchPage<TwitchCategory>>();
+    categoryLoads.add((refresh: refresh, response: response));
+    return response.future;
+  }
+
+  @override
+  Future<TwitchPage<TwitchFollowedStream>> fetchLiveStreamsPage({
+    int first = 20,
+    List<String> gameIds = const <String>[],
+    List<String> userLogins = const <String>[],
+    String? cursor,
+    bool refresh = false,
+  }) {
+    final response = Completer<TwitchPage<TwitchFollowedStream>>();
+    liveLoads.add((refresh: refresh, response: response));
+    return response.future;
+  }
+
+  @override
+  Future<Map<String, TwitchUser>> fetchUsersByIds(
+    List<String> ids, {
+    bool refresh = false,
+  }) async => const <String, TwitchUser>{};
+}
 
 class _MemoryTwitchStore implements TwitchSecureStore {
   String? accessToken;

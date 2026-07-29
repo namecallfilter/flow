@@ -119,6 +119,8 @@ abstract class FollowingStoreBase with Store {
       }
       return;
     }
+    final hadAttemptedSavedConnection = _hasAttemptedSavedConnection;
+    final previousConnection = connection;
     _hasAttemptedSavedConnection = true;
     final operation = Completer<void>();
     final operationFuture = operation.future;
@@ -133,11 +135,7 @@ abstract class FollowingStoreBase with Store {
         return;
       }
 
-      if (refresh) {
-        apiCache?.clear();
-      }
-
-      if (connection == null) {
+      if (connection == null && !hadAttemptedSavedConnection) {
         sessionStatus = TwitchSessionStatus.restoring;
       }
       isLoadingFollowing = true;
@@ -147,6 +145,10 @@ abstract class FollowingStoreBase with Store {
       final savedConnection = await authController.loadSavedConnection();
       if (revision != _sessionRevision) {
         return;
+      }
+      if (hadAttemptedSavedConnection &&
+          !_isSameTwitchSession(previousConnection, savedConnection)) {
+        apiCache?.clear();
       }
       connection = savedConnection;
       sessionStatus = savedConnection == null
@@ -215,3 +217,8 @@ abstract class FollowingStoreBase with Store {
     offlineExpandedOverride = !offlineExpanded;
   }
 }
+
+bool _isSameTwitchSession(
+  TwitchAuthConnection? previous,
+  TwitchAuthConnection? next,
+) => previous?.user.id == next?.user.id;

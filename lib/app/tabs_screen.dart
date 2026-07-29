@@ -91,6 +91,8 @@ class FlowTabsScreen extends StatefulWidget {
 }
 
 class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObserver {
+  static const _topLevelRefreshInterval = Duration(seconds: 30);
+
   final _followingNavigatorKey = GlobalKey<NavigatorState>();
   final _browseNavigatorKey = GlobalKey<NavigatorState>();
   final _settingsNavigatorKey = GlobalKey<NavigatorState>();
@@ -106,6 +108,11 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
   late final _TabNavigatorObserver _browseNavigatorObserver;
   late final _TabNavigatorObserver _settingsNavigatorObserver;
   late final ValueNotifier<double> _tabBackProgress;
+  Timer? _topLevelRefreshTimer;
+  Future<void>? _topLevelRefresh;
+  bool _topLevelRefreshQueued = false;
+  Future<void>? _queuedFollowingRefresh;
+  bool _appIsResumed = false;
   late final Future<void> _initialSessionRestore;
   bool _isStartupResolved = false;
   bool _showStartupLoginOffer = false;
@@ -127,6 +134,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
     _tabsStore = widget.tabsStore ?? TabsStore(initialRoute: widget.initialRoute);
     _visitedRoutes
       ..add(FlowRoutes.following)
+      ..add(FlowRoutes.browse)
       ..add(_tabsStore.currentRoute);
     _browseStore = widget.browseStore ?? BrowseStore(apiCache: _apiCache);
     _followingStore =
@@ -149,7 +157,17 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
     _browseNavigatorObserver = _TabNavigatorObserver(_handleTabNavigatorChanged);
     _settingsNavigatorObserver = _TabNavigatorObserver(_handleTabNavigatorChanged);
     _tabBackProgress = ValueNotifier(0);
+    final lifecycleState = WidgetsBinding.instance.lifecycleState;
+    _appIsResumed = lifecycleState == null || lifecycleState == AppLifecycleState.resumed;
     WidgetsBinding.instance.addObserver(this);
+    _topLevelRefreshTimer = Timer.periodic(_topLevelRefreshInterval, (_) {
+      if (_appIsResumed) {
+        unawaited(_refreshTopLevelData(refresh: true));
+      }
+    });
+    if (_appIsResumed) {
+      unawaited(_refreshTopLevelData(refresh: false));
+    }
   }
 
   Future<void> _restoreInitialSession() async {
@@ -310,13 +328,90 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
       _visitedRoutes.add(nextRoute);
     });
     _tabsStore.setCurrentRoute(nextRoute);
+    if (nextRoute == FlowRoutes.browse &&
+        (!_browseStore.categoriesLoaded || !_browseStore.liveChannelsLoaded)) {
+      unawaited(_refreshTopLevelData(refresh: false));
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _topLevelRefreshTimer?.cancel();
     _tabBackProgress.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final wasResumed = _appIsResumed;
+    _appIsResumed = state == AppLifecycleState.resumed;
+    if (_appIsResumed && !wasResumed) {
+      unawaited(_refreshTopLevelData(refresh: true));
+    }
+  }
+
+  Future<void> _refreshTopLevelData({required bool refresh}) async {
+    final activeRefresh = _topLevelRefresh;
+    if (activeRefresh != null) {
+      if (refresh) {
+        _topLevelRefreshQueued = true;
+        _queuedFollowingRefresh ??= _refreshSavedConnection(refresh: true);
+      }
+      await activeRefresh;
+      return;
+    }
+
+    final operation = Completer<void>();
+    final operationFuture = operation.future;
+    _topLevelRefresh = operationFuture;
+    var nextRefresh = refresh;
+    Future<void>? nextFollowingRefresh;
+
+    try {
+      while (true) {
+        await Future.wait([
+          nextFollowingRefresh ?? _refreshSavedConnection(refresh: nextRefresh),
+          if (nextRefresh || !_browseStore.categoriesLoaded)
+            nextRefresh && _browseStore.categoriesLoaded
+                ? _browseStore.refreshCategoriesFirstPage()
+                : _browseStore.loadCategories(reset: true, refresh: nextRefresh),
+          if (nextRefresh || !_browseStore.liveChannelsLoaded)
+            nextRefresh && _browseStore.liveChannelsLoaded
+                ? _browseStore.refreshLiveChannelsFirstPage()
+                : _browseStore.loadLiveChannels(reset: true, refresh: nextRefresh),
+        ]);
+        if (!_topLevelRefreshQueued || !mounted) {
+          break;
+        }
+
+        nextRefresh = true;
+        nextFollowingRefresh = _queuedFollowingRefresh;
+        _topLevelRefreshQueued = false;
+        _queuedFollowingRefresh = null;
+      }
+    } finally {
+      if (identical(_topLevelRefresh, operationFuture)) {
+        _topLevelRefresh = null;
+      }
+      _topLevelRefreshQueued = false;
+      _queuedFollowingRefresh = null;
+      operation.complete();
+    }
+  }
+
+  Future<void> _refreshSavedConnection({required bool refresh}) async {
+    await _followingStore.loadSavedConnection(refresh: refresh);
+    if (!mounted ||
+        !_showStartupLoginOffer ||
+        _startupLoginMessage != null ||
+        !_followingStore.isLoggedIn) {
+      return;
+    }
+    setState(() {
+      _showStartupLoginOffer = false;
+      _startupLoginMessage = null;
+    });
   }
 
   @override
@@ -376,6 +471,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
                 openTwitchLogin: widget.openTwitchLogin,
                 onMeRequested: _handleMeRequested,
                 bottomNavigationBar: const SizedBox.shrink(),
+                periodicRefreshInterval: null,
               ),
             ),
           ),
@@ -393,6 +489,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
                   preferences: _preferences,
                   showLiveChannelsSection: _followingStore.isLoggedIn,
                   bottomNavigationBar: const SizedBox.shrink(),
+                  periodicRefreshInterval: null,
                 ),
               ),
             ),

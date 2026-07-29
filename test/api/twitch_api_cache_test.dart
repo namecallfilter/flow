@@ -64,6 +64,37 @@ void main() {
     expect(requests, 2);
   });
 
+  test("evicts the least recently used value when capacity is exceeded", () async {
+    var requests = 0;
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      httpClient: MockClient((_) async {
+        requests++;
+        return _topGamesResponse(id: "$requests", name: "Category $requests");
+      }),
+    );
+    final cache = TwitchApiCache(
+      clientLoader: () async => client,
+      maxEntries: 2,
+    );
+
+    await cache.fetchTopCategoriesPage(first: 1);
+    await cache.fetchTopCategoriesPage(first: 2);
+    await cache.fetchTopCategoriesPage(first: 1);
+    await cache.fetchTopCategoriesPage(first: 3);
+
+    expect(requests, 3);
+
+    await cache.fetchTopCategoriesPage(first: 1);
+
+    expect(requests, 3);
+
+    await cache.fetchTopCategoriesPage(first: 2);
+
+    expect(requests, 4);
+  });
+
   test("clear prevents older in-flight requests from repopulating the cache", () async {
     var requests = 0;
     final firstResponse = Completer<http.Response>();

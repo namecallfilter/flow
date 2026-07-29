@@ -134,16 +134,15 @@ abstract class BrowseSearchStoreBase with Store {
             return left.isLive ? -1 : 1;
           });
       final nextCategories =
-          await Future.wait([
-              for (final category in categoryPage.data) browseCategoryFromApi(apiCache, category),
-            ])
-            ..sort((left, right) {
-              final viewerComparison = right.viewerCount.compareTo(left.viewerCount);
-              if (viewerComparison != 0) {
-                return viewerComparison;
-              }
-              return left.name.toLowerCase().compareTo(right.name.toLowerCase());
-            });
+          [
+            for (final category in categoryPage.data) browseCategoryFromApi(category),
+          ]..sort((left, right) {
+            final viewerComparison = right.viewerCount.compareTo(left.viewerCount);
+            if (viewerComparison != 0) {
+              return viewerComparison;
+            }
+            return left.name.toLowerCase().compareTo(right.name.toLowerCase());
+          });
 
       if (generation != _searchGeneration) {
         return;

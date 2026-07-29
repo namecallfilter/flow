@@ -97,11 +97,13 @@ class TwitchCategory {
     required this.id,
     required this.name,
     required this.boxArtUrl,
+    required this.viewerCount,
   });
 
   final String id;
   final String name;
   final String? boxArtUrl;
+  final int viewerCount;
 }
 
 class TwitchSearchChannel {
@@ -821,6 +823,7 @@ class TwitchApiClient {
             id: _stringValue(node["id"]),
             name: _stringValue(node["displayName"]),
             boxArtUrl: node["boxArtURL"] as String?,
+            viewerCount: _intValue(node["viewersCount"]),
           ),
     ],
     cursor: _connectionCursor(connection),
