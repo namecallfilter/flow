@@ -225,18 +225,56 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
         return;
       }
 
-      final connection = await openTwitchLoginOfferScreen(
-        context,
-        _authController,
-        openTwitchLogin: widget.openTwitchLogin,
-      );
-      if (!mounted || connection == null) {
-        return;
+      await _connectTwitchAccount();
+    } finally {
+      _isHandlingMe = false;
+    }
+  }
+
+  Future<void> _switchTwitchAccount() async {
+    if (_isHandlingMe) {
+      return;
+    }
+    _isHandlingMe = true;
+    try {
+      await _connectTwitchAccount();
+    } finally {
+      _isHandlingMe = false;
+    }
+  }
+
+  Future<void> _connectTwitchAccount() async {
+    final connection = await openTwitchLoginOfferScreen(
+      context,
+      _authController,
+      openTwitchLogin: widget.openTwitchLogin,
+    );
+    if (!mounted || connection == null) {
+      return;
+    }
+    _followingStore.applyConnection(connection);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("Connected as ${connection.user.displayName}")),
+    );
+  }
+
+  Future<void> _signOutFromSettings() async {
+    if (_isHandlingMe) {
+      return;
+    }
+    _isHandlingMe = true;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await _followingStore.signOut();
+      if (mounted) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text("Signed out of Twitch")),
+        );
       }
-      _followingStore.applyConnection(connection);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Connected as ${connection.user.displayName}")),
-      );
+    } on Object catch (error) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     } finally {
       _isHandlingMe = false;
     }
@@ -365,10 +403,15 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
               routeName: FlowRoutes.settings,
               navigatorKey: _settingsNavigatorKey,
               observers: [_settingsNavigatorObserver],
-              rootBuilder: (_) => SettingsScreen(
-                settingsStore: _settingsStore,
-                openExternalUrl: widget.openExternalUrl,
-                bottomNavigationBar: const SizedBox.shrink(),
+              rootBuilder: (_) => Observer(
+                builder: (_) => SettingsScreen(
+                  settingsStore: _settingsStore,
+                  openExternalUrl: widget.openExternalUrl,
+                  twitchAccount: _followingStore.profileUser,
+                  onSwitchTwitchAccount: _switchTwitchAccount,
+                  onSignOutTwitch: _signOutFromSettings,
+                  bottomNavigationBar: const SizedBox.shrink(),
+                ),
               ),
             ),
           ),

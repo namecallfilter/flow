@@ -1,6 +1,7 @@
 import "dart:async";
 import "dart:ui";
 
+import "package:flow/api/twitch_api.dart";
 import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/radius.dart";
 import "package:flow/app/routes.dart";
@@ -23,6 +24,9 @@ class SettingsScreen extends StatefulWidget {
     this.onThemeModeChanged,
     this.openExternalUrl,
     this.settingsStore,
+    this.twitchAccount,
+    this.onSwitchTwitchAccount,
+    this.onSignOutTwitch,
   });
 
   final Widget? bottomNavigationBar;
@@ -30,6 +34,9 @@ class SettingsScreen extends StatefulWidget {
   final ValueChanged<ThemeMode>? onThemeModeChanged;
   final ExternalUrlOpener? openExternalUrl;
   final AppSettingsStore? settingsStore;
+  final TwitchUser? twitchAccount;
+  final AsyncCallback? onSwitchTwitchAccount;
+  final AsyncCallback? onSignOutTwitch;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -52,6 +59,16 @@ class SettingsScreen extends StatefulWidget {
       ),
     );
     properties.add(DiagnosticsProperty<AppSettingsStore?>("settingsStore", settingsStore));
+    properties.add(DiagnosticsProperty<TwitchUser?>("twitchAccount", twitchAccount));
+    properties.add(
+      ObjectFlagProperty<AsyncCallback?>.has(
+        "onSwitchTwitchAccount",
+        onSwitchTwitchAccount,
+      ),
+    );
+    properties.add(
+      ObjectFlagProperty<AsyncCallback?>.has("onSignOutTwitch", onSignOutTwitch),
+    );
   }
 }
 
@@ -233,6 +250,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     bottom: bottomScrollPadding,
                   ),
                   children: [
+                    if (widget.twitchAccount case final account?) ...[
+                      _SettingsGroup(
+                        key: const ValueKey("settings_twitch_account_group"),
+                        children: [
+                          _SettingsRow(
+                            icon: Icons.person_outline,
+                            title: account.displayName,
+                            subtitle: "@${account.login}",
+                            trailing: const Text("Connected"),
+                          ),
+                          const Divider(height: 1),
+                          _SettingsRow(
+                            icon: Icons.sync,
+                            title: "Switch Twitch account",
+                            subtitle: "Log in with a different Twitch account.",
+                            trailing: const Icon(Icons.chevron_right),
+                            onTap: widget.onSwitchTwitchAccount == null
+                                ? null
+                                : () => unawaited(widget.onSwitchTwitchAccount!()),
+                          ),
+                          const Divider(height: 1),
+                          _SettingsRow(
+                            icon: Icons.logout,
+                            title: "Sign out of Twitch",
+                            subtitle: "Continue without an account.",
+                            trailing: const Icon(Icons.chevron_right),
+                            onTap: widget.onSignOutTwitch == null
+                                ? null
+                                : () => unawaited(widget.onSignOutTwitch!()),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                    ],
                     _SettingsGroup(
                       key: const ValueKey("settings_theme_group"),
                       children: [

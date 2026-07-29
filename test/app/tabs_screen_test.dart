@@ -353,7 +353,89 @@ void main() {
 
     expect(tabsStore.currentRoute, FlowRoutes.settings);
     expect(find.byKey(const ValueKey("settings_title")), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey("settings_twitch_account_group")),
+      findsOneWidget,
+    );
+    expect(find.text("Flow Tester"), findsOneWidget);
+    expect(find.text("@flowtester"), findsOneWidget);
+    expect(find.text("Switch Twitch account"), findsOneWidget);
+    expect(find.text("Sign out of Twitch"), findsOneWidget);
     expect(loginCalls, 0);
+  });
+
+  testWidgets("switches Twitch accounts from Settings", (tester) async {
+    var loginCalls = 0;
+    final secureStore = _MemoryTwitchStore()
+      ..accessToken = "token-123"
+      ..webSessionToken = "gql-token-123";
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.light),
+        home: FlowTabsScreen(
+          authController: _authController(secureStore: secureStore),
+          openTwitchLogin: (_, _) async {
+            loginCalls++;
+            return _sessionConnection(
+              id: "replacement-user",
+              login: "replacement",
+              displayName: "Replacement Tester",
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey("profile_auth_button")));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text("Switch Twitch account"));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey("login_offer_screen")), findsOneWidget);
+    expect(loginCalls, 0);
+
+    await tester.tap(find.byKey(const ValueKey("login_offer_button")));
+    await tester.pumpAndSettle();
+
+    expect(loginCalls, 1);
+    expect(find.byKey(const ValueKey("login_offer_screen")), findsNothing);
+    expect(find.text("Replacement Tester"), findsOneWidget);
+    expect(find.text("@replacement"), findsOneWidget);
+  });
+
+  testWidgets("signs out of Twitch from Settings", (tester) async {
+    final secureStore = _MemoryTwitchStore()
+      ..accessToken = "token-123"
+      ..webSessionToken = "gql-token-123";
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.light),
+        home: FlowTabsScreen(
+          authController: _authController(secureStore: secureStore),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey("profile_auth_button")));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text("Sign out of Twitch"));
+    await tester.pumpAndSettle();
+
+    expect(secureStore.accessToken, isNull);
+    expect(secureStore.webSessionToken, isNull);
+    expect(
+      find.byKey(const ValueKey("settings_twitch_account_group")),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey("bottom_nav_item_Live Channels")),
+      findsOneWidget,
+    );
+    expect(find.text("Signed out of Twitch"), findsOneWidget);
   });
 
   testWidgets("Me offers login to guests before starting OAuth", (tester) async {
@@ -731,12 +813,12 @@ void main() {
   });
 }
 
-TwitchAuthConnection _sessionConnection() => const TwitchAuthConnection(
-  user: TwitchUser(
-    id: "user-123",
-    login: "flowtester",
-    displayName: "Flow Tester",
-  ),
+TwitchAuthConnection _sessionConnection({
+  String id = "user-123",
+  String login = "flowtester",
+  String displayName = "Flow Tester",
+}) => TwitchAuthConnection(
+  user: TwitchUser(id: id, login: login, displayName: displayName),
   followedStreams: [],
   followedChannels: [],
 );
