@@ -838,7 +838,8 @@ internal class TwitchPlayerView(
         const val EXPIRED_AD_CUE_RETENTION_MS = 30 * 60_000L
         const val PRIMARY_LATENCY_FRESHNESS_MS = 2500L
         const val CORRECTION_EDGE_GUARD_MS = 1000L
-        const val CORRECTION_PARTIAL_BUFFER_SAFETY_MS = 1500L
+        // Keep partial seeks above Media3's post-rebuffer threshold after millisecond rounding.
+        const val CORRECTION_PARTIAL_BUFFER_SAFETY_MS = BUFFER_AFTER_REBUFFER_MS + 500L
         const val CORRECTION_MINIMUM_ADVANCE_MS = 100L
         const val CORRECTION_TARGET_TOLERANCE_MS = 100L
         const val CORRECTION_MEASUREMENT_MAX_AGE_MS = 2500L

@@ -36,16 +36,16 @@ class InitialLiveLatencyCorrectionTest {
     }
 
     @Test
-    fun unavailableExactTargetUsesSafeBufferedPartialAndStaysPending() {
+    fun startupCorrectionWaitsForEnoughBufferedHeadroom() {
         val plan = plan(
-            measuredLatencyMs = 5_000L,
-            currentPositionMs = 10_000L,
-            bufferedPositionMs = 12_000L,
-            windowDurationMs = 13_500L,
+            measuredLatencyMs = 13_198L,
+            currentPositionMs = 18_010L,
+            bufferedPositionMs = 20_000L,
+            windowDurationMs = 32_000L,
         )
 
-        assertEquals(LiveLatencyCorrectionPlanOutcome.SEEK, plan.outcome)
-        assertEquals(10_500L, plan.seekPositionMs)
+        assertEquals(LiveLatencyCorrectionPlanOutcome.WAIT_FOR_BUFFER, plan.outcome)
+        assertNull(plan.seekPositionMs)
     }
 
     @Test
@@ -58,7 +58,7 @@ class InitialLiveLatencyCorrectionTest {
         )
 
         assertEquals(LiveLatencyCorrectionPlanOutcome.SEEK, plan.outcome)
-        assertEquals(11_500L, plan.seekPositionMs)
+        assertEquals(11_000L, plan.seekPositionMs)
     }
 
     @Test
@@ -84,7 +84,7 @@ class InitialLiveLatencyCorrectionTest {
         )
 
         assertEquals(LiveLatencyCorrectionPlanOutcome.SEEK, plan.outcome)
-        assertEquals(26_500L, plan.seekPositionMs)
+        assertEquals(26_000L, plan.seekPositionMs)
     }
 
     @Test
@@ -241,7 +241,7 @@ class InitialLiveLatencyCorrectionTest {
         bufferedPositionMs = bufferedPositionMs,
         windowDurationMs = windowDurationMs,
         bufferedSafetyMs = 1_000L,
-        partialBufferedSafetyMs = 1_500L,
+        partialBufferedSafetyMs = 2_000L,
         minimumAdvanceMs = 100L,
         targetToleranceMs = 100L,
     )
@@ -255,7 +255,7 @@ class InitialLiveLatencyCorrectionTest {
         bufferedPositionMs = 15_000L,
         windowDurationMs = 16_000L,
         bufferedSafetyMs = 1_000L,
-        partialBufferedSafetyMs = 1_500L,
+        partialBufferedSafetyMs = 2_000L,
         minimumAdvanceMs = 100L,
         targetToleranceMs = 100L,
     )
