@@ -1347,6 +1347,7 @@ class _CategoryStreamsScreenState extends State<CategoryStreamsScreen> {
                       const _StreamListSkeleton(
                         key: ValueKey("category_streams_skeleton"),
                         semanticLabel: "Loading category streams",
+                        showCategories: false,
                       )
                     else if (_store.errorMessage != null)
                       _StatusMessage(message: _store.errorMessage!)
@@ -1359,6 +1360,7 @@ class _CategoryStreamsScreenState extends State<CategoryStreamsScreen> {
                         channels: _store.channels,
                         onChannelSelected: _openLiveChannel,
                         onStreamSelected: _openPlayer,
+                        showCategories: false,
                       ),
                     if (_store.isLoading && _store.channels.isNotEmpty) ...[
                       const SizedBox(height: AppSpacing.md),
@@ -1620,11 +1622,13 @@ class _LiveChannelsList extends StatelessWidget {
     required this.channels,
     required this.onChannelSelected,
     required this.onStreamSelected,
+    this.showCategories = true,
   });
 
   final List<StreamChannel> channels;
   final ValueChanged<StreamChannel> onChannelSelected;
   final ValueChanged<StreamChannel> onStreamSelected;
+  final bool showCategories;
 
   @override
   Widget build(BuildContext context) {
@@ -1640,6 +1644,7 @@ class _LiveChannelsList extends StatelessWidget {
             channel: channel,
             onChannelSelected: onChannelSelected,
             onStreamSelected: onStreamSelected,
+            showCategory: showCategories,
           ),
       ],
     );
@@ -1661,6 +1666,7 @@ class _LiveChannelsList extends StatelessWidget {
         onStreamSelected,
       ),
     );
+    properties.add(DiagnosticsProperty<bool>("showCategories", showCategories));
   }
 }
 
@@ -1692,9 +1698,11 @@ class _StreamListSkeleton extends StatelessWidget {
   const _StreamListSkeleton({
     required this.semanticLabel,
     super.key,
+    this.showCategories = true,
   });
 
   final String semanticLabel;
+  final bool showCategories;
 
   @override
   Widget build(BuildContext context) {
@@ -1709,7 +1717,8 @@ class _StreamListSkeleton extends StatelessWidget {
         label: semanticLabel,
         child: Column(
           children: [
-            for (var index = 0; index < itemCount; index++) const StreamCardSkeleton(),
+            for (var index = 0; index < itemCount; index++)
+              StreamCardSkeleton(showCategory: showCategories),
           ],
         ),
       ),
@@ -1720,6 +1729,7 @@ class _StreamListSkeleton extends StatelessWidget {
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(StringProperty("semanticLabel", semanticLabel));
+    properties.add(DiagnosticsProperty<bool>("showCategories", showCategories));
   }
 }
 

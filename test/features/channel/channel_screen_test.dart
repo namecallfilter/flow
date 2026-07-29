@@ -3,10 +3,12 @@ import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
+import "package:flow/app/routes.dart";
 import "package:flow/app/spacing.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/player/player_screen.dart";
+import "package:flow/shared/widgets/app_bottom_nav.dart";
 import "package:flow/shared/widgets/avatar_ring.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flutter/material.dart";
@@ -57,7 +59,9 @@ void main() {
     final liveBadgeRect = tester.getRect(find.byKey(const ValueKey("channel_live_badge")));
     expect(liveBadgeRect.center.dx, closeTo(avatarRect.center.dx, 1));
     expect(liveBadgeRect.top, greaterThan(avatarRect.center.dy));
-    expect(find.text("Just Chatting with 26.3K viewers"), findsOneWidget);
+    expect(find.byKey(const ValueKey("channel_category_button")), findsOneWidget);
+    expect(find.text("Just Chatting"), findsOneWidget);
+    expect(find.text("with 26.3K viewers"), findsOneWidget);
     expect(find.text("2.3M followers"), findsOneWidget);
     expect(find.text("Hi Im Jason"), findsOneWidget);
     expect(find.text("Past broadcasts"), findsOneWidget);
@@ -78,7 +82,7 @@ void main() {
     expect(durationBadgeRect.bottom, closeTo(thumbnailRect.bottom - 5, 1));
   });
 
-  testWidgets("wraps long live metadata without ellipsizing", (tester) async {
+  testWidgets("wraps a long live category without ellipsizing", (tester) async {
     const longCategory = "Really Long Category Name That Needs More Than One Line To Render Fully";
 
     await tester.binding.setSurfaceSize(const Size(320, 640));
@@ -108,11 +112,104 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    final metadata = tester.widget<Text>(find.byKey(const ValueKey("channel_live_metadata")));
+    final category = tester.widget<Text>(
+      find.byKey(const ValueKey("channel_category_label")),
+    );
+    final viewers = tester.widget<Text>(
+      find.byKey(const ValueKey("channel_live_viewers")),
+    );
 
-    expect(metadata.data, "$longCategory with 26.3K viewers");
-    expect(metadata.maxLines, isNull);
-    expect(metadata.overflow, isNot(TextOverflow.ellipsis));
+    expect(find.byKey(const ValueKey("channel_live_metadata")), findsOneWidget);
+    expect(category.data, longCategory);
+    expect(category.softWrap, isTrue);
+    expect(category.maxLines, isNull);
+    expect(category.overflow, isNot(TextOverflow.ellipsis));
+    expect(viewers.data, "with 26.3K viewers");
+    expect(viewers.softWrap, isTrue);
+    expect(viewers.maxLines, isNull);
+    expect(viewers.overflow, isNot(TextOverflow.ellipsis));
+  });
+
+  testWidgets("keeps live category navigation in the active tab stack", (tester) async {
+    final requestedGameIds = <String>[];
+    final rootNavigatorKey = GlobalKey<NavigatorState>();
+    final tabNavigatorKey = GlobalKey<NavigatorState>();
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+        httpClient: MockClient((request) async {
+          final body = jsonDecode(request.body) as Map<String, Object?>;
+          final query = body["query"]?.toString() ?? "";
+          if (query.contains("FlowGameStreams")) {
+            final variables =
+                (body["variables"] as Map<String, Object?>?) ??
+                const <String, Object?>{};
+            requestedGameIds.add(variables["id"]?.toString() ?? "");
+            return http.Response(
+              jsonEncode({
+                "data": {
+                  "game": {
+                    "streams": {
+                      "edges": <Object?>[],
+                      "pageInfo": {"hasNextPage": false},
+                    },
+                  },
+                },
+              }),
+              200,
+              headers: {"content-type": "application/json"},
+            );
+          }
+          return _channelDetailsResponse();
+        }),
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: rootNavigatorKey,
+        theme: buildFlowTheme(Brightness.dark),
+        home: Scaffold(
+          body: Navigator(
+            key: tabNavigatorKey,
+            onGenerateRoute: (_) => MaterialPageRoute<void>(
+              builder: (_) => ChannelScreen(
+                apiCache: apiCache,
+                initialChannel: const ChannelPreview(
+                  login: "jason",
+                  displayName: "Jason",
+                  isLive: true,
+                ),
+              ),
+            ),
+          ),
+          bottomNavigationBar: const AppBottomNav(
+            currentRoute: FlowRoutes.following,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey("app_bottom_nav_bar")), findsOneWidget);
+    expect(rootNavigatorKey.currentState?.canPop(), isFalse);
+    expect(tabNavigatorKey.currentState?.canPop(), isFalse);
+
+    await tester.tap(find.byKey(const ValueKey("channel_category_button")));
+    await tester.pumpAndSettle();
+
+    final categoryPage = find.byKey(
+      const ValueKey("category_streams_page_Just Chatting"),
+    );
+    expect(categoryPage, findsOneWidget);
+    expect(find.byKey(const ValueKey("app_bottom_nav_bar")), findsOneWidget);
+    expect(
+      Navigator.of(tester.element(categoryPage)),
+      same(tabNavigatorKey.currentState),
+    );
+    expect(rootNavigatorKey.currentState?.canPop(), isFalse);
+    expect(tabNavigatorKey.currentState?.canPop(), isTrue);
+    expect(requestedGameIds, ["509658"]);
   });
 
   testWidgets("opens the live player when the channel avatar is tapped", (

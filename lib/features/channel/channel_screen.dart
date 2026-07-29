@@ -6,6 +6,7 @@ import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/app/radius.dart";
 import "package:flow/app/spacing.dart";
+import "package:flow/features/browse/browse_screen.dart";
 import "package:flow/features/channel/channel_store.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
@@ -100,6 +101,33 @@ class _ChannelScreenState extends State<ChannelScreen> {
     );
   }
 
+  void _openCategory(TwitchChannelLiveStream liveStream) {
+    final categoryId = liveStream.categoryId.trim();
+    final categoryName = liveStream.category.trim();
+    if (categoryId.isEmpty || categoryName.isEmpty) {
+      return;
+    }
+
+    final category = BrowseCategory(
+      id: categoryId,
+      name: categoryName,
+      viewerCount: 0,
+      viewers: "--",
+      imageUrl: null,
+      colors: colorsForText(categoryId),
+    );
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => CategoryStreamsScreen(
+            apiCache: widget.apiCache,
+            category: category,
+          ),
+        ),
+      ),
+    );
+  }
+
   void _loadMoreWhenNearBottom() {
     if (!_scrollController.hasClients || _scrollController.position.extentAfter > 420) {
       return;
@@ -113,6 +141,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
       final theme = Theme.of(context);
       final channel = _store.channel;
       final livePlayerChannel = _livePlayerChannel(channel, widget.initialChannel);
+      final liveStream = channel?.liveStream;
       final bottomScrollPadding = 24 + MediaQuery.of(context).padding.bottom;
 
       return Scaffold(
@@ -149,6 +178,10 @@ class _ChannelScreenState extends State<ChannelScreen> {
                           onProfileTap: livePlayerChannel == null
                               ? null
                               : () => _openLiveStream(livePlayerChannel),
+                          onCategoryTap:
+                              liveStream == null || liveStream.categoryId.trim().isEmpty
+                              ? null
+                              : () => _openCategory(liveStream),
                         ),
                         const SizedBox(height: AppSpacing.xxl),
                         const SectionHeader(title: "Past broadcasts"),
@@ -501,11 +534,13 @@ class _ChannelHeader extends StatelessWidget {
     required this.channel,
     required this.initialChannel,
     required this.onProfileTap,
+    required this.onCategoryTap,
   });
 
   final TwitchChannelDetails? channel;
   final ChannelPreview initialChannel;
   final VoidCallback? onProfileTap;
+  final VoidCallback? onCategoryTap;
 
   @override
   Widget build(BuildContext context) {
@@ -518,9 +553,10 @@ class _ChannelHeader extends StatelessWidget {
     final followers = channel == null
         ? null
         : "${formatCompactCount(channel!.followers)} followers";
-    final liveSummary = liveStream == null
-        ? "Live now"
-        : "${liveStream.category} with ${formatCompactCount(liveStream.viewerCount)} viewers";
+    final liveMetadataStyle = theme.textTheme.bodyMedium?.copyWith(
+      color: theme.colorScheme.onSurface.withValues(alpha: 0.74),
+      fontWeight: FontWeight.w700,
+    );
 
     return DecoratedBox(
       key: const ValueKey("channel_header_card"),
@@ -576,15 +612,40 @@ class _ChannelHeader extends StatelessWidget {
                       ),
                       const SizedBox(height: AppSpacing.xs),
                       if (isLive)
-                        Text(
-                          key: const ValueKey("channel_live_metadata"),
-                          liveSummary,
-                          softWrap: true,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onSurface.withValues(alpha: 0.74),
-                            fontWeight: FontWeight.w700,
-                          ),
-                        )
+                        if (liveStream == null)
+                          Text("Live now", style: liveMetadataStyle)
+                        else
+                          Wrap(
+                            key: const ValueKey("channel_live_metadata"),
+                            spacing: 4,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              Semantics(
+                                button: onCategoryTap != null,
+                                label: "Open ${liveStream.category} category",
+                                child: GestureDetector(
+                                  key: const ValueKey("channel_category_button"),
+                                  onTap: onCategoryTap,
+                                  child: Text(
+                                    liveStream.category,
+                                    key: const ValueKey("channel_category_label"),
+                                    softWrap: true,
+                                    style: liveMetadataStyle?.copyWith(
+                                      color: onCategoryTap == null
+                                          ? null
+                                          : theme.colorScheme.primary,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                "with ${formatCompactCount(liveStream.viewerCount)} viewers",
+                                key: const ValueKey("channel_live_viewers"),
+                                softWrap: true,
+                                style: liveMetadataStyle,
+                              ),
+                            ],
+                          )
                       else
                         Text(
                           "Offline",
@@ -633,6 +694,7 @@ class _ChannelHeader extends StatelessWidget {
     properties.add(DiagnosticsProperty<TwitchChannelDetails?>("channel", channel));
     properties.add(DiagnosticsProperty<ChannelPreview>("initialChannel", initialChannel));
     properties.add(ObjectFlagProperty<VoidCallback?>.has("onProfileTap", onProfileTap));
+    properties.add(ObjectFlagProperty<VoidCallback?>.has("onCategoryTap", onCategoryTap));
   }
 }
 

@@ -77,6 +77,7 @@ void main() {
     expect(channel.profileImageUrl, "https://static-cdn.jtvnw.net/creator-1.png");
     expect(channel.followers, 2300000);
     expect(channel.liveStream?.title, "Live with chat");
+    expect(channel.liveStream?.categoryId, "509658");
     expect(channel.liveStream?.category, "Just Chatting");
     expect(channel.liveStream?.viewerCount, 26300);
     expect(channel.pastBroadcasts.single.id, "vod-1");

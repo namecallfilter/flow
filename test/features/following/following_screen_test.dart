@@ -6,6 +6,7 @@ import "package:flow/api/twitch_auth.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/following/following_screen.dart";
 import "package:flow/features/following/following_store.dart";
+import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
@@ -238,6 +239,156 @@ void main() {
     await tester.tap(find.byKey(const ValueKey("offline_channel_row_OfflineOne")));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey("channel_page_offlineone")), findsOneWidget);
+  });
+
+  testWidgets("limits stream-card channel links to the avatar, name, and badge", (
+    tester,
+  ) async {
+    var channelSelections = 0;
+    var streamSelections = 0;
+    const channel = StreamChannel(
+      login: "liveone",
+      name: "LiveOne",
+      initials: "LO",
+      title: "Building with chat",
+      category: "Minecraft",
+      viewers: "321",
+      avatarColors: [Colors.purple, Colors.pink],
+      thumbnailColors: [Colors.blue, Colors.indigo],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: Scaffold(
+          body: SizedBox(
+            width: 390,
+            child: StreamCard(
+              channel: channel,
+              onChannelSelected: (_) {
+                channelSelections += 1;
+              },
+              onStreamSelected: (_) {
+                streamSelections += 1;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+
+    for (final key in const [
+      "stream_channel_avatar_LiveOne",
+      "stream_channel_identity_LiveOne",
+      "stream_channel_badge_LiveOne",
+    ]) {
+      await tester.tap(find.byKey(ValueKey(key)));
+      await tester.pump();
+    }
+
+    expect(channelSelections, 3);
+    expect(streamSelections, 0);
+
+    final contentRect = tester.getRect(
+      find.byKey(const ValueKey("stream_card_content_row_LiveOne")),
+    );
+    final badgeRect = tester.getRect(
+      find.byKey(const ValueKey("stream_channel_badge_LiveOne")),
+    );
+    final whitespace = Offset(contentRect.right - 2, badgeRect.center.dy);
+    expect(whitespace.dx, greaterThan(badgeRect.right));
+
+    await tester.tapAt(whitespace);
+    await tester.pump();
+
+    expect(channelSelections, 3);
+    expect(streamSelections, 1);
+  });
+
+  testWidgets("uses category metadata space for a second title line", (tester) async {
+    const longTitle =
+        "A long stream title that wraps onto another line without moving the card content";
+    const standardChannel = StreamChannel(
+      login: "standard",
+      name: "Standard",
+      initials: "ST",
+      title: longTitle,
+      category: "Minecraft",
+      viewers: "321",
+      avatarColors: [Colors.purple, Colors.pink],
+      thumbnailColors: [Colors.blue, Colors.indigo],
+    );
+    const categoryChannel = StreamChannel(
+      login: "category",
+      name: "Category",
+      initials: "CA",
+      title: longTitle,
+      category: "Minecraft",
+      viewers: "321",
+      avatarColors: [Colors.purple, Colors.pink],
+      thumbnailColors: [Colors.blue, Colors.indigo],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: const Scaffold(
+          body: SizedBox(
+            width: 390,
+            child: Column(
+              children: [
+                StreamCard(
+                  key: ValueKey("standard_stream_card"),
+                  channel: standardChannel,
+                ),
+                StreamCard(
+                  key: ValueKey("category_stream_card"),
+                  channel: categoryChannel,
+                  showCategory: false,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    double topOffset(String key, String channelName) =>
+        tester.getTopLeft(find.byKey(ValueKey(key))).dy -
+        tester
+            .getTopLeft(
+              find.byKey(ValueKey("stream_card_content_padding_$channelName")),
+            )
+            .dy;
+
+    final standardTitleFinder = find.byKey(const ValueKey("stream_title_Standard"));
+    final categoryTitleFinder = find.byKey(const ValueKey("stream_title_Category"));
+    final standardTitle = tester.widget<Text>(standardTitleFinder);
+    final categoryTitle = tester.widget<Text>(categoryTitleFinder);
+
+    expect(tester.getSize(find.byKey(const ValueKey("standard_stream_card"))).height, 93);
+    expect(tester.getSize(find.byKey(const ValueKey("category_stream_card"))).height, 93);
+    expect(standardTitle.maxLines, 1);
+    expect(categoryTitle.maxLines, 2);
+    expect(
+      tester.getSize(categoryTitleFinder).height,
+      greaterThan(tester.getSize(standardTitleFinder).height),
+    );
+    expect(find.byKey(const ValueKey("stream_category_Standard")), findsOneWidget);
+    expect(find.byKey(const ValueKey("stream_category_Category")), findsNothing);
+
+    for (final keyPrefix in const [
+      "stream_thumbnail_",
+      "stream_channel_avatar_",
+      "stream_channel_identity_",
+      "stream_channel_badge_",
+      "stream_title_",
+    ]) {
+      expect(
+        topOffset("${keyPrefix}Category", "Category"),
+        closeTo(topOffset("${keyPrefix}Standard", "Standard"), 0.1),
+      );
+    }
   });
 
   testWidgets("keeps the Following header content gap as the app standard", (
