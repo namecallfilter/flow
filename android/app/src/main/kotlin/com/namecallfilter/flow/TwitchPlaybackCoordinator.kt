@@ -52,6 +52,7 @@ internal class TwitchPlaybackSession(
     private val firstPlaylistRequests = mutableSetOf<URI>()
     private val replacementUris = mutableMapOf<URI, URI>()
     private val adResponseState = TwitchAdResponseState()
+    private var hasDeliveredLiveMediaPlaylist = false
 
     fun resolve(
         requestUri: String,
@@ -85,6 +86,9 @@ internal class TwitchPlaybackSession(
             )
         } ?: return fetch(TwitchManifestRoute.Direct, requestUri)
 
+        val requireLivePlaylist = synchronized(stateLock) {
+            !hasDeliveredLiveMediaPlaylist
+        }
         val routedResponse = try {
             if (request.useProxyChain) {
                 fetchThroughProxyChain(request.targetUri.toString(), fetch)
@@ -102,28 +106,41 @@ internal class TwitchPlaybackSession(
             clearFailedReplacement(request)
             throw IOException("Twitch media playlist was unusable")
         }
-        if (!containsTwitchStitchedAd(routedResponse.payload.text)) {
-            recordCleanResponse()
-            return routedResponse.payload
-        }
 
-        val adNumber = recordAdResponse()
-        onEvent("stitched ad detected on ${routedResponse.route.description()}")
-        if (adNumber != 1) {
-            synchronized(replacementLock) {
-                findConcurrentReplacement(request, fetch)
-            }?.let { return it }
-            return if (adNumber == 2) {
-                preferOriginalAssignment(request, routedResponse.payload, fetch)
+        val containsStitchedAd = containsTwitchStitchedAd(routedResponse.payload.text)
+        val resolvedResponse = if (!containsStitchedAd || proxyCount == 0) {
+            if (!containsStitchedAd) {
+                recordCleanResponse()
+            }
+            routedResponse.payload
+        } else {
+            val adNumber = recordAdResponse()
+            onEvent("stitched ad detected on ${routedResponse.route.description()}")
+            if (adNumber != 1) {
+                synchronized(replacementLock) {
+                    findConcurrentReplacement(request, fetch, requireLivePlaylist)
+                } ?: if (adNumber == 2) {
+                    preferOriginalAssignment(request, routedResponse.payload, fetch)
+                } else {
+                    routedResponse.payload
+                }
             } else {
-                routedResponse.payload
+                resolveReplacement(
+                    request = request,
+                    adResponse = routedResponse,
+                    fetch = fetch,
+                    requireLive = requireLivePlaylist,
+                )
             }
         }
-        return resolveReplacement(
-            request = request,
-            adResponse = routedResponse,
-            fetch = fetch,
-        )
+        if (!isUsableTwitchMediaPlaylist(resolvedResponse.text, requireLivePlaylist)) {
+            clearFailedReplacement(request)
+            throw IOException("Twitch media playlist was not live")
+        }
+        synchronized(stateLock) {
+            hasDeliveredLiveMediaPlaylist = true
+        }
+        return resolvedResponse
     }
 
     private fun resolveRoot(
@@ -146,8 +163,9 @@ internal class TwitchPlaybackSession(
         request: MediaPlaylistRequest,
         adResponse: RoutedTwitchManifest,
         fetch: (TwitchManifestRoute, String) -> TwitchManifestPayload,
+        requireLive: Boolean,
     ): TwitchManifestPayload = synchronized(replacementLock) {
-        findConcurrentReplacement(request, fetch)?.let {
+        findConcurrentReplacement(request, fetch, requireLive)?.let {
             return@synchronized it
         }
 
@@ -179,7 +197,7 @@ internal class TwitchPlaybackSession(
                     fetch(TwitchManifestRoute.Direct, replacementUri.toString()),
                 )
             }
-            if (!isUsableTwitchMediaPlaylist(replacementResponse.payload.text)) {
+            if (!isUsableTwitchMediaPlaylist(replacementResponse.payload.text, requireLive)) {
                 throw IOException("Replacement Twitch media playlist was unusable")
             }
             if (containsTwitchStitchedAd(replacementResponse.payload.text)) {
@@ -208,6 +226,7 @@ internal class TwitchPlaybackSession(
     private fun findConcurrentReplacement(
         request: MediaPlaylistRequest,
         fetch: (TwitchManifestRoute, String) -> TwitchManifestPayload,
+        requireLive: Boolean = false,
     ): TwitchManifestPayload? {
         val replacementUri = synchronized(stateLock) {
             replacementUris[request.logicalUri]
@@ -224,7 +243,7 @@ internal class TwitchPlaybackSession(
             return null
         }
         if (
-            !isUsableTwitchMediaPlaylist(response.text) ||
+            !isUsableTwitchMediaPlaylist(response.text, requireLive) ||
             containsTwitchStitchedAd(response.text)
         ) {
             return null
@@ -407,14 +426,18 @@ private fun TwitchManifestRoute.description(): String = when (this) {
     is TwitchManifestRoute.Proxy -> "proxy ${index + 1}"
 }
 
-private fun isUsableTwitchMediaPlaylist(playlist: String): Boolean {
+private fun isUsableTwitchMediaPlaylist(
+    playlist: String,
+    requireLive: Boolean = false,
+): Boolean {
     val lines = rewriteTwitchLowLatencyPlaylist(playlist)
         .lineSequence()
         .map(String::trim)
         .toList()
     if (
         lines.firstOrNull()?.equals("#EXTM3U", ignoreCase = true) != true ||
-        lines.any { it.startsWith("#EXT-X-STREAM-INF:", ignoreCase = true) }
+        lines.any { it.startsWith("#EXT-X-STREAM-INF:", ignoreCase = true) } ||
+        (requireLive && lines.any { it.equals("#EXT-X-ENDLIST", ignoreCase = true) })
     ) {
         return false
     }

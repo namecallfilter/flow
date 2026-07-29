@@ -4,6 +4,7 @@ internal enum class LiveLatencyCorrectionReason {
     STARTUP,
     RESUME,
     EXPLICIT_JUMP,
+    QUALITY_CHANGE,
 }
 
 internal enum class LiveLatencyMeasurementSource {
