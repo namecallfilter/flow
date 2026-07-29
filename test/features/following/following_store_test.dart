@@ -1,3 +1,4 @@
+import "dart:async";
 import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
@@ -26,6 +27,7 @@ void main() {
     await store.loadSavedConnection();
 
     expect(store.connection?.user.displayName, "Flow Tester");
+    expect(store.sessionStatus, TwitchSessionStatus.authenticated);
     expect(store.liveChannels.single.name, "AussieAntics");
     expect(followedRequests, 1);
 
@@ -33,15 +35,101 @@ void main() {
 
     expect(followedRequests, 2);
   });
+
+  test("tracks logged-out sessions and clears authenticated state", () async {
+    final secureStore = _MemoryTwitchStore();
+    final store = FollowingStore(
+      authController: _authController(secureStore: secureStore),
+    );
+
+    await store.loadSavedConnection();
+
+    expect(store.sessionStatus, TwitchSessionStatus.loggedOut);
+    expect(store.isLoggedIn, isFalse);
+
+    store.applyConnection(
+      const TwitchAuthConnection(
+        user: TwitchUser(id: "user-123", login: "tester", displayName: "Tester"),
+        followedStreams: [],
+        followedChannels: [],
+      ),
+    );
+    expect(store.isLoggedIn, isTrue);
+
+    await store.signOut();
+
+    expect(store.sessionStatus, TwitchSessionStatus.loggedOut);
+    expect(store.connection, isNull);
+  });
+
+  test("a completed login wins over an older session restore", () async {
+    final authController = _DelayedAuthController();
+    final store = FollowingStore(authController: authController);
+    final restore = store.loadSavedConnection();
+    final duplicateRestore = store.loadSavedConnection();
+    final loginConnection = _connection("new-user");
+
+    expect(authController.loadCalls, 1);
+    store.applyConnection(loginConnection);
+    authController.restore.complete(_connection("old-user"));
+    await Future.wait([restore, duplicateRestore]);
+
+    expect(store.connection, same(loginConnection));
+    expect(store.sessionStatus, TwitchSessionStatus.authenticated);
+    expect(store.isLoadingFollowing, isFalse);
+  });
+
+  test("coalesces a refresh with session restoration", () async {
+    final authController = _DelayedAuthController();
+    final store = FollowingStore(authController: authController);
+    final restore = store.loadSavedConnection();
+    final refresh = store.loadSavedConnection(refresh: true);
+
+    await Future<void>.delayed(Duration.zero);
+    expect(authController.loadCalls, 1);
+
+    authController.restore.complete(_connection("saved-user"));
+    await Future.wait([restore, refresh]);
+
+    expect(authController.loadCalls, 1);
+    expect(store.connection?.user.id, "saved-user");
+    expect(store.sessionStatus, TwitchSessionStatus.authenticated);
+  });
+
+  test("keeps authenticated state when secure sign-out fails", () async {
+    final connection = _connection("current-user");
+    final store = FollowingStore(
+      authController: _authController(
+        secureStore: _FailingClearTwitchStore(),
+      ),
+    )..applyConnection(connection);
+
+    await expectLater(store.signOut(), throwsStateError);
+
+    expect(store.connection, same(connection));
+    expect(store.sessionStatus, TwitchSessionStatus.authenticated);
+    expect(store.followingError, contains("Secure storage is unavailable."));
+  });
 }
 
-TwitchAuthController _authController({_RequestObserver? onRequest}) {
-  final secureStore = _MemoryTwitchStore()
-    ..accessToken = "token-123"
-    ..webSessionToken = "gql-token-123";
+TwitchAuthConnection _connection(String id) => TwitchAuthConnection(
+  user: TwitchUser(id: id, login: id, displayName: id),
+  followedStreams: const [],
+  followedChannels: const [],
+);
+
+TwitchAuthController _authController({
+  _RequestObserver? onRequest,
+  _MemoryTwitchStore? secureStore,
+}) {
+  final resolvedSecureStore =
+      secureStore ??
+      (_MemoryTwitchStore()
+        ..accessToken = "token-123"
+        ..webSessionToken = "gql-token-123");
   return TwitchAuthController(
     config: const TwitchAuthConfig(clientId: "client-123"),
-    secureStore: secureStore,
+    secureStore: resolvedSecureStore,
     apiClientFactory: (accessToken, {gqlAccessToken}) => TwitchApiClient(
       clientId: "client-123",
       accessToken: accessToken,
@@ -197,6 +285,13 @@ class _MemoryTwitchStore implements TwitchSecureStore {
   String? webSessionToken;
 
   @override
+  Future<void> clearSession() async {
+    accessToken = null;
+    pendingState = null;
+    webSessionToken = null;
+  }
+
+  @override
   Future<void> clearPendingState() async {
     pendingState = null;
   }
@@ -226,9 +321,38 @@ class _MemoryTwitchStore implements TwitchSecureStore {
   }
 }
 
+class _FailingClearTwitchStore extends _MemoryTwitchStore {
+  @override
+  Future<void> clearSession() => Future<void>.error(
+    StateError("Secure storage is unavailable."),
+  );
+}
+
 class _StaticCookieExtractor implements TwitchCookieExtractor {
   const _StaticCookieExtractor();
 
   @override
   Future<String?> extractTwitchAuthToken() async => null;
+}
+
+class _DelayedAuthController extends TwitchAuthController {
+  _DelayedAuthController()
+    : super(
+        config: const TwitchAuthConfig(clientId: "client-123"),
+        secureStore: _MemoryTwitchStore(),
+        apiClientFactory: (accessToken, {gqlAccessToken}) => TwitchApiClient(
+          clientId: "client-123",
+          accessToken: accessToken,
+        ),
+        cookieExtractor: const _StaticCookieExtractor(),
+      );
+
+  final restore = Completer<TwitchAuthConnection?>();
+  int loadCalls = 0;
+
+  @override
+  Future<TwitchAuthConnection?> loadSavedConnection() {
+    loadCalls++;
+    return restore.future;
+  }
 }

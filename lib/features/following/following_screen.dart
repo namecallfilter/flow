@@ -9,8 +9,10 @@ import "package:flow/app/radius.dart";
 import "package:flow/app/routes.dart";
 import "package:flow/app/spacing.dart";
 import "package:flow/app/theme.dart";
+import "package:flow/features/browse/browse_store.dart";
 import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/following/following_store.dart";
+import "package:flow/features/following/twitch_login_offer_screen.dart";
 import "package:flow/features/following/twitch_login_screen.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
@@ -25,12 +27,9 @@ import "package:flow/shared/widgets/skeleton.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:flutter_mobx/flutter_mobx.dart";
+import "package:mobx/mobx.dart";
 
-typedef TwitchLoginOpener =
-    Future<TwitchAuthConnection?> Function(
-      BuildContext context,
-      TwitchAuthController authController,
-    );
+export "package:flow/features/following/twitch_login_screen.dart" show TwitchLoginOpener;
 
 class FollowingScreen extends StatefulWidget {
   const FollowingScreen({
@@ -38,14 +37,18 @@ class FollowingScreen extends StatefulWidget {
     this.authController,
     this.apiCache,
     this.followingStore,
+    this.browseStore,
     this.openTwitchLogin,
+    this.onMeRequested,
     this.bottomNavigationBar,
   });
 
   final TwitchAuthController? authController;
   final TwitchApiCache? apiCache;
   final FollowingStore? followingStore;
+  final BrowseStore? browseStore;
   final TwitchLoginOpener? openTwitchLogin;
+  final AsyncCallback? onMeRequested;
   final Widget? bottomNavigationBar;
 
   @override
@@ -57,7 +60,9 @@ class FollowingScreen extends StatefulWidget {
     properties.add(DiagnosticsProperty<TwitchAuthController?>("authController", authController));
     properties.add(DiagnosticsProperty<TwitchApiCache?>("apiCache", apiCache));
     properties.add(DiagnosticsProperty<FollowingStore?>("followingStore", followingStore));
+    properties.add(DiagnosticsProperty<BrowseStore?>("browseStore", browseStore));
     properties.add(ObjectFlagProperty<TwitchLoginOpener?>.has("openTwitchLogin", openTwitchLogin));
+    properties.add(ObjectFlagProperty<AsyncCallback?>.has("onMeRequested", onMeRequested));
     properties.add(DiagnosticsProperty<Widget?>("bottomNavigationBar", bottomNavigationBar));
   }
 }
@@ -66,6 +71,8 @@ class _FollowingScreenState extends State<FollowingScreen> {
   late final TwitchAuthController _authController;
   late final TwitchApiCache _apiCache;
   late final FollowingStore _store;
+  late final BrowseStore? _browseStore;
+  late final ReactionDisposer _sessionReaction;
   final ScrollController _scrollController = ScrollController();
 
   @override
@@ -85,7 +92,47 @@ class _FollowingScreenState extends State<FollowingScreen> {
           authController: _authController,
           apiCache: _apiCache,
         );
+    _browseStore = widget.browseStore;
+    _scrollController.addListener(_loadMoreAnonymousChannels);
+    _sessionReaction = reaction(
+      (_) => _store.sessionStatus,
+      (_) {
+        if (_showsAnonymousChannels) {
+          unawaited(_loadAnonymousChannels());
+        }
+      },
+      fireImmediately: true,
+    );
     unawaited(_store.loadSavedConnection());
+  }
+
+  bool get _showsAnonymousChannels =>
+      _browseStore != null &&
+      !_store.isLoggedIn &&
+      (_store.sessionStatus == TwitchSessionStatus.loggedOut ||
+          _store.sessionStatus == TwitchSessionStatus.restoreFailed);
+
+  Future<void> _loadAnonymousChannels({bool refresh = false}) async {
+    final browseStore = _browseStore;
+    if (browseStore == null ||
+        !_showsAnonymousChannels ||
+        (!refresh && browseStore.liveChannelsLoaded)) {
+      return;
+    }
+    await browseStore.loadLiveChannels(reset: true, refresh: refresh);
+  }
+
+  void _loadMoreAnonymousChannels() {
+    final browseStore = _browseStore;
+    if (!_showsAnonymousChannels ||
+        browseStore == null ||
+        !_scrollController.hasClients ||
+        _scrollController.position.extentAfter > 420 ||
+        !browseStore.liveChannelsLoaded ||
+        browseStore.liveChannelsCursor == null) {
+      return;
+    }
+    unawaited(browseStore.loadLiveChannels());
   }
 
   TwitchAuthController _buildDefaultAuthController() {
@@ -103,17 +150,15 @@ class _FollowingScreenState extends State<FollowingScreen> {
     );
   }
 
-  Future<void> _startTwitchAuth() async {
+  Future<void> _offerTwitchAuth() async {
     final messenger = ScaffoldMessenger.of(context);
 
     try {
-      if (!_authController.config.isConfigured) {
-        throw TwitchAuthException(
-          "Set TWITCH_CLIENT_ID with --dart-define-from-file=.env to start Twitch auth.",
-        );
-      }
-      final opener = widget.openTwitchLogin ?? openTwitchLoginScreen;
-      final connection = await opener(context, _authController);
+      final connection = await openTwitchLoginOfferScreen(
+        context,
+        _authController,
+        openTwitchLogin: widget.openTwitchLogin,
+      );
       if (!mounted || connection == null) {
         return;
       }
@@ -128,7 +173,25 @@ class _FollowingScreenState extends State<FollowingScreen> {
     }
   }
 
-  Future<void> _refreshFollowing() => _store.loadSavedConnection(refresh: true);
+  Future<void> _openMe() async {
+    final onMeRequested = widget.onMeRequested;
+    if (onMeRequested != null) {
+      await onMeRequested();
+      return;
+    }
+    await _store.loadSavedConnection();
+    if (!mounted) {
+      return;
+    }
+    if (_store.isLoggedIn) {
+      return;
+    }
+    unawaited(_offerTwitchAuth());
+  }
+
+  Future<void> _refreshFollowing() => _showsAnonymousChannels
+      ? _loadAnonymousChannels(refresh: true)
+      : _store.loadSavedConnection(refresh: true);
 
   void _openChannel(ChannelPreview channel) {
     if (channel.login.trim().isEmpty) {
@@ -183,6 +246,7 @@ class _FollowingScreenState extends State<FollowingScreen> {
 
   @override
   void dispose() {
+    _sessionReaction();
     _scrollController.dispose();
     super.dispose();
   }
@@ -191,18 +255,32 @@ class _FollowingScreenState extends State<FollowingScreen> {
   Widget build(BuildContext context) => Observer(
     builder: (_) {
       final theme = Theme.of(context);
-      final liveChannels = _store.liveChannels;
+      final browseStore = _browseStore;
+      final showsAnonymousChannels = _showsAnonymousChannels;
+      final liveChannels = showsAnonymousChannels ? browseStore!.liveChannels : _store.liveChannels;
       final offlineChannels = _store.offlineChannels;
       final profileUser = _store.profileUser;
       final offlineExpanded = _store.offlineExpanded;
-      final showLiveEmptyState = _store.showLiveEmptyState;
+      final showLiveEmptyState = showsAnonymousChannels
+          ? browseStore!.liveChannelsLoaded && liveChannels.isEmpty
+          : _store.showLiveEmptyState;
+      final isLoadingInitialChannels = showsAnonymousChannels
+          ? browseStore!.isLoadingLiveChannels && liveChannels.isEmpty
+          : _store.isLoadingFollowing && _store.connection == null;
+      final channelsError = showsAnonymousChannels
+          ? browseStore!.liveChannelsError
+          : _store.followingError;
       const bottomScrollPadding = PageHeaderLayout.bottomNavigationScrollPadding;
 
       return Scaffold(
         extendBody: true,
         backgroundColor: theme.scaffoldBackgroundColor,
         bottomNavigationBar:
-            widget.bottomNavigationBar ?? const AppBottomNav(currentRoute: FlowRoutes.following),
+            widget.bottomNavigationBar ??
+            AppBottomNav(
+              currentRoute: FlowRoutes.following,
+              showLiveChannels: showsAnonymousChannels,
+            ),
         body: SafeArea(
           bottom: false,
           child: LayoutBuilder(
@@ -223,16 +301,24 @@ class _FollowingScreenState extends State<FollowingScreen> {
                       bottom: bottomScrollPadding,
                     ),
                     children: [
-                      if (_store.isLoadingFollowing && _store.connection == null)
-                        _FollowingSkeleton(viewportHeight: constraints.maxHeight)
+                      if (isLoadingInitialChannels)
+                        _FollowingSkeleton(
+                          viewportHeight: constraints.maxHeight,
+                          showOfflineCard: !showsAnonymousChannels,
+                          semanticLabel: showsAnonymousChannels
+                              ? "Loading live channels"
+                              : "Loading following channels",
+                        )
                       else ...[
-                        if (_store.followingError != null) ...[
-                          _StatusBanner(message: _store.followingError!),
+                        if (channelsError != null) ...[
+                          _StatusBanner(message: channelsError),
                           const SizedBox(height: AppSpacing.lg),
                         ],
                         if (showLiveEmptyState)
-                          const _EmptyState(
-                            message: "No followed channels are live now.",
+                          _EmptyState(
+                            message: showsAnonymousChannels
+                                ? "No live channels are available right now."
+                                : "No followed channels are live now.",
                           )
                         else
                           for (final channel in liveChannels)
@@ -241,13 +327,15 @@ class _FollowingScreenState extends State<FollowingScreen> {
                               onChannelSelected: _openLiveChannel,
                               onStreamSelected: _openPlayer,
                             ),
-                        const SizedBox(height: AppSpacing.sm),
-                        _OfflineCard(
-                          channels: offlineChannels,
-                          expanded: offlineExpanded,
-                          onToggle: _store.toggleOfflineExpanded,
-                          onChannelSelected: _openOfflineChannel,
-                        ),
+                        if (!showsAnonymousChannels) ...[
+                          const SizedBox(height: AppSpacing.sm),
+                          _OfflineCard(
+                            channels: offlineChannels,
+                            expanded: offlineExpanded,
+                            onToggle: _store.toggleOfflineExpanded,
+                            onChannelSelected: _openOfflineChannel,
+                          ),
+                        ],
                       ],
                     ],
                   ),
@@ -257,7 +345,8 @@ class _FollowingScreenState extends State<FollowingScreen> {
                   left: 0,
                   right: 0,
                   child: _FrostedTopBar(
-                    onProfilePressed: _startTwitchAuth,
+                    title: showsAnonymousChannels ? "Live Channels" : "Following",
+                    onProfilePressed: _openMe,
                     profileInitials: initialsForName(
                       profileUser?.displayName ?? "Me",
                     ),
@@ -278,30 +367,37 @@ const _offlineCardExtent = 72.0;
 const _offlineCardPadding = EdgeInsets.fromLTRB(18, 11, 18, 11);
 
 class _FollowingSkeleton extends StatelessWidget {
-  const _FollowingSkeleton({required this.viewportHeight});
+  const _FollowingSkeleton({
+    required this.viewportHeight,
+    required this.semanticLabel,
+    required this.showOfflineCard,
+  });
 
   final double viewportHeight;
+  final String semanticLabel;
+  final bool showOfflineCard;
 
   @override
   Widget build(BuildContext context) {
-    const fixedExtent =
+    final fixedExtent =
         PageHeaderLayout.largeTitleContentTopPadding +
         PageHeaderLayout.bottomNavigationScrollPadding +
-        AppSpacing.sm +
-        _offlineCardExtent;
+        (showOfflineCard ? AppSpacing.sm + _offlineCardExtent : 0);
     final availableHeight = math.max(0.0, viewportHeight - fixedExtent);
     final streamCount = (availableHeight / _streamCardExtent).floor();
 
     return SkeletonShimmer(
       child: Semantics(
         key: const ValueKey("following_skeleton"),
-        label: "Loading following channels",
+        label: semanticLabel,
         child: Column(
           children: [
             for (var index = 0; index < streamCount; index++)
               StreamCardSkeleton(key: ValueKey("following_stream_skeleton_$index")),
-            const SizedBox(height: AppSpacing.sm),
-            const _OfflineCardSkeleton(),
+            if (showOfflineCard) ...[
+              const SizedBox(height: AppSpacing.sm),
+              const _OfflineCardSkeleton(),
+            ],
           ],
         ),
       ),
@@ -312,6 +408,8 @@ class _FollowingSkeleton extends StatelessWidget {
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(DoubleProperty("viewportHeight", viewportHeight));
+    properties.add(StringProperty("semanticLabel", semanticLabel));
+    properties.add(DiagnosticsProperty<bool>("showOfflineCard", showOfflineCard));
   }
 }
 
@@ -388,11 +486,13 @@ class _OfflineCardShell extends StatelessWidget {
 
 class _FrostedTopBar extends StatelessWidget {
   const _FrostedTopBar({
+    required this.title,
     required this.onProfilePressed,
     required this.profileInitials,
     required this.profileImageUrl,
   });
 
+  final String title;
   final VoidCallback onProfilePressed;
   final String profileInitials;
   final String? profileImageUrl;
@@ -427,6 +527,7 @@ class _FrostedTopBar extends StatelessWidget {
           ),
           padding: PageHeaderLayout.largeTitleTopBarPadding,
           child: _TopBarContent(
+            title: title,
             onProfilePressed: onProfilePressed,
             profileInitials: profileInitials,
             profileImageUrl: profileImageUrl,
@@ -439,6 +540,7 @@ class _FrostedTopBar extends StatelessWidget {
   @override
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
+    properties.add(StringProperty("title", title));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onProfilePressed", onProfilePressed));
     properties.add(StringProperty("profileInitials", profileInitials));
     properties.add(StringProperty("profileImageUrl", profileImageUrl));
@@ -447,11 +549,13 @@ class _FrostedTopBar extends StatelessWidget {
 
 class _TopBarContent extends StatelessWidget {
   const _TopBarContent({
+    required this.title,
     required this.onProfilePressed,
     required this.profileInitials,
     required this.profileImageUrl,
   });
 
+  final String title;
   final VoidCallback onProfilePressed;
   final String profileInitials;
   final String? profileImageUrl;
@@ -460,10 +564,10 @@ class _TopBarContent extends StatelessWidget {
   Widget build(BuildContext context) => Row(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      const Expanded(
+      Expanded(
         child: PageHeaderTitle(
-          key: ValueKey("following_title"),
-          title: "Following",
+          key: const ValueKey("following_title"),
+          title: title,
         ),
       ),
       IconButton(
@@ -487,6 +591,7 @@ class _TopBarContent extends StatelessWidget {
   @override
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
+    properties.add(StringProperty("title", title));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onProfilePressed", onProfilePressed));
     properties.add(StringProperty("profileInitials", profileInitials));
     properties.add(StringProperty("profileImageUrl", profileImageUrl));
@@ -1219,20 +1324,9 @@ class _EmptyState extends StatelessWidget {
 Future<TwitchApiClient> _loadFollowingApiClient(
   TwitchAuthController authController,
 ) async {
-  if (!authController.config.isConfigured) {
-    throw TwitchAuthException(
-      "Set TWITCH_CLIENT_ID with --dart-define-from-file=.env to browse Twitch.",
-    );
-  }
-
-  final accessToken = await authController.secureStore.readAccessToken();
-  if (accessToken == null || accessToken.isEmpty) {
-    throw TwitchAuthException("Connect Twitch from Following to browse live data.");
-  }
-
-  final gqlAccessToken = await authController.secureStore.readWebSessionToken();
+  final savedTokens = await authController.readSavedTokens();
   return authController.apiClientFactory(
-    accessToken,
-    gqlAccessToken: gqlAccessToken,
+    savedTokens.accessToken ?? "",
+    gqlAccessToken: savedTokens.webSessionToken,
   );
 }

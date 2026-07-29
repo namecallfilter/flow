@@ -862,12 +862,18 @@ class _MemoryFlowPreferences implements FlowPreferences {
   Future<List<String>> readBrowseSearchHistory() async => searchHistory;
 
   @override
+  Future<bool> readLoginOfferDismissed() async => false;
+
+  @override
   Future<ThemeMode> readThemeMode() async => themeMode;
 
   @override
   Future<void> saveBrowseSearchHistory(List<String> history) async {
     searchHistory = List<String>.of(history);
   }
+
+  @override
+  Future<void> saveLoginOfferDismissed({required bool dismissed}) async {}
 
   @override
   Future<void> saveThemeMode(ThemeMode mode) async {

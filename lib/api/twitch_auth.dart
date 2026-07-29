@@ -1,3 +1,4 @@
+import "dart:async";
 import "dart:convert";
 import "dart:math";
 
@@ -120,6 +121,7 @@ abstract interface class TwitchSecureStore {
   Future<String?> readAccessToken();
   Future<void> saveWebSessionToken(String token);
   Future<String?> readWebSessionToken();
+  Future<void> clearSession();
 }
 
 class SecureTwitchStore implements TwitchSecureStore {
@@ -131,6 +133,13 @@ class SecureTwitchStore implements TwitchSecureStore {
   static const _webSessionTokenKey = "twitch_web_session_token";
 
   final FlutterSecureStorage _storage;
+
+  @override
+  Future<void> clearSession() => Future.wait([
+    _storage.delete(key: _pendingStateKey),
+    _storage.delete(key: _accessTokenKey),
+    _storage.delete(key: _webSessionTokenKey),
+  ]);
 
   @override
   Future<void> clearPendingState() => _storage.delete(key: _pendingStateKey);
@@ -186,6 +195,10 @@ class TwitchAuthController {
   final TwitchApiClientFactory apiClientFactory;
   final TwitchCookieExtractor cookieExtractor;
   final OAuthStateGenerator _stateGenerator;
+  int _sessionRevision = 0;
+  int? _pendingAuthRevision;
+  String? _pendingAuthState;
+  Future<void> _sessionStorageBarrier = Future<void>.value();
 
   Future<Uri> createAuthorizationUri() async {
     if (!config.isConfigured) {
@@ -194,13 +207,34 @@ class TwitchAuthController {
       );
     }
 
+    final revision = ++_sessionRevision;
     final state = _stateGenerator();
-    await secureStore.savePendingState(state);
+    _pendingAuthRevision = revision;
+    _pendingAuthState = state;
+    try {
+      await _withSessionStorageLock(() async {
+        _ensurePendingAuthCurrent(revision);
+        await secureStore.savePendingState(state);
+        _ensurePendingAuthCurrent(revision);
+      });
+    } on Object {
+      if (_pendingAuthRevision == revision) {
+        _pendingAuthRevision = null;
+        _pendingAuthState = null;
+      }
+      rethrow;
+    }
     return config.authorizationUri(state: state);
   }
 
   Future<TwitchAuthConnection> completeAuth(Uri callbackUri) async {
+    final revision = _pendingAuthRevision;
+    if (revision == null) {
+      throw TwitchAuthException("Twitch sign-in was canceled.");
+    }
+    _ensurePendingAuthCurrent(revision);
     final expectedState = await secureStore.readPendingState();
+    _ensurePendingAuthCurrent(revision);
     final callback = TwitchAuthCallback.parse(
       callbackUri,
       expectedState: expectedState ?? "",
@@ -208,19 +242,71 @@ class TwitchAuthController {
 
     final validationClient = apiClientFactory(callback.accessToken);
     final isValid = await validationClient.validateAccessToken(callback.accessToken);
+    _ensurePendingAuthCurrent(revision);
     if (!isValid) {
       throw TwitchAuthException("Twitch access token is invalid.");
     }
 
-    await secureStore.saveAccessToken(callback.accessToken);
-    await secureStore.clearPendingState();
-    final gqlAccessToken = await extractAndStoreWebSessionToken();
-
+    final gqlAccessToken = (await cookieExtractor.extractTwitchAuthToken())?.trim();
+    _ensurePendingAuthCurrent(revision);
+    if (gqlAccessToken == null || gqlAccessToken.isEmpty) {
+      throw TwitchAuthException("Twitch web session token is missing.");
+    }
     final apiClient = apiClientFactory(
       callback.accessToken,
       gqlAccessToken: gqlAccessToken,
     );
-    return _fetchConnection(apiClient);
+    final connection = await _fetchConnection(apiClient);
+    _ensurePendingAuthCurrent(revision);
+
+    try {
+      await _withSessionStorageLock(() async {
+        var didStartReplacingSession = false;
+        String? previousAccessToken;
+        String? previousWebSessionToken;
+        try {
+          _ensurePendingAuthCurrent(revision);
+          previousAccessToken = await secureStore.readAccessToken();
+          _ensurePendingAuthCurrent(revision);
+          previousWebSessionToken = await secureStore.readWebSessionToken();
+          _ensurePendingAuthCurrent(revision);
+          didStartReplacingSession = true;
+          await secureStore.clearSession();
+          _ensurePendingAuthCurrent(revision);
+          await secureStore.saveAccessToken(callback.accessToken);
+          _ensurePendingAuthCurrent(revision);
+          await secureStore.saveWebSessionToken(gqlAccessToken);
+          _ensurePendingAuthCurrent(revision);
+        } on Object {
+          if (didStartReplacingSession) {
+            try {
+              await secureStore.clearSession();
+              if (previousAccessToken != null &&
+                  previousAccessToken.isNotEmpty &&
+                  previousWebSessionToken != null &&
+                  previousWebSessionToken.isNotEmpty) {
+                await secureStore.saveAccessToken(previousAccessToken);
+                await secureStore.saveWebSessionToken(previousWebSessionToken);
+              }
+            } on Object {
+              // Preserve the original completion error.
+            }
+          }
+          rethrow;
+        }
+      });
+    } on Object {
+      if (_pendingAuthRevision == revision) {
+        _pendingAuthRevision = null;
+        _pendingAuthState = null;
+      }
+      rethrow;
+    }
+    if (_pendingAuthRevision == revision) {
+      _pendingAuthRevision = null;
+      _pendingAuthState = null;
+    }
+    return connection;
   }
 
   Future<TwitchAuthConnection?> loadSavedConnection() async {
@@ -228,22 +314,105 @@ class TwitchAuthController {
       return null;
     }
 
-    final accessToken = await secureStore.readAccessToken();
-    if (accessToken == null || accessToken.isEmpty) {
+    final revision = _sessionRevision;
+    final credentials =
+        await _withSessionStorageLock<({String accessToken, String gqlAccessToken})?>(() async {
+          if (revision != _sessionRevision || _pendingAuthRevision != null) {
+            return null;
+          }
+          final accessToken = await secureStore.readAccessToken();
+          if (revision != _sessionRevision || _pendingAuthRevision != null) {
+            return null;
+          }
+          final gqlAccessToken = await secureStore.readWebSessionToken();
+          if (revision != _sessionRevision || _pendingAuthRevision != null) {
+            return null;
+          }
+          if (accessToken == null ||
+              accessToken.isEmpty ||
+              gqlAccessToken == null ||
+              gqlAccessToken.trim().isEmpty) {
+            await secureStore.clearSession();
+            return null;
+          }
+          return (
+            accessToken: accessToken,
+            gqlAccessToken: gqlAccessToken,
+          );
+        });
+    if (credentials == null) {
       return null;
     }
-
-    final gqlAccessToken = await secureStore.readWebSessionToken();
     final apiClient = apiClientFactory(
-      accessToken,
-      gqlAccessToken: gqlAccessToken,
+      credentials.accessToken,
+      gqlAccessToken: credentials.gqlAccessToken,
     );
-    final isValid = await apiClient.validateAccessToken(accessToken);
+    final isValid = await apiClient.validateAccessToken(credentials.accessToken);
+    if (revision != _sessionRevision) {
+      return null;
+    }
     if (!isValid) {
+      await _clearSessionIfCurrent(revision);
       return null;
     }
 
-    return _fetchConnection(apiClient);
+    final connection = await _fetchConnection(apiClient);
+    return revision == _sessionRevision ? connection : null;
+  }
+
+  Future<void> cancelPendingAuth(String state) {
+    if (_pendingAuthRevision == null || _pendingAuthState != state) {
+      return Future<void>.value();
+    }
+    final revision = ++_sessionRevision;
+    _pendingAuthRevision = null;
+    _pendingAuthState = null;
+    return _withSessionStorageLock(() async {
+      if (revision == _sessionRevision && _pendingAuthRevision == null) {
+        await secureStore.clearPendingState();
+      }
+    });
+  }
+
+  Future<void> signOut() {
+    _sessionRevision++;
+    _pendingAuthRevision = null;
+    _pendingAuthState = null;
+    return _withSessionStorageLock(secureStore.clearSession);
+  }
+
+  Future<({String? accessToken, String? webSessionToken})> readSavedTokens() =>
+      _withSessionStorageLock(() async {
+        final accessToken = await secureStore.readAccessToken();
+        final webSessionToken = await secureStore.readWebSessionToken();
+        return (
+          accessToken: accessToken,
+          webSessionToken: webSessionToken,
+        );
+      });
+
+  Future<void> _clearSessionIfCurrent(int revision) => _withSessionStorageLock(() async {
+    if (revision == _sessionRevision) {
+      await secureStore.clearSession();
+    }
+  });
+
+  void _ensurePendingAuthCurrent(int revision) {
+    if (revision != _sessionRevision || _pendingAuthRevision != revision) {
+      throw TwitchAuthException("Twitch sign-in was canceled.");
+    }
+  }
+
+  Future<T> _withSessionStorageLock<T>(Future<T> Function() operation) async {
+    final previous = _sessionStorageBarrier;
+    final release = Completer<void>();
+    _sessionStorageBarrier = release.future;
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release.complete();
+    }
   }
 
   Future<TwitchAuthConnection> _fetchConnection(
@@ -269,17 +438,6 @@ class TwitchAuthController {
       usersById: usersById,
       channelInfoByBroadcasterId: channelInfoByBroadcasterId,
     );
-  }
-
-  Future<String?> extractAndStoreWebSessionToken() async {
-    final webSessionToken = await cookieExtractor.extractTwitchAuthToken();
-    final token = webSessionToken?.trim();
-    if (token == null || token.isEmpty) {
-      return null;
-    }
-
-    await secureStore.saveWebSessionToken(token);
-    return token;
   }
 }
 
