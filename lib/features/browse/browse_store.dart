@@ -1,3 +1,5 @@
+import "dart:async";
+
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
@@ -13,6 +15,8 @@ abstract class BrowseStoreBase with Store {
   BrowseStoreBase({required this.apiCache});
 
   final TwitchApiCache apiCache;
+  Future<void>? _liveChannelsLoad;
+  Future<void>? _liveChannelsRefresh;
 
   @observable
   List<BrowseCategory> categories = const <BrowseCategory>[];
@@ -128,10 +132,38 @@ abstract class BrowseStoreBase with Store {
     bool reset = false,
     bool refresh = false,
   }) async {
+    final activeLoad = _liveChannelsLoad;
+    if (activeLoad != null) {
+      if (!refresh) {
+        return;
+      }
+      final activeRefresh = _liveChannelsRefresh;
+      if (activeRefresh != null) {
+        await activeRefresh;
+        return;
+      }
+
+      final operation = Completer<void>();
+      final operationFuture = operation.future;
+      _liveChannelsRefresh = operationFuture;
+      try {
+        await activeLoad;
+        await loadLiveChannels(reset: true, refresh: true);
+      } finally {
+        if (identical(_liveChannelsRefresh, operationFuture)) {
+          _liveChannelsRefresh = null;
+        }
+        operation.complete();
+      }
+      return;
+    }
     if (isLoadingLiveChannels || (!reset && liveChannelsLoaded && liveChannelsCursor == null)) {
       return;
     }
 
+    final operation = Completer<void>();
+    final operationFuture = operation.future;
+    _liveChannelsLoad = operationFuture;
     isLoadingLiveChannels = true;
     liveChannelsError = null;
     if (reset) {
@@ -162,6 +194,10 @@ abstract class BrowseStoreBase with Store {
       liveChannelsError = browseErrorMessage(error);
     } finally {
       isLoadingLiveChannels = false;
+      if (identical(_liveChannelsLoad, operationFuture)) {
+        _liveChannelsLoad = null;
+      }
+      operation.complete();
     }
   }
 

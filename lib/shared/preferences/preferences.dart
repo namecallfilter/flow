@@ -15,6 +15,8 @@ abstract interface class FlowPreferences {
   Future<List<String>> readBrowseSearchHistory();
   Future<void> saveBrowseSearchHistory(List<String> history);
   Future<void> clearBrowseSearchHistory();
+  Future<bool> readLoginOfferDismissed();
+  Future<void> saveLoginOfferDismissed({required bool dismissed});
 }
 
 abstract interface class FlowPreferencesStore {
@@ -36,6 +38,7 @@ class SharedPreferencesFlowPreferences implements FlowPreferences {
   static const adProxyWhitelistedChannelsKey = "ad_proxy_whitelisted_channels";
   static const adProxySubscriptionChannelsKey = "ad_proxy_subscription_channels";
   static const browseSearchHistoryKey = "browse_search_history";
+  static const loginOfferDismissedKey = "login_offer_dismissed";
 
   final FlowPreferencesStore _store;
 
@@ -66,6 +69,10 @@ class SharedPreferencesFlowPreferences implements FlowPreferences {
   }
 
   @override
+  Future<bool> readLoginOfferDismissed() async =>
+      await _store.getString(loginOfferDismissedKey) == "true";
+
+  @override
   Future<ThemeMode> readThemeMode() async {
     final value = await _store.getString(themeModeKey);
     return themeModeFromPreference(value);
@@ -81,6 +88,10 @@ class SharedPreferencesFlowPreferences implements FlowPreferences {
 
     await _store.setStringList(browseSearchHistoryKey, normalizedHistory);
   }
+
+  @override
+  Future<void> saveLoginOfferDismissed({required bool dismissed}) =>
+      _store.setString(loginOfferDismissedKey, dismissed.toString());
 
   @override
   Future<void> saveAdProxyEnabled({required bool enabled}) =>

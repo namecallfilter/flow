@@ -5,6 +5,12 @@ import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:webview_flutter/webview_flutter.dart";
 
+typedef TwitchLoginOpener =
+    Future<TwitchAuthConnection?> Function(
+      BuildContext context,
+      TwitchAuthController authController,
+    );
+
 class TwitchLoginScreen extends StatefulWidget {
   const TwitchLoginScreen({required this.authController, super.key});
 
@@ -22,6 +28,7 @@ class TwitchLoginScreen extends StatefulWidget {
 
 class _TwitchLoginScreenState extends State<TwitchLoginScreen> {
   late final WebViewController _webViewController;
+  String? _authState;
   var _isCompletingAuth = false;
 
   @override
@@ -59,8 +66,19 @@ class _TwitchLoginScreenState extends State<TwitchLoginScreen> {
   }
 
   Future<void> _loadAuthUrl() async {
+    if (!mounted) {
+      return;
+    }
     try {
       final authUri = await widget.authController.createAuthorizationUri();
+      _authState = authUri.queryParameters["state"];
+      if (!mounted) {
+        final authState = _authState;
+        if (authState != null) {
+          await _cancelPendingAuth(authState);
+        }
+        return;
+      }
       await _webViewController.loadRequest(authUri);
     } on TwitchAuthException catch (error) {
       if (!mounted) {
@@ -82,7 +100,7 @@ class _TwitchLoginScreenState extends State<TwitchLoginScreen> {
   }
 
   Future<void> _completeAuthFromUrl(String url) async {
-    if (_isCompletingAuth) {
+    if (!mounted || _isCompletingAuth) {
       return;
     }
 
@@ -141,6 +159,23 @@ class _TwitchLoginScreenState extends State<TwitchLoginScreen> {
     } on Object catch (error) {
       debugPrint("Twitch auth WebView JavaScript error: $error");
     }
+  }
+
+  Future<void> _cancelPendingAuth(String state) async {
+    try {
+      await widget.authController.cancelPendingAuth(state);
+    } on Object catch (error) {
+      debugPrint("Couldn't clear the pending Twitch login: $error");
+    }
+  }
+
+  @override
+  void dispose() {
+    final authState = _authState;
+    if (authState != null) {
+      unawaited(_cancelPendingAuth(authState));
+    }
+    super.dispose();
   }
 
   @override

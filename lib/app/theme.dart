@@ -129,6 +129,8 @@ ThemeData buildFlowTheme(Brightness brightness) {
     snackBarTheme: SnackBarThemeData(
       showCloseIcon: true,
       backgroundColor: backgroundColor,
+      contentTextStyle: TextStyle(color: colorScheme.onSurface),
+      closeIconColor: colorScheme.onSurface,
       shape: RoundedRectangleBorder(
         side: BorderSide(color: borderColor),
         borderRadius: borderRadius,
