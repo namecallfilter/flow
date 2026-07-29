@@ -82,6 +82,8 @@ void main() {
     expect(channel.liveStream?.viewerCount, 26300);
     expect(channel.pastBroadcasts.single.id, "vod-1");
     expect(channel.pastBroadcasts.single.title, "2025 Japan Trip");
+    expect(channel.pastBroadcasts.single.categoryId, "509658");
+    expect(channel.pastBroadcasts.single.category, "Just Chatting");
     expect(channel.pastBroadcasts.single.duration, const Duration(seconds: 17999));
     expect(channel.pastBroadcasts.single.viewCount, 91234);
   });
