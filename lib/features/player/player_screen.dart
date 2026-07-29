@@ -167,7 +167,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
+    if (state == AppLifecycleState.paused) {
       _appIsResumed = false;
       if (_playWhenReady) {
         _wasPlayingBeforeBackground = true;
