@@ -11,10 +11,12 @@ class AppBottomNav extends StatelessWidget {
     required this.currentRoute,
     super.key,
     this.onRouteSelected,
+    this.showLiveChannels = false,
   });
 
   final String currentRoute;
   final ValueChanged<String>? onRouteSelected;
+  final bool showLiveChannels;
 
   @override
   Widget build(BuildContext context) {
@@ -51,9 +53,9 @@ class AppBottomNav extends StatelessWidget {
               child: Row(
                 children: [
                   _BottomNavItem(
-                    label: "Following",
-                    icon: Icons.favorite_border,
-                    activeIcon: Icons.favorite,
+                    label: showLiveChannels ? "Live Channels" : "Following",
+                    icon: showLiveChannels ? Icons.live_tv_outlined : Icons.favorite_border,
+                    activeIcon: showLiveChannels ? Icons.live_tv : Icons.favorite,
                     isActive: currentRoute == FlowRoutes.following,
                     onTap: () => _openRoute(context, FlowRoutes.following),
                   ),
@@ -101,6 +103,7 @@ class AppBottomNav extends StatelessWidget {
     properties.add(
       ObjectFlagProperty<ValueChanged<String>?>.has("onRouteSelected", onRouteSelected),
     );
+    properties.add(DiagnosticsProperty<bool>("showLiveChannels", showLiveChannels));
   }
 }
 

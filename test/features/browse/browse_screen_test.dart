@@ -77,6 +77,46 @@ void main() {
     expect(find.byKey(const ValueKey("browse_category_card_Just Chatting")), findsOneWidget);
   });
 
+  testWidgets("hides the duplicate Live Channels section for guests", (tester) async {
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => throw StateError("Unexpected API request."),
+    );
+    final store = BrowseStore(apiCache: apiCache)
+      ..selectedSection = BrowseSection.liveChannels
+      ..categories = const [
+        BrowseCategory(
+          id: "category-1",
+          name: "Just Chatting",
+          viewerCount: 1,
+          viewers: "1",
+          imageUrl: null,
+          colors: [Colors.purple, Colors.pink],
+        ),
+      ]
+      ..categoriesLoaded = true
+      ..liveChannelsLoaded = true;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: BrowseScreen(
+          apiCache: apiCache,
+          browseStore: store,
+          showLiveChannelsSection: false,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(store.selectedSection, BrowseSection.categories);
+    expect(find.byKey(const ValueKey("browse_segmented_control")), findsNothing);
+    expect(find.byKey(const ValueKey("browse_segment_live_channels")), findsNothing);
+    expect(find.byKey(const ValueKey("browse_live_channels")), findsNothing);
+    expect(find.byKey(const ValueKey("browse_categories_grid")), findsOneWidget);
+    expect(find.byKey(const ValueKey("browse_category_card_Just Chatting")), findsOneWidget);
+    expect(find.byKey(const ValueKey("bottom_nav_item_Live Channels")), findsOneWidget);
+  });
+
   testWidgets("matches stream skeleton geometry in Browse Live Channels", (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(390, 1200);
@@ -1377,6 +1417,13 @@ class _MemoryTwitchStore implements TwitchSecureStore {
   String? webSessionToken;
 
   @override
+  Future<void> clearSession() async {
+    accessToken = null;
+    pendingState = null;
+    webSessionToken = null;
+  }
+
+  @override
   Future<void> clearPendingState() async {
     pendingState = null;
   }
@@ -1449,12 +1496,18 @@ class _MemorySearchHistoryStore implements FlowPreferences {
   Future<List<String>> readBrowseSearchHistory() async => history;
 
   @override
+  Future<bool> readLoginOfferDismissed() async => false;
+
+  @override
   Future<ThemeMode> readThemeMode() async => ThemeMode.system;
 
   @override
   Future<void> saveBrowseSearchHistory(List<String> history) async {
     this.history = List<String>.of(history);
   }
+
+  @override
+  Future<void> saveLoginOfferDismissed({required bool dismissed}) async {}
 
   @override
   Future<void> saveThemeMode(ThemeMode mode) async {}

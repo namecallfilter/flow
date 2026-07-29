@@ -1,3 +1,4 @@
+import "dart:async";
 import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
@@ -45,12 +46,187 @@ void main() {
     expect(gqlAuthorizationHeaders["FlowFollowedUsers"], "OAuth cookie-token-123");
     expect(gqlAuthorizationHeaders["FlowUsers"], isNull);
   });
+
+  test("clears an invalid saved session", () async {
+    final store = _MemoryTwitchStore()
+      ..accessToken = "expired-token"
+      ..webSessionToken = "expired-cookie";
+    final controller = _authController(
+      secureStore: store,
+      validateToken: false,
+    );
+
+    expect(await controller.loadSavedConnection(), isNull);
+    expect(store.accessToken, isNull);
+    expect(store.webSessionToken, isNull);
+  });
+
+  test("does not replace a saved session when login is incomplete", () async {
+    final store = _MemoryTwitchStore()
+      ..accessToken = "saved-token"
+      ..webSessionToken = "saved-cookie";
+    final controller = _authController(secureStore: store);
+
+    await controller.createAuthorizationUri();
+
+    await expectLater(
+      controller.completeAuth(
+        Uri.parse(
+          "https://twitch.tv/login"
+          "#access_token=new-token&scope=user%3Aread%3Afollows&state=state-123",
+        ),
+      ),
+      throwsA(isA<TwitchAuthException>()),
+    );
+    expect(store.accessToken, "saved-token");
+    expect(store.webSessionToken, "saved-cookie");
+  });
+
+  test("restores a saved session when replacement persistence fails", () async {
+    final store = _FailingNewSessionStore()
+      ..accessToken = "saved-token"
+      ..webSessionToken = "saved-cookie";
+    final controller = _authController(
+      secureStore: store,
+      cookieExtractor: const _StaticCookieExtractor("cookie-token-123"),
+    );
+
+    await controller.createAuthorizationUri();
+
+    await expectLater(
+      controller.completeAuth(
+        Uri.parse(
+          "https://twitch.tv/login"
+          "#access_token=new-token&scope=user%3Aread%3Afollows&state=state-123",
+        ),
+      ),
+      throwsStateError,
+    );
+    expect(store.accessToken, "saved-token");
+    expect(store.webSessionToken, "saved-cookie");
+  });
+
+  test("signs out by clearing saved credentials", () async {
+    final store = _MemoryTwitchStore()
+      ..accessToken = "token-123"
+      ..webSessionToken = "cookie-token-123";
+    final controller = _authController(secureStore: store);
+
+    await controller.signOut();
+
+    expect(store.accessToken, isNull);
+    expect(store.webSessionToken, isNull);
+  });
+
+  test("a stale restore does not clear a newer OAuth state", () async {
+    final store = _MemoryTwitchStore()
+      ..accessToken = "expired-token"
+      ..webSessionToken = "expired-cookie";
+    final validationStarted = Completer<void>();
+    final validationResponse = Completer<http.Response>();
+    final controller = _authController(
+      secureStore: store,
+      validationStarted: validationStarted,
+      validationResponse: validationResponse.future,
+    );
+
+    final restore = controller.loadSavedConnection();
+    await validationStarted.future;
+    await controller.createAuthorizationUri();
+    validationResponse.complete(http.Response("invalid", 401));
+
+    expect(await restore, isNull);
+    expect(store.pendingState, "state-123");
+    expect(store.accessToken, "expired-token");
+    expect(store.webSessionToken, "expired-cookie");
+  });
+
+  test("a restore started during OAuth does not clear its pending state", () async {
+    final store = _MemoryTwitchStore();
+    final controller = _authController(secureStore: store);
+
+    await controller.createAuthorizationUri();
+
+    expect(await controller.loadSavedConnection(), isNull);
+    expect(store.pendingState, "state-123");
+  });
+
+  test("canceling an in-flight login prevents credential writes", () async {
+    final store = _MemoryTwitchStore();
+    final validationStarted = Completer<void>();
+    final validationResponse = Completer<http.Response>();
+    final controller = _authController(
+      secureStore: store,
+      cookieExtractor: const _StaticCookieExtractor("cookie-token-123"),
+      validationStarted: validationStarted,
+      validationResponse: validationResponse.future,
+    );
+
+    await controller.createAuthorizationUri();
+    final completion = controller.completeAuth(
+      Uri.parse(
+        "https://twitch.tv/login"
+        "#access_token=token-123&scope=user%3Aread%3Afollows&state=state-123",
+      ),
+    );
+    final completionExpectation = expectLater(
+      completion,
+      throwsA(isA<TwitchAuthException>()),
+    );
+    await validationStarted.future;
+    await controller.cancelPendingAuth("state-123");
+    validationResponse.complete(
+      _jsonResponse({"client_id": "client-123", "user_id": "user-123"}),
+    );
+
+    await completionExpectation;
+    expect(store.pendingState, isNull);
+    expect(store.accessToken, isNull);
+    expect(store.webSessionToken, isNull);
+  });
+
+  test("sign-out wins over an in-flight login", () async {
+    final store = _MemoryTwitchStore();
+    final validationStarted = Completer<void>();
+    final validationResponse = Completer<http.Response>();
+    final controller = _authController(
+      secureStore: store,
+      cookieExtractor: const _StaticCookieExtractor("cookie-token-123"),
+      validationStarted: validationStarted,
+      validationResponse: validationResponse.future,
+    );
+
+    await controller.createAuthorizationUri();
+    final completion = controller.completeAuth(
+      Uri.parse(
+        "https://twitch.tv/login"
+        "#access_token=token-123&scope=user%3Aread%3Afollows&state=state-123",
+      ),
+    );
+    final completionExpectation = expectLater(
+      completion,
+      throwsA(isA<TwitchAuthException>()),
+    );
+    await validationStarted.future;
+    await controller.signOut();
+    validationResponse.complete(
+      _jsonResponse({"client_id": "client-123", "user_id": "user-123"}),
+    );
+
+    await completionExpectation;
+    expect(store.pendingState, isNull);
+    expect(store.accessToken, isNull);
+    expect(store.webSessionToken, isNull);
+  });
 }
 
 TwitchAuthController _authController({
   required _MemoryTwitchStore secureStore,
   TwitchCookieExtractor cookieExtractor = const _StaticCookieExtractor(),
   Map<String, String?>? gqlAuthorizationHeaders,
+  bool validateToken = true,
+  Completer<void>? validationStarted,
+  Future<http.Response>? validationResponse,
 }) => TwitchAuthController(
   config: const TwitchAuthConfig(clientId: "client-123"),
   secureStore: secureStore,
@@ -61,6 +237,9 @@ TwitchAuthController _authController({
     gqlAccessToken: gqlAccessToken,
     httpClient: _authHttpClient(
       gqlAuthorizationHeaders: gqlAuthorizationHeaders,
+      validateToken: validateToken,
+      validationStarted: validationStarted,
+      validationResponse: validationResponse,
     ),
   ),
   cookieExtractor: cookieExtractor,
@@ -68,9 +247,20 @@ TwitchAuthController _authController({
 
 MockClient _authHttpClient({
   Map<String, String?>? gqlAuthorizationHeaders,
+  bool validateToken = true,
+  Completer<void>? validationStarted,
+  Future<http.Response>? validationResponse,
 }) => MockClient((request) async {
   if (request.url.host == "id.twitch.tv" && request.url.path == "/oauth2/validate") {
-    return _jsonResponse({"client_id": "client-123", "user_id": "user-123"});
+    if (validationStarted != null && !validationStarted.isCompleted) {
+      validationStarted.complete();
+    }
+    if (validationResponse != null) {
+      return validationResponse;
+    }
+    return validateToken
+        ? _jsonResponse({"client_id": "client-123", "user_id": "user-123"})
+        : http.Response("invalid", 401);
   }
 
   if (request.url.host == "gql.twitch.tv") {
@@ -230,6 +420,13 @@ class _MemoryTwitchStore implements TwitchSecureStore {
   String? webSessionToken;
 
   @override
+  Future<void> clearSession() async {
+    accessToken = null;
+    pendingState = null;
+    webSessionToken = null;
+  }
+
+  @override
   Future<void> clearPendingState() async {
     pendingState = null;
   }
@@ -256,6 +453,19 @@ class _MemoryTwitchStore implements TwitchSecureStore {
   @override
   Future<void> saveWebSessionToken(String token) async {
     webSessionToken = token;
+  }
+}
+
+class _FailingNewSessionStore extends _MemoryTwitchStore {
+  var _hasFailed = false;
+
+  @override
+  Future<void> saveWebSessionToken(String token) async {
+    if (!_hasFailed && token == "cookie-token-123") {
+      _hasFailed = true;
+      throw StateError("Secure storage is unavailable.");
+    }
+    await super.saveWebSessionToken(token);
   }
 }
 

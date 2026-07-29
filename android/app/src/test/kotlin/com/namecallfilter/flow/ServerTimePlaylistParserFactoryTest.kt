@@ -30,6 +30,7 @@ class ServerTimePlaylistParserFactoryTest {
             #EXTM3U
             #EXT-X-TARGETDURATION:6
             #EXT-X-MEDIA-SEQUENCE:40
+            #EXT-X-PROGRAM-DATE-TIME:2026-07-28T12:00:00.000Z
             #EXTINF:2.000,live
             segment-40.ts
             #EXT-X-DATERANGE:ID="stitched-ad-1",CLASS="twitch-stitched-ad"
@@ -44,6 +45,7 @@ class ServerTimePlaylistParserFactoryTest {
         assertEquals(3, "#EXTINF:2.000,".toRegex().findAll(rewritten).count())
         assertTrue(rewritten.contains("segment-41.ts\n#EXTINF:2.000,\nsegment-42.ts"))
         assertTrue(rewritten.contains("ID=\"stitched-ad-1\""))
+        assertTrue(rewritten.contains("#EXT-X-PROGRAM-DATE-TIME:2026-07-28T12:00:00.000Z"))
         assertFalse(rewritten.contains("#EXT-X-TWITCH-PREFETCH:"))
 
         val vod = "$playlist\n#EXT-X-ENDLIST"

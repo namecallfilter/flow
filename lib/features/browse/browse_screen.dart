@@ -37,6 +37,7 @@ class BrowseScreen extends StatefulWidget {
     this.browseStore,
     this.preferences,
     this.periodicRefreshInterval = const Duration(seconds: 30),
+    this.showLiveChannelsSection = true,
   });
 
   final TwitchAuthController? authController;
@@ -45,6 +46,7 @@ class BrowseScreen extends StatefulWidget {
   final BrowseStore? browseStore;
   final FlowPreferences? preferences;
   final Duration? periodicRefreshInterval;
+  final bool showLiveChannelsSection;
 
   @override
   State<BrowseScreen> createState() => _BrowseScreenState();
@@ -57,9 +59,9 @@ class BrowseScreen extends StatefulWidget {
     properties.add(DiagnosticsProperty<Widget?>("bottomNavigationBar", bottomNavigationBar));
     properties.add(DiagnosticsProperty<BrowseStore?>("browseStore", browseStore));
     properties.add(DiagnosticsProperty<FlowPreferences?>("preferences", preferences));
-    properties.add(
-      DiagnosticsProperty<Duration?>("periodicRefreshInterval", periodicRefreshInterval),
-    );
+    properties
+      ..add(DiagnosticsProperty<Duration?>("periodicRefreshInterval", periodicRefreshInterval))
+      ..add(DiagnosticsProperty<bool>("showLiveChannelsSection", showLiveChannelsSection));
   }
 }
 
@@ -79,22 +81,44 @@ class _BrowseScreenState extends State<BrowseScreen> {
     _authController = widget.authController ?? _buildDefaultAuthController();
     _apiCache = widget.apiCache ?? TwitchApiCache(clientLoader: _loadApiClient);
     _store = widget.browseStore ?? BrowseStore(apiCache: _apiCache);
+    if (!widget.showLiveChannelsSection) {
+      _store.selectSection(BrowseSection.categories);
+    }
     _preferences = widget.preferences ?? _MemoryFlowPreferences();
     _searchStore = BrowseSearchStore(
       apiCache: _apiCache,
       preferences: _preferences,
     );
     _scrollController = ScrollController(
-      initialScrollOffset: _store.scrollOffsetFor(_store.selectedSection),
+      initialScrollOffset: _store.scrollOffsetFor(_visibleSection),
     );
     _scrollController.addListener(_loadMoreWhenNearBottom);
     if (!_store.categoriesLoaded) {
       unawaited(_store.loadCategories(reset: true));
     }
-    if (_store.selectedSection == BrowseSection.liveChannels && !_store.liveChannelsLoaded) {
+    if (widget.showLiveChannelsSection &&
+        _store.selectedSection == BrowseSection.liveChannels &&
+        !_store.liveChannelsLoaded) {
       unawaited(_store.loadLiveChannels(reset: true));
     }
   }
+
+  @override
+  void didUpdateWidget(BrowseScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.showLiveChannelsSection && !widget.showLiveChannelsSection) {
+      if (_scrollController.hasClients) {
+        _store.setScrollOffsetFor(_store.selectedSection, _scrollController.offset);
+      }
+      _store.selectSection(BrowseSection.categories);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _restoreScrollOffsetFor(BrowseSection.categories);
+      });
+    }
+  }
+
+  BrowseSection get _visibleSection =>
+      widget.showLiveChannelsSection ? _store.selectedSection : BrowseSection.categories;
 
   @override
   void dispose() {
@@ -124,7 +148,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
     if (!_scrollController.hasClients) {
       return;
     }
-    _store.setScrollOffsetFor(_store.selectedSection, _scrollController.offset);
+    _store.setScrollOffsetFor(_visibleSection, _scrollController.offset);
   }
 
   void _restoreScrollOffsetFor(BrowseSection section) {
@@ -169,7 +193,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
       return;
     }
 
-    if (_store.selectedSection == BrowseSection.categories) {
+    if (_visibleSection == BrowseSection.categories) {
       if (!_store.categoriesLoaded || _store.categoriesCursor == null) {
         return;
       }
@@ -182,7 +206,9 @@ class _BrowseScreenState extends State<BrowseScreen> {
     }
   }
 
-  Future<void> _refreshActiveSection() => _store.refreshActiveSection();
+  Future<void> _refreshActiveSection() => widget.showLiveChannelsSection
+      ? _store.refreshActiveSection()
+      : _store.loadCategories(reset: true, refresh: true);
 
   void _openCategory(BrowseCategory category) {
     final store = _categoryStores.putIfAbsent(
@@ -242,6 +268,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
   Widget build(BuildContext context) => Observer(
     builder: (_) {
       final theme = Theme.of(context);
+      final selectedSection = _visibleSection;
       const topScrollPadding = 140.0;
       const bottomScrollPadding = 114.0;
 
@@ -249,7 +276,11 @@ class _BrowseScreenState extends State<BrowseScreen> {
         extendBody: true,
         backgroundColor: theme.scaffoldBackgroundColor,
         bottomNavigationBar:
-            widget.bottomNavigationBar ?? const AppBottomNav(currentRoute: FlowRoutes.browse),
+            widget.bottomNavigationBar ??
+            AppBottomNav(
+              currentRoute: FlowRoutes.browse,
+              showLiveChannels: !widget.showLiveChannelsSection,
+            ),
         body: SafeArea(
           bottom: false,
           child: Stack(
@@ -272,14 +303,16 @@ class _BrowseScreenState extends State<BrowseScreen> {
                     0,
                   ).copyWith(bottom: bottomScrollPadding),
                   children: [
-                    _BrowseSectionSelector(
-                      selectedSection: _store.selectedSection,
-                      onSectionSelected: _selectSection,
-                    ),
-                    const SizedBox(height: AppSpacing.md),
+                    if (widget.showLiveChannelsSection) ...[
+                      _BrowseSectionSelector(
+                        selectedSection: selectedSection,
+                        onSectionSelected: _selectSection,
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                    ],
                     Offstage(
                       key: const ValueKey("browse_categories_section"),
-                      offstage: _store.selectedSection != BrowseSection.categories,
+                      offstage: selectedSection != BrowseSection.categories,
                       child: _RetainedBrowseSection(
                         isLoading: _store.isLoadingCategories,
                         hasItems: _store.categories.isNotEmpty,
@@ -294,7 +327,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
                     ),
                     Offstage(
                       key: const ValueKey("browse_live_channels_section"),
-                      offstage: _store.selectedSection != BrowseSection.liveChannels,
+                      offstage: selectedSection != BrowseSection.liveChannels,
                       child: _RetainedBrowseSection(
                         isLoading: _store.isLoadingLiveChannels,
                         hasItems: _store.liveChannels.isNotEmpty,
@@ -1486,21 +1519,10 @@ class _SmallLiveDot extends StatelessWidget {
 Future<TwitchApiClient> _loadBrowseApiClient(
   TwitchAuthController authController,
 ) async {
-  if (!authController.config.isConfigured) {
-    throw TwitchAuthException(
-      "Set TWITCH_CLIENT_ID with --dart-define-from-file=.env to browse Twitch.",
-    );
-  }
-
-  final accessToken = await authController.secureStore.readAccessToken();
-  if (accessToken == null || accessToken.isEmpty) {
-    throw TwitchAuthException("Connect Twitch from Following to browse live data.");
-  }
-
-  final gqlAccessToken = await authController.secureStore.readWebSessionToken();
+  final savedTokens = await authController.readSavedTokens();
   return authController.apiClientFactory(
-    accessToken,
-    gqlAccessToken: gqlAccessToken,
+    savedTokens.accessToken ?? "",
+    gqlAccessToken: savedTokens.webSessionToken,
   );
 }
 
@@ -2173,12 +2195,18 @@ class _MemoryFlowPreferences implements FlowPreferences {
   Future<List<String>> readBrowseSearchHistory() async => searchHistory;
 
   @override
+  Future<bool> readLoginOfferDismissed() async => false;
+
+  @override
   Future<ThemeMode> readThemeMode() async => ThemeMode.system;
 
   @override
   Future<void> saveBrowseSearchHistory(List<String> history) async {
     searchHistory = List<String>.of(history);
   }
+
+  @override
+  Future<void> saveLoginOfferDismissed({required bool dismissed}) async {}
 
   @override
   Future<void> saveThemeMode(ThemeMode mode) async {}

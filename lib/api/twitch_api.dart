@@ -191,6 +191,7 @@ class TwitchPastBroadcast {
   const TwitchPastBroadcast({
     required this.id,
     required this.title,
+    required this.categoryId,
     required this.category,
     required this.duration,
     required this.viewCount,
@@ -201,6 +202,7 @@ class TwitchPastBroadcast {
 
   final String id;
   final String title;
+  final String categoryId;
   final String category;
   final Duration duration;
   final int viewCount;
@@ -971,6 +973,7 @@ class TwitchApiClient {
     return TwitchPastBroadcast(
       id: _stringValue(video["id"]),
       title: title.isEmpty ? "Past broadcast" : title,
+      categoryId: _stringValue(game?["id"]),
       category: _gameName(game, fallback: "Broadcast"),
       duration: Duration(seconds: _intValue(video["lengthSeconds"])),
       thumbnailUrl: video["previewThumbnailURL"] as String?,

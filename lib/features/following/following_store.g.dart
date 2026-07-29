@@ -12,11 +12,10 @@ mixin _$FollowingStore on FollowingStoreBase, Store {
   Computed<List<StreamChannel>>? _$liveChannelsComputed;
 
   @override
-  List<StreamChannel> get liveChannels =>
-      (_$liveChannelsComputed ??= Computed<List<StreamChannel>>(
-        () => super.liveChannels,
-        name: 'FollowingStoreBase.liveChannels',
-      )).value;
+  List<StreamChannel> get liveChannels => (_$liveChannelsComputed ??= Computed<List<StreamChannel>>(
+    () => super.liveChannels,
+    name: 'FollowingStoreBase.liveChannels',
+  )).value;
   Computed<List<OfflineChannel>>? _$offlineChannelsComputed;
 
   @override
@@ -28,11 +27,10 @@ mixin _$FollowingStore on FollowingStoreBase, Store {
   Computed<TwitchUser?>? _$profileUserComputed;
 
   @override
-  TwitchUser? get profileUser =>
-      (_$profileUserComputed ??= Computed<TwitchUser?>(
-        () => super.profileUser,
-        name: 'FollowingStoreBase.profileUser',
-      )).value;
+  TwitchUser? get profileUser => (_$profileUserComputed ??= Computed<TwitchUser?>(
+    () => super.profileUser,
+    name: 'FollowingStoreBase.profileUser',
+  )).value;
   Computed<bool>? _$offlineExpandedComputed;
 
   @override
@@ -43,11 +41,17 @@ mixin _$FollowingStore on FollowingStoreBase, Store {
   Computed<bool>? _$showLiveEmptyStateComputed;
 
   @override
-  bool get showLiveEmptyState =>
-      (_$showLiveEmptyStateComputed ??= Computed<bool>(
-        () => super.showLiveEmptyState,
-        name: 'FollowingStoreBase.showLiveEmptyState',
-      )).value;
+  bool get showLiveEmptyState => (_$showLiveEmptyStateComputed ??= Computed<bool>(
+    () => super.showLiveEmptyState,
+    name: 'FollowingStoreBase.showLiveEmptyState',
+  )).value;
+  Computed<bool>? _$isLoggedInComputed;
+
+  @override
+  bool get isLoggedIn => (_$isLoggedInComputed ??= Computed<bool>(
+    () => super.isLoggedIn,
+    name: 'FollowingStoreBase.isLoggedIn',
+  )).value;
 
   late final _$connectionAtom = Atom(
     name: 'FollowingStoreBase.connection',
@@ -64,6 +68,24 @@ mixin _$FollowingStore on FollowingStoreBase, Store {
   set connection(TwitchAuthConnection? value) {
     _$connectionAtom.reportWrite(value, super.connection, () {
       super.connection = value;
+    });
+  }
+
+  late final _$sessionStatusAtom = Atom(
+    name: 'FollowingStoreBase.sessionStatus',
+    context: context,
+  );
+
+  @override
+  TwitchSessionStatus get sessionStatus {
+    _$sessionStatusAtom.reportRead();
+    return super.sessionStatus;
+  }
+
+  @override
+  set sessionStatus(TwitchSessionStatus value) {
+    _$sessionStatusAtom.reportWrite(value, super.sessionStatus, () {
+      super.sessionStatus = value;
     });
   }
 
@@ -137,6 +159,16 @@ mixin _$FollowingStore on FollowingStoreBase, Store {
     );
   }
 
+  late final _$signOutAsyncAction = AsyncAction(
+    'FollowingStoreBase.signOut',
+    context: context,
+  );
+
+  @override
+  Future<void> signOut() {
+    return _$signOutAsyncAction.run(() => super.signOut());
+  }
+
   late final _$FollowingStoreBaseActionController = ActionController(
     name: 'FollowingStoreBase',
     context: context,
@@ -170,6 +202,7 @@ mixin _$FollowingStore on FollowingStoreBase, Store {
   String toString() {
     return '''
 connection: ${connection},
+sessionStatus: ${sessionStatus},
 isLoadingFollowing: ${isLoadingFollowing},
 followingError: ${followingError},
 offlineExpandedOverride: ${offlineExpandedOverride},
@@ -177,7 +210,8 @@ liveChannels: ${liveChannels},
 offlineChannels: ${offlineChannels},
 profileUser: ${profileUser},
 offlineExpanded: ${offlineExpanded},
-showLiveEmptyState: ${showLiveEmptyState}
+showLiveEmptyState: ${showLiveEmptyState},
+isLoggedIn: ${isLoggedIn}
     ''';
   }
 }

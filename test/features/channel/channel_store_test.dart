@@ -59,6 +59,7 @@ TwitchChannelDetails _details({
     TwitchPastBroadcast(
       id: broadcastId,
       title: broadcastTitle,
+      categoryId: "509658",
       category: "Just Chatting",
       duration: const Duration(seconds: 17999),
       viewCount: 91234,

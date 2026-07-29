@@ -63,6 +63,20 @@ void main() {
     ]);
     expect(await preferences.readAdProxyWhitelistedChannels(), ["creator", "other_channel"]);
   });
+
+  test("persists dismissal of the startup login offer", () async {
+    final store = _MemoryPreferencesStore();
+    final preferences = SharedPreferencesFlowPreferences(store: store);
+
+    expect(await preferences.readLoginOfferDismissed(), isFalse);
+
+    await preferences.saveLoginOfferDismissed(dismissed: true);
+
+    expect(
+      await SharedPreferencesFlowPreferences(store: store).readLoginOfferDismissed(),
+      isTrue,
+    );
+  });
 }
 
 class _MemoryPreferencesStore implements FlowPreferencesStore {

@@ -60,7 +60,11 @@ void main() {
     expect(liveBadgeRect.center.dx, closeTo(avatarRect.center.dx, 1));
     expect(liveBadgeRect.top, greaterThan(avatarRect.center.dy));
     expect(find.byKey(const ValueKey("channel_category_button")), findsOneWidget);
-    expect(find.text("Just Chatting"), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey("past_broadcast_category_button_vod-1")),
+      findsOneWidget,
+    );
+    expect(find.text("Just Chatting"), findsNWidgets(2));
     expect(find.text("with 26.3K viewers"), findsOneWidget);
     expect(find.text("2.3M followers"), findsOneWidget);
     expect(find.text("Hi Im Jason"), findsOneWidget);
@@ -71,7 +75,7 @@ void main() {
     expect(find.text("2025 Japan Trip"), findsOneWidget);
     expect(find.text("4:59:59"), findsOneWidget);
     expect(find.text("91.2K views"), findsOneWidget);
-    expect(find.text("2 days ago | Just Chatting"), findsOneWidget);
+    expect(find.text("2 days ago | "), findsOneWidget);
     final thumbnailRect = tester.getRect(
       find.byKey(const ValueKey("past_broadcast_thumbnail_vod-1")),
     );
@@ -250,7 +254,44 @@ void main() {
     expect(viewers.overflow, isNot(TextOverflow.ellipsis));
   });
 
-  testWidgets("keeps live category navigation in the active tab stack", (tester) async {
+  testWidgets("renders channel description hyphens as non-breaking", (tester) async {
+    const description = "Hi my name is Lacy | Business: Lacy@iso-ent.com";
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: ChannelScreen(
+          apiCache: TwitchApiCache(
+            clientLoader: () async => TwitchApiClient(
+              clientId: "client-123",
+              accessToken: "token-123",
+              httpClient: MockClient(
+                (_) async => _channelDetailsResponse(description: description),
+              ),
+            ),
+          ),
+          initialChannel: const ChannelPreview(
+            login: "lacy",
+            displayName: "Lacy",
+            isLive: true,
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    final descriptionText = tester.widget<Text>(
+      find.byKey(const ValueKey("channel_description")),
+    );
+    expect(
+      descriptionText.data,
+      "Hi my name is Lacy | Business: Lacy@iso\u2011ent.com",
+    );
+    expect(descriptionText.semanticsLabel, description);
+  });
+
+  testWidgets("keeps category navigation in the active tab stack", (tester) async {
     final requestedGameIds = <String>[];
     final rootNavigatorKey = GlobalKey<NavigatorState>();
     final tabNavigatorKey = GlobalKey<NavigatorState>();
@@ -280,7 +321,10 @@ void main() {
               headers: {"content-type": "application/json"},
             );
           }
-          return _channelDetailsResponse();
+          return _channelDetailsResponse(
+            videoCategoryId: "33214",
+            videoCategory: "Fortnite",
+          );
         }),
       ),
     );
@@ -317,18 +361,39 @@ void main() {
     await tester.tap(find.byKey(const ValueKey("channel_category_button")));
     await tester.pumpAndSettle();
 
-    final categoryPage = find.byKey(
+    final liveCategoryPage = find.byKey(
       const ValueKey("category_streams_page_Just Chatting"),
     );
-    expect(categoryPage, findsOneWidget);
+    expect(liveCategoryPage, findsOneWidget);
     expect(find.byKey(const ValueKey("app_bottom_nav_bar")), findsOneWidget);
     expect(
-      Navigator.of(tester.element(categoryPage)),
+      Navigator.of(tester.element(liveCategoryPage)),
       same(tabNavigatorKey.currentState),
     );
     expect(rootNavigatorKey.currentState?.canPop(), isFalse);
     expect(tabNavigatorKey.currentState?.canPop(), isTrue);
     expect(requestedGameIds, ["509658"]);
+
+    tabNavigatorKey.currentState?.pop();
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.byKey(const ValueKey("past_broadcast_category_button_vod-1")),
+    );
+    await tester.pumpAndSettle();
+
+    final pastCategoryPage = find.byKey(
+      const ValueKey("category_streams_page_Fortnite"),
+    );
+    expect(pastCategoryPage, findsOneWidget);
+    expect(find.byKey(const ValueKey("app_bottom_nav_bar")), findsOneWidget);
+    expect(
+      Navigator.of(tester.element(pastCategoryPage)),
+      same(tabNavigatorKey.currentState),
+    );
+    expect(rootNavigatorKey.currentState?.canPop(), isFalse);
+    expect(tabNavigatorKey.currentState?.canPop(), isTrue);
+    expect(requestedGameIds, ["509658", "33214"]);
   });
 
   testWidgets("opens the live player when the channel avatar is tapped", (
@@ -591,6 +656,9 @@ http.Response _channelDetailsResponse({
   String videoTitle = "2025 Japan Trip",
   List<String>? videoTitles,
   String category = "Just Chatting",
+  String description = "Hi Im Jason",
+  String videoCategoryId = "509658",
+  String videoCategory = "Just Chatting",
   String? nextCursor,
   bool isLive = true,
   DateTime? streamStartedAt,
@@ -606,7 +674,7 @@ http.Response _channelDetailsResponse({
           "id": "creator-1",
           "login": "jason",
           "displayName": "Jason",
-          "description": "Hi Im Jason",
+          "description": description,
           "profileImageURL": "https://static-cdn.jtvnw.net/creator-1.png",
           "followers": {"totalCount": 2300000},
           "stream": isLive
@@ -632,7 +700,10 @@ http.Response _channelDetailsResponse({
                   "node": {
                     "id": index == 0 ? videoId : "$videoId-$index",
                     "title": titles[index],
-                    "game": {"id": "509658", "displayName": "Just Chatting"},
+                    "game": {
+                      "id": videoCategoryId,
+                      "displayName": videoCategory,
+                    },
                     "lengthSeconds": videoLengthSeconds,
                     "previewThumbnailURL":
                         "https://static-cdn.jtvnw.net/${index == 0 ? videoId : "$videoId-$index"}.jpg",

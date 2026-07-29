@@ -11,6 +11,7 @@ import "package:flow/features/browse/browse_screen.dart";
 import "package:flow/features/browse/browse_store.dart";
 import "package:flow/features/following/following_screen.dart";
 import "package:flow/features/following/following_store.dart";
+import "package:flow/features/following/twitch_login_offer_screen.dart";
 import "package:flow/features/settings/settings_screen.dart";
 import "package:flow/shared/external_url_opener.dart";
 import "package:flow/shared/preferences/preferences.dart";
@@ -35,6 +36,7 @@ class FlowTabsScreen extends StatefulWidget {
     this.tabsStore,
     this.browseStore,
     this.followingStore,
+    this.showLoginOnLaunch = true,
   });
 
   final String initialRoute;
@@ -49,6 +51,7 @@ class FlowTabsScreen extends StatefulWidget {
   final TabsStore? tabsStore;
   final BrowseStore? browseStore;
   final FollowingStore? followingStore;
+  final bool showLoginOnLaunch;
 
   @override
   State<FlowTabsScreen> createState() => _FlowTabsScreenState();
@@ -83,6 +86,7 @@ class FlowTabsScreen extends StatefulWidget {
     properties.add(DiagnosticsProperty<TabsStore?>("tabsStore", tabsStore));
     properties.add(DiagnosticsProperty<BrowseStore?>("browseStore", browseStore));
     properties.add(DiagnosticsProperty<FollowingStore?>("followingStore", followingStore));
+    properties.add(DiagnosticsProperty<bool>("showLoginOnLaunch", showLoginOnLaunch));
   }
 }
 
@@ -105,8 +109,15 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
   late final _TabNavigatorObserver _settingsNavigatorObserver;
   late final ValueNotifier<double> _tabBackProgress;
   Timer? _topLevelRefreshTimer;
-  bool _topLevelRefreshInFlight = false;
+  Future<void>? _topLevelRefresh;
+  bool _topLevelRefreshQueued = false;
+  Future<void>? _queuedFollowingRefresh;
   bool _appIsResumed = false;
+  late final Future<void> _initialSessionRestore;
+  bool _isStartupResolved = false;
+  bool _showStartupLoginOffer = false;
+  bool _isHandlingMe = false;
+  String? _startupLoginMessage;
   String? _predictiveBackTab;
   SwipeEdge _predictiveBackSwipeEdge = SwipeEdge.left;
 
@@ -115,7 +126,10 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
     super.initState();
     _preferences = widget.preferences ?? _MemoryFlowPreferences(themeMode: widget.currentThemeMode);
     _settingsStore = widget.settingsStore ?? AppSettingsStore(preferences: _preferences);
-    _authController = widget.authController ?? _buildDefaultAuthController();
+    _authController =
+        widget.followingStore?.authController ??
+        widget.authController ??
+        _buildDefaultAuthController();
     _apiCache = TwitchApiCache(clientLoader: () => _loadApiClient(_authController));
     _tabsStore = widget.tabsStore ?? TabsStore(initialRoute: widget.initialRoute);
     _visitedRoutes
@@ -129,6 +143,13 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
           authController: _authController,
           apiCache: _apiCache,
         );
+    if (widget.showLoginOnLaunch) {
+      _initialSessionRestore = _restoreInitialSession();
+    } else {
+      _isStartupResolved = true;
+      _initialSessionRestore = Future<void>.value();
+    }
+    unawaited(_initialSessionRestore);
     if (!_settingsStore.isLoaded) {
       unawaited(_settingsStore.load());
     }
@@ -146,6 +167,134 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
     });
     if (_appIsResumed) {
       unawaited(_refreshTopLevelData(refresh: false));
+    }
+  }
+
+  Future<void> _restoreInitialSession() async {
+    var isLoginOfferDismissed = false;
+    try {
+      isLoginOfferDismissed = await _preferences.readLoginOfferDismissed();
+    } on Object catch (error) {
+      debugPrint("Couldn't read the login offer preference: $error");
+    }
+
+    await _followingStore.loadSavedConnection();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _showStartupLoginOffer = !isLoginOfferDismissed && !_followingStore.isLoggedIn;
+      _isStartupResolved = true;
+    });
+  }
+
+  void _completeInitialLogin(TwitchAuthConnection connection) {
+    _followingStore.applyConnection(connection);
+    setState(() {
+      _showStartupLoginOffer = false;
+      _startupLoginMessage = null;
+    });
+  }
+
+  Future<void> _signOutAndContinue() async {
+    try {
+      await _followingStore.signOut();
+    } on Object catch (error) {
+      debugPrint("Couldn't clear the Twitch session: $error");
+      if (mounted) {
+        setState(() {
+          _startupLoginMessage = "We couldn't clear your Twitch session. Try again.";
+        });
+      }
+      return;
+    }
+    try {
+      await _preferences.saveLoginOfferDismissed(dismissed: true);
+    } on Object catch (error) {
+      debugPrint("Couldn't save the login offer preference: $error");
+      if (mounted) {
+        setState(() {
+          _startupLoginMessage = "We couldn't save your choice. Try again.";
+        });
+      }
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _showStartupLoginOffer = false;
+        _startupLoginMessage = null;
+      });
+    }
+  }
+
+  Future<void> _handleMeRequested() async {
+    if (_isHandlingMe) {
+      return;
+    }
+    _isHandlingMe = true;
+    try {
+      await _initialSessionRestore;
+      await _followingStore.loadSavedConnection();
+      if (!mounted || _showStartupLoginOffer) {
+        return;
+      }
+      if (_followingStore.isLoggedIn) {
+        _selectRoute(FlowRoutes.settings);
+        return;
+      }
+
+      await _connectTwitchAccount();
+    } finally {
+      _isHandlingMe = false;
+    }
+  }
+
+  Future<void> _switchTwitchAccount() async {
+    if (_isHandlingMe) {
+      return;
+    }
+    _isHandlingMe = true;
+    try {
+      await _connectTwitchAccount();
+    } finally {
+      _isHandlingMe = false;
+    }
+  }
+
+  Future<void> _connectTwitchAccount() async {
+    final connection = await openTwitchLoginOfferScreen(
+      context,
+      _authController,
+      openTwitchLogin: widget.openTwitchLogin,
+    );
+    if (!mounted || connection == null) {
+      return;
+    }
+    _followingStore.applyConnection(connection);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text("Connected as ${connection.user.displayName}")),
+    );
+  }
+
+  Future<void> _signOutFromSettings() async {
+    if (_isHandlingMe) {
+      return;
+    }
+    _isHandlingMe = true;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await _followingStore.signOut();
+      if (mounted) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text("Signed out of Twitch")),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text(error.toString())));
+      }
+    } finally {
+      _isHandlingMe = false;
     }
   }
 
@@ -203,98 +352,174 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
   }
 
   Future<void> _refreshTopLevelData({required bool refresh}) async {
-    if (_topLevelRefreshInFlight) {
+    final activeRefresh = _topLevelRefresh;
+    if (activeRefresh != null) {
+      if (refresh) {
+        _topLevelRefreshQueued = true;
+        _queuedFollowingRefresh ??= _refreshSavedConnection(refresh: true);
+      }
+      await activeRefresh;
       return;
     }
 
-    _topLevelRefreshInFlight = true;
+    final operation = Completer<void>();
+    final operationFuture = operation.future;
+    _topLevelRefresh = operationFuture;
+    var nextRefresh = refresh;
+    Future<void>? nextFollowingRefresh;
+
     try {
-      await Future.wait([
-        _followingStore.loadSavedConnection(refresh: refresh),
-        if (refresh || !_browseStore.categoriesLoaded)
-          refresh && _browseStore.categoriesLoaded
-              ? _browseStore.refreshCategoriesFirstPage()
-              : _browseStore.loadCategories(reset: true, refresh: refresh),
-        if (refresh || !_browseStore.liveChannelsLoaded)
-          refresh && _browseStore.liveChannelsLoaded
-              ? _browseStore.refreshLiveChannelsFirstPage()
-              : _browseStore.loadLiveChannels(reset: true, refresh: refresh),
-      ]);
+      while (true) {
+        await Future.wait([
+          nextFollowingRefresh ?? _refreshSavedConnection(refresh: nextRefresh),
+          if (nextRefresh || !_browseStore.categoriesLoaded)
+            nextRefresh && _browseStore.categoriesLoaded
+                ? _browseStore.refreshCategoriesFirstPage()
+                : _browseStore.loadCategories(reset: true, refresh: nextRefresh),
+          if (nextRefresh || !_browseStore.liveChannelsLoaded)
+            nextRefresh && _browseStore.liveChannelsLoaded
+                ? _browseStore.refreshLiveChannelsFirstPage()
+                : _browseStore.loadLiveChannels(reset: true, refresh: nextRefresh),
+        ]);
+        if (!_topLevelRefreshQueued || !mounted) {
+          break;
+        }
+
+        nextRefresh = true;
+        nextFollowingRefresh = _queuedFollowingRefresh;
+        _topLevelRefreshQueued = false;
+        _queuedFollowingRefresh = null;
+      }
     } finally {
-      _topLevelRefreshInFlight = false;
+      if (identical(_topLevelRefresh, operationFuture)) {
+        _topLevelRefresh = null;
+      }
+      _topLevelRefreshQueued = false;
+      _queuedFollowingRefresh = null;
+      operation.complete();
     }
   }
 
+  Future<void> _refreshSavedConnection({required bool refresh}) async {
+    await _followingStore.loadSavedConnection(refresh: refresh);
+    if (!mounted ||
+        !_showStartupLoginOffer ||
+        _startupLoginMessage != null ||
+        !_followingStore.isLoggedIn) {
+      return;
+    }
+    setState(() {
+      _showStartupLoginOffer = false;
+      _startupLoginMessage = null;
+    });
+  }
+
   @override
-  Widget build(BuildContext context) => Observer(
-    builder: (_) => Scaffold(
-      extendBody: true,
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-      body: PopScope<void>(
-        canPop: _tabsStore.currentRoute == FlowRoutes.following && !_activeNavigatorCanPop(),
-        onPopInvokedWithResult: (didPop, _) {
-          if (didPop) {
-            return;
-          }
-          unawaited(_handleBackNavigation());
-        },
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            _buildTabSlot(
+  Widget build(BuildContext context) {
+    if (!_isStartupResolved) {
+      return ColoredBox(
+        key: const ValueKey("startup_gate"),
+        color: Theme.of(context).scaffoldBackgroundColor,
+      );
+    }
+    if (_showStartupLoginOffer) {
+      return TwitchLoginOfferScreen(
+        authController: _authController,
+        openTwitchLogin: widget.openTwitchLogin,
+        statusMessage:
+            _startupLoginMessage ??
+            (_followingStore.sessionStatus == TwitchSessionStatus.restoreFailed
+                ? "We couldn't restore your Twitch session. Log in again or continue without an "
+                      "account."
+                : null),
+        onConnected: _completeInitialLogin,
+        onContinue: _signOutAndContinue,
+      );
+    }
+
+    return _buildTabs(context);
+  }
+
+  Widget _buildTabs(BuildContext context) => Scaffold(
+    extendBody: true,
+    backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+    body: PopScope<void>(
+      canPop: _tabsStore.currentRoute == FlowRoutes.following && !_activeNavigatorCanPop(),
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) {
+          return;
+        }
+        unawaited(_handleBackNavigation());
+      },
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          _buildTabSlot(
+            routeName: FlowRoutes.following,
+            child: _buildTabNavigator(
               routeName: FlowRoutes.following,
-              child: _buildTabNavigator(
-                routeName: FlowRoutes.following,
-                navigatorKey: _followingNavigatorKey,
-                observers: [
-                  ...widget.navigatorObservers,
-                  _followingNavigatorObserver,
-                ],
-                rootBuilder: (_) => FollowingScreen(
-                  authController: _authController,
-                  apiCache: _apiCache,
-                  followingStore: _followingStore,
-                  openTwitchLogin: widget.openTwitchLogin,
-                  bottomNavigationBar: const SizedBox.shrink(),
-                  periodicRefreshInterval: null,
-                ),
+              navigatorKey: _followingNavigatorKey,
+              observers: [
+                ...widget.navigatorObservers,
+                _followingNavigatorObserver,
+              ],
+              rootBuilder: (_) => FollowingScreen(
+                authController: _authController,
+                apiCache: _apiCache,
+                followingStore: _followingStore,
+                browseStore: _browseStore,
+                openTwitchLogin: widget.openTwitchLogin,
+                onMeRequested: _handleMeRequested,
+                bottomNavigationBar: const SizedBox.shrink(),
+                periodicRefreshInterval: null,
               ),
             ),
-            _buildTabSlot(
+          ),
+          _buildTabSlot(
+            routeName: FlowRoutes.browse,
+            child: _buildTabNavigator(
               routeName: FlowRoutes.browse,
-              child: _buildTabNavigator(
-                routeName: FlowRoutes.browse,
-                navigatorKey: _browseNavigatorKey,
-                observers: [_browseNavigatorObserver],
-                rootBuilder: (_) => BrowseScreen(
+              navigatorKey: _browseNavigatorKey,
+              observers: [_browseNavigatorObserver],
+              rootBuilder: (_) => Observer(
+                builder: (_) => BrowseScreen(
                   authController: _authController,
                   apiCache: _apiCache,
                   browseStore: _browseStore,
                   preferences: _preferences,
+                  showLiveChannelsSection: _followingStore.isLoggedIn,
                   bottomNavigationBar: const SizedBox.shrink(),
                   periodicRefreshInterval: null,
                 ),
               ),
             ),
-            _buildTabSlot(
+          ),
+          _buildTabSlot(
+            routeName: FlowRoutes.settings,
+            child: _buildTabNavigator(
               routeName: FlowRoutes.settings,
-              child: _buildTabNavigator(
-                routeName: FlowRoutes.settings,
-                navigatorKey: _settingsNavigatorKey,
-                observers: [_settingsNavigatorObserver],
-                rootBuilder: (_) => SettingsScreen(
+              navigatorKey: _settingsNavigatorKey,
+              observers: [_settingsNavigatorObserver],
+              rootBuilder: (_) => Observer(
+                builder: (_) => SettingsScreen(
                   settingsStore: _settingsStore,
                   openExternalUrl: widget.openExternalUrl,
+                  twitchAccount: _followingStore.profileUser,
+                  onSwitchTwitchAccount: _switchTwitchAccount,
+                  onSignOutTwitch: _signOutFromSettings,
                   bottomNavigationBar: const SizedBox.shrink(),
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
-      bottomNavigationBar: AppBottomNav(
+    ),
+    bottomNavigationBar: Observer(
+      builder: (_) => AppBottomNav(
         currentRoute: _tabsStore.currentRoute,
         onRouteSelected: _selectRoute,
+        showLiveChannels: !_followingStore.isLoggedIn,
       ),
     ),
   );
@@ -572,21 +797,10 @@ class _InstantPageTransitionsBuilder extends PageTransitionsBuilder {
 }
 
 Future<TwitchApiClient> _loadApiClient(TwitchAuthController authController) async {
-  if (!authController.config.isConfigured) {
-    throw TwitchAuthException(
-      "Set TWITCH_CLIENT_ID with --dart-define-from-file=.env to browse Twitch.",
-    );
-  }
-
-  final accessToken = await authController.secureStore.readAccessToken();
-  if (accessToken == null || accessToken.isEmpty) {
-    throw TwitchAuthException("Connect Twitch from Following to browse live data.");
-  }
-
-  final gqlAccessToken = await authController.secureStore.readWebSessionToken();
+  final savedTokens = await authController.readSavedTokens();
   return authController.apiClientFactory(
-    accessToken,
-    gqlAccessToken: gqlAccessToken,
+    savedTokens.accessToken ?? "",
+    gqlAccessToken: savedTokens.webSessionToken,
   );
 }
 
@@ -596,6 +810,7 @@ class _MemoryFlowPreferences implements FlowPreferences {
   ThemeMode themeMode;
   List<String> searchHistory = const <String>[];
   bool adProxyEnabled = false;
+  bool loginOfferDismissed = false;
   List<String> adProxyUrls = const [];
   List<String> adProxyWhitelistedChannels = const [];
 
@@ -633,11 +848,19 @@ class _MemoryFlowPreferences implements FlowPreferences {
   Future<List<String>> readBrowseSearchHistory() async => searchHistory;
 
   @override
+  Future<bool> readLoginOfferDismissed() async => loginOfferDismissed;
+
+  @override
   Future<ThemeMode> readThemeMode() async => themeMode;
 
   @override
   Future<void> saveBrowseSearchHistory(List<String> history) async {
     searchHistory = List<String>.of(history);
+  }
+
+  @override
+  Future<void> saveLoginOfferDismissed({required bool dismissed}) async {
+    loginOfferDismissed = dismissed;
   }
 
   @override

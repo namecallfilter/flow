@@ -1,9 +1,11 @@
+import "dart:async";
 import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
 import "package:flow/app/theme.dart";
+import "package:flow/features/browse/browse_store.dart";
 import "package:flow/features/following/following_screen.dart";
 import "package:flow/features/following/following_store.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
@@ -122,6 +124,179 @@ void main() {
     expect(loadedOfflineRect.left, offlineSkeletonRect.left);
   });
 
+  testWidgets("shows top live channels without offline content when logged out", (
+    tester,
+  ) async {
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => throw StateError("Unexpected API request."),
+    );
+    final followingStore = FollowingStore(
+      authController: _authController(clientId: ""),
+      apiCache: apiCache,
+    )..sessionStatus = TwitchSessionStatus.loggedOut;
+    final browseStore = BrowseStore(apiCache: apiCache)
+      ..liveChannels = const [
+        StreamChannel(
+          id: "top-1",
+          login: "topcreator",
+          name: "TopCreator",
+          initials: "TC",
+          title: "Live now",
+          category: "Just Chatting",
+          viewers: "12.3K",
+          avatarColors: [Colors.purple, Colors.pink],
+          thumbnailColors: [Colors.blue, Colors.indigo],
+        ),
+      ]
+      ..liveChannelsLoaded = true;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: FollowingScreen(
+          followingStore: followingStore,
+          browseStore: browseStore,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey("following_title")),
+        matching: find.text("Live Channels"),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text("TopCreator"), findsOneWidget);
+    expect(find.byKey(const ValueKey("following_offline_card")), findsNothing);
+    expect(find.byKey(const ValueKey("offline_toggle")), findsNothing);
+    expect(find.byKey(const ValueKey("following_skeleton")), findsNothing);
+    expect(find.byKey(const ValueKey("bottom_nav_item_Live Channels")), findsOneWidget);
+    expect(find.byIcon(Icons.live_tv), findsOneWidget);
+    expect(find.byIcon(Icons.favorite), findsNothing);
+  });
+
+  testWidgets("keeps anonymous channels visible during a saved-session refresh", (
+    tester,
+  ) async {
+    final authController = _DelayedGuestRefreshAuthController();
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => throw StateError("Unexpected API request."),
+    );
+    final followingStore = FollowingStore(
+      authController: authController,
+      apiCache: apiCache,
+    );
+    await followingStore.loadSavedConnection();
+    final browseStore = BrowseStore(apiCache: apiCache)
+      ..liveChannels = const [
+        StreamChannel(
+          id: "top-1",
+          login: "topcreator",
+          name: "TopCreator",
+          initials: "TC",
+          title: "Live now",
+          category: "Just Chatting",
+          viewers: "12.3K",
+          avatarColors: [Colors.purple, Colors.pink],
+          thumbnailColors: [Colors.blue, Colors.indigo],
+        ),
+      ]
+      ..liveChannelsLoaded = true;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: FollowingScreen(
+          followingStore: followingStore,
+          browseStore: browseStore,
+          periodicRefreshInterval: null,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final refresh = followingStore.loadSavedConnection(refresh: true);
+    await tester.pump();
+
+    expect(authController.loadCount, 2);
+    expect(followingStore.sessionStatus, TwitchSessionStatus.loggedOut);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey("following_title")),
+        matching: find.text("Live Channels"),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text("TopCreator"), findsOneWidget);
+    expect(find.byKey(const ValueKey("bottom_nav_item_Live Channels")), findsOneWidget);
+    expect(find.byKey(const ValueKey("bottom_nav_item_Following")), findsNothing);
+    expect(find.byKey(const ValueKey("following_skeleton")), findsNothing);
+
+    authController.refresh.complete(null);
+    await refresh;
+    await tester.pump();
+  });
+
+  testWidgets("loads top live channels after signing out while mounted", (tester) async {
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(
+        clientId: "",
+        accessToken: "",
+        httpClient: MockClient(
+          (_) async => http.Response(
+            jsonEncode({
+              "data": {
+                "streams": {
+                  "edges": const <Object?>[],
+                  "pageInfo": {"hasNextPage": false},
+                },
+              },
+            }),
+            200,
+            headers: {"content-type": "application/json"},
+          ),
+        ),
+      ),
+    );
+    final followingStore = FollowingStore(
+      authController: _authController(clientId: ""),
+      apiCache: apiCache,
+    )..applyConnection(_connection());
+    final browseStore = BrowseStore(apiCache: apiCache);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: FollowingScreen(
+          followingStore: followingStore,
+          browseStore: browseStore,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await followingStore.signOut();
+    await tester.runAsync(() async {
+      for (var index = 0; index < 20 && !browseStore.liveChannelsLoaded; index++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+    });
+    await tester.pump();
+
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey("following_title")),
+        matching: find.text("Live Channels"),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text("No live channels are available right now."), findsOneWidget);
+    expect(browseStore.liveChannelsLoaded, isTrue);
+    expect(find.byKey(const ValueKey("following_offline_card")), findsNothing);
+  });
+
   testWidgets("renders live streams and expands offline channels from auth data", (
     tester,
   ) async {
@@ -165,8 +340,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byKey(const ValueKey("profile_auth_button")));
-    await tester.pump();
+    await _logInFromMe(tester);
 
     expect(find.text("LiveOne"), findsOneWidget);
     expect(find.text("Building with chat"), findsOneWidget);
@@ -213,8 +387,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byKey(const ValueKey("profile_auth_button")));
-    await tester.pumpAndSettle();
+    await _logInFromMe(tester);
 
     await tester.tap(find.byKey(const ValueKey("stream_thumbnail_LiveOne")));
     await tester.pumpAndSettle();
@@ -419,8 +592,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byKey(const ValueKey("profile_auth_button")));
-    await tester.pumpAndSettle();
+    await _logInFromMe(tester);
 
     final headerBottom = tester.getBottomLeft(find.byKey(const ValueKey("frosted_top_bar"))).dy;
     final firstCardTop = tester
@@ -429,6 +601,15 @@ void main() {
 
     expect(firstCardTop - headerBottom, closeTo(PageHeaderLayout.headerContentGap, 0.1));
   });
+}
+
+Future<void> _logInFromMe(WidgetTester tester) async {
+  await tester.tap(find.byKey(const ValueKey("profile_auth_button")));
+  await tester.pumpAndSettle();
+  expect(find.byKey(const ValueKey("login_offer_screen")), findsOneWidget);
+
+  await tester.tap(find.byKey(const ValueKey("login_offer_button")));
+  await tester.pumpAndSettle();
 }
 
 Widget _followingScreen({
@@ -504,6 +685,9 @@ TwitchApiCache _channelApiCache() => TwitchApiCache(
 
 class _MemoryTwitchStore implements TwitchSecureStore {
   @override
+  Future<void> clearSession() async {}
+
+  @override
   Future<void> clearPendingState() async {}
 
   @override
@@ -523,6 +707,28 @@ class _MemoryTwitchStore implements TwitchSecureStore {
 
   @override
   Future<void> saveWebSessionToken(String token) async {}
+}
+
+class _DelayedGuestRefreshAuthController extends TwitchAuthController {
+  _DelayedGuestRefreshAuthController()
+    : super(
+        config: const TwitchAuthConfig(clientId: "client-123"),
+        secureStore: _MemoryTwitchStore(),
+        apiClientFactory: (accessToken, {gqlAccessToken}) => TwitchApiClient(
+          clientId: "client-123",
+          accessToken: accessToken,
+        ),
+        cookieExtractor: const _StaticCookieExtractor(),
+      );
+
+  final refresh = Completer<TwitchAuthConnection?>();
+  int loadCount = 0;
+
+  @override
+  Future<TwitchAuthConnection?> loadSavedConnection() {
+    loadCount++;
+    return loadCount == 1 ? Future<TwitchAuthConnection?>.value() : refresh.future;
+  }
 }
 
 class _StaticCookieExtractor implements TwitchCookieExtractor {

@@ -99,9 +99,12 @@ class _ChannelScreenState extends State<ChannelScreen> {
     );
   }
 
-  void _openCategory(TwitchChannelLiveStream liveStream) {
-    final categoryId = liveStream.categoryId.trim();
-    final categoryName = liveStream.category.trim();
+  void _openCategory({
+    required String id,
+    required String name,
+  }) {
+    final categoryId = id.trim();
+    final categoryName = name.trim();
     if (categoryId.isEmpty || categoryName.isEmpty) {
       return;
     }
@@ -176,9 +179,15 @@ class _ChannelScreenState extends State<ChannelScreen> {
                           onProfileTap: livePlayerChannel == null
                               ? null
                               : () => _openLiveStream(livePlayerChannel),
-                          onCategoryTap: liveStream == null || liveStream.categoryId.trim().isEmpty
+                          onCategoryTap:
+                              liveStream == null ||
+                                  liveStream.categoryId.trim().isEmpty ||
+                                  liveStream.category.trim().isEmpty
                               ? null
-                              : () => _openCategory(liveStream),
+                              : () => _openCategory(
+                                  id: liveStream.categoryId,
+                                  name: liveStream.category,
+                                ),
                         ),
                         const SizedBox(height: AppSpacing.xxl),
                         const SectionHeader(title: "Past broadcasts"),
@@ -195,6 +204,14 @@ class _ChannelScreenState extends State<ChannelScreen> {
                                     channel.liveStream,
                                     channel.pastBroadcasts[index],
                                   ),
+                              onCategoryTap:
+                                  channel.pastBroadcasts[index].categoryId.trim().isEmpty ||
+                                      channel.pastBroadcasts[index].category.trim().isEmpty
+                                  ? null
+                                  : () => _openCategory(
+                                      id: channel.pastBroadcasts[index].categoryId,
+                                      name: channel.pastBroadcasts[index].category,
+                                    ),
                             ),
                           if (_store.pastBroadcastsError != null)
                             _StatusMessage(message: _store.pastBroadcastsError!)
@@ -669,7 +686,9 @@ class _ChannelHeader extends StatelessWidget {
             if (description.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.lg),
               Text(
-                description,
+                description.replaceAll("-", "\u2011"),
+                key: const ValueKey("channel_description"),
+                semanticsLabel: description,
                 style: theme.textTheme.bodyLarge?.copyWith(
                   color: theme.colorScheme.onSurface.withValues(alpha: 0.78),
                   fontWeight: FontWeight.w500,
@@ -815,16 +834,23 @@ class _PastBroadcastCard extends StatelessWidget {
   const _PastBroadcastCard({
     required this.broadcast,
     required this.isLive,
+    required this.onCategoryTap,
   });
 
   final TwitchPastBroadcast broadcast;
   final bool isLive;
+  final VoidCallback? onCategoryTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final mutedColor = theme.colorScheme.onSurface.withValues(alpha: 0.58);
-    final metadata = _broadcastMetadata(broadcast);
+    final ageText = _broadcastAgeText(broadcast);
+    final category = broadcast.category.trim();
+    final metadataStyle = theme.textTheme.bodyMedium?.copyWith(
+      color: mutedColor,
+      fontWeight: FontWeight.w600,
+    );
 
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.md),
@@ -875,13 +901,47 @@ class _PastBroadcastCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: AppSpacing.xs),
-                Text(
-                  metadata,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: mutedColor,
-                    fontWeight: FontWeight.w600,
+                LayoutBuilder(
+                  builder: (context, constraints) => Row(
+                    key: ValueKey("past_broadcast_metadata_${broadcast.id}"),
+                    children: [
+                      if (ageText != null)
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: category.isEmpty
+                                ? constraints.maxWidth
+                                : constraints.maxWidth * 0.65,
+                          ),
+                          child: Text(
+                            category.isEmpty ? ageText : "$ageText | ",
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: metadataStyle,
+                          ),
+                        ),
+                      if (category.isNotEmpty)
+                        Expanded(
+                          child: Semantics(
+                            button: onCategoryTap != null,
+                            label: "Open $category category",
+                            child: GestureDetector(
+                              key: ValueKey(
+                                "past_broadcast_category_button_${broadcast.id}",
+                              ),
+                              behavior: HitTestBehavior.opaque,
+                              onTap: onCategoryTap,
+                              child: Text(
+                                category,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: metadataStyle?.copyWith(
+                                  color: onCategoryTap == null ? null : theme.colorScheme.primary,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -907,6 +967,7 @@ class _PastBroadcastCard extends StatelessWidget {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<TwitchPastBroadcast>("broadcast", broadcast));
     properties.add(DiagnosticsProperty<bool>("isLive", isLive));
+    properties.add(ObjectFlagProperty<VoidCallback?>.has("onCategoryTap", onCategoryTap));
   }
 }
 
@@ -1175,18 +1236,6 @@ String? _broadcastAgeText(TwitchPastBroadcast broadcast) {
   }
 
   return _relativeTimeText(timestamp, DateTime.now());
-}
-
-String _broadcastMetadata(TwitchPastBroadcast broadcast) {
-  final ageText = _broadcastAgeText(broadcast);
-  final category = broadcast.category.trim();
-  if (ageText == null) {
-    return category;
-  }
-  if (category.isEmpty) {
-    return ageText;
-  }
-  return "$ageText | $category";
 }
 
 String _relativeTimeText(DateTime timestamp, DateTime now) {
