@@ -107,8 +107,11 @@ internal class TwitchPlaybackSession(
             throw IOException("Twitch media playlist was unusable")
         }
 
-        val resolvedResponse = if (!containsTwitchStitchedAd(routedResponse.payload.text)) {
-            recordCleanResponse()
+        val containsStitchedAd = containsTwitchStitchedAd(routedResponse.payload.text)
+        val resolvedResponse = if (!containsStitchedAd || proxyCount == 0) {
+            if (!containsStitchedAd) {
+                recordCleanResponse()
+            }
             routedResponse.payload
         } else {
             val adNumber = recordAdResponse()

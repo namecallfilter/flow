@@ -27,7 +27,6 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.hls.DefaultHlsDataSourceFactory
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
@@ -337,21 +336,19 @@ internal class TwitchPlayerView(
                 OkHttpDataSource.Factory(it).setUserAgent(USER_AGENT),
             )
         }
-        val hlsDataSourceFactory = if (proxyDataSourceFactories.isEmpty()) {
-            DefaultHlsDataSourceFactory(directDataSourceFactory)
-        } else {
+        if (proxyDataSourceFactories.isNotEmpty()) {
             Log.d(LOG_TAG, "adaptive ad proxy active (${proxyUrls.size} endpoints)")
-            AdaptiveTwitchHlsDataSourceFactory(
-                manifestResolver = TwitchPlaybackCoordinator(
-                    rootUsherUri = playbackUrl,
-                    directFactory = directDataSourceFactory,
-                    proxyFactories = proxyDataSourceFactories,
-                    freshRootUsherUri = ::refreshPlaybackUri,
-                    onEvent = { message -> Log.d(LOG_TAG, "adaptive ad proxy: $message") },
-                ),
-                directFactory = directDataSourceFactory,
-            )
         }
+        val hlsDataSourceFactory = AdaptiveTwitchHlsDataSourceFactory(
+            manifestResolver = TwitchPlaybackCoordinator(
+                rootUsherUri = playbackUrl,
+                directFactory = directDataSourceFactory,
+                proxyFactories = proxyDataSourceFactories,
+                freshRootUsherUri = ::refreshPlaybackUri,
+                onEvent = { message -> Log.d(LOG_TAG, "adaptive ad proxy: $message") },
+            ),
+            directFactory = directDataSourceFactory,
+        )
         val mediaSource = HlsMediaSource.Factory(hlsDataSourceFactory)
             .setExtractorFactory(TwitchEmsgMetadataBridgeExtractorFactory())
             .setMetadataType(HlsMediaSource.METADATA_TYPE_ID3)

@@ -176,6 +176,37 @@ class TwitchPlaybackCoordinatorTest {
     }
 
     @Test
+    fun directOnlySessionValidatesStartupWithoutReplacingAds() {
+        var refreshes = 0
+        val session = TwitchPlaybackSession(
+            ROOT,
+            proxyCount = 0,
+            freshRootUsherUri = {
+                refreshes++
+                FRESH_ROOT
+            },
+        )
+        session.resolve(ROOT) { route, uri ->
+            assertEquals(TwitchManifestRoute.Direct, route)
+            payload(directMaster(), uri)
+        }
+
+        assertThrows(IOException::class.java) {
+            session.resolve(DIRECT_VARIANT) { route, uri ->
+                assertEquals(TwitchManifestRoute.Direct, route)
+                payload(cleanPlaylist() + "\n#EXT-X-ENDLIST", uri)
+            }
+        }
+        val ad = session.resolve(DIRECT_VARIANT) { route, uri ->
+            assertEquals(TwitchManifestRoute.Direct, route)
+            payload(adPlaylist(), uri)
+        }
+
+        assertTrue(containsTwitchStitchedAd(ad.text))
+        assertEquals(0, refreshes)
+    }
+
+    @Test
     fun finiteFirstReplacementFallsBackWithoutStoringTheAssignment() {
         val session = TwitchPlaybackSession(
             ROOT,
