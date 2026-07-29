@@ -109,16 +109,48 @@ void main() {
     refreshCompleter.complete();
     await tester.pump();
   });
+
+  for (final interval in const <Duration?>[
+    null,
+    Duration.zero,
+    Duration(seconds: -1),
+  ]) {
+    testWidgets("does not refresh on resume when periodic interval is $interval", (tester) async {
+      final scrollController = ScrollController();
+      addTearDown(scrollController.dispose);
+      var refreshes = 0;
+
+      await tester.pumpWidget(
+        _RefreshApp(
+          scrollController: scrollController,
+          periodicRefreshInterval: interval,
+          onRefresh: () async {
+            refreshes++;
+          },
+        ),
+      );
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 30));
+
+      expect(refreshes, 0);
+    });
+  }
 }
 
 class _RefreshApp extends StatelessWidget {
   const _RefreshApp({
     required this.scrollController,
     required this.onRefresh,
+    this.periodicRefreshInterval = const Duration(seconds: 30),
   });
 
   final ScrollController scrollController;
   final Future<void> Function() onRefresh;
+  final Duration? periodicRefreshInterval;
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -129,6 +161,7 @@ class _RefreshApp extends StatelessWidget {
         onRefresh: onRefresh,
         indicatorStartTop: 0,
         indicatorMaxTravel: 52,
+        periodicRefreshInterval: periodicRefreshInterval,
         child: ListView(
           controller: scrollController,
           children: const [SizedBox(height: 1200)],
@@ -142,6 +175,12 @@ class _RefreshApp extends StatelessWidget {
     super.debugFillProperties(properties);
     properties
       ..add(DiagnosticsProperty<ScrollController>("scrollController", scrollController))
-      ..add(ObjectFlagProperty<Future<void> Function()>.has("onRefresh", onRefresh));
+      ..add(ObjectFlagProperty<Future<void> Function()>.has("onRefresh", onRefresh))
+      ..add(
+        DiagnosticsProperty<Duration?>(
+          "periodicRefreshInterval",
+          periodicRefreshInterval,
+        ),
+      );
   }
 }

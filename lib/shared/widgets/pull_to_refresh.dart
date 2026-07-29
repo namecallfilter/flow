@@ -78,7 +78,7 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> with WidgetsBindi
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final wasInactive = !_appIsResumed;
     _appIsResumed = state == AppLifecycleState.resumed;
-    if (_appIsResumed && wasInactive) {
+    if (_appIsResumed && wasInactive && _periodicRefreshEnabled) {
       unawaited(_runPeriodicRefresh());
     }
   }
@@ -92,13 +92,18 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> with WidgetsBindi
 
   void _startPeriodicRefreshTimer() {
     _periodicRefreshTimer?.cancel();
-    final interval = widget.periodicRefreshInterval;
-    if (interval == null || interval <= Duration.zero) {
+    if (!_periodicRefreshEnabled) {
       return;
     }
+    final interval = widget.periodicRefreshInterval!;
     _periodicRefreshTimer = Timer.periodic(interval, (_) {
       unawaited(_runPeriodicRefresh());
     });
+  }
+
+  bool get _periodicRefreshEnabled {
+    final interval = widget.periodicRefreshInterval;
+    return interval != null && interval > Duration.zero;
   }
 
   bool get _isAtTop {
