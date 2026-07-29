@@ -12,6 +12,7 @@ class FlowPullToRefresh extends StatefulWidget {
     required this.indicatorMaxTravel,
     super.key,
     this.triggerDistance = 96,
+    this.periodicRefreshInterval = const Duration(seconds: 30),
   });
 
   final ScrollController scrollController;
@@ -20,6 +21,7 @@ class FlowPullToRefresh extends StatefulWidget {
   final double indicatorStartTop;
   final double indicatorMaxTravel;
   final double triggerDistance;
+  final Duration? periodicRefreshInterval;
 
   @override
   State<FlowPullToRefresh> createState() => _FlowPullToRefreshState();
@@ -32,19 +34,72 @@ class FlowPullToRefresh extends StatefulWidget {
       ..add(ObjectFlagProperty<RefreshCallback>.has("onRefresh", onRefresh))
       ..add(DoubleProperty("indicatorStartTop", indicatorStartTop))
       ..add(DoubleProperty("indicatorMaxTravel", indicatorMaxTravel))
-      ..add(DoubleProperty("triggerDistance", triggerDistance));
+      ..add(DoubleProperty("triggerDistance", triggerDistance))
+      ..add(
+        DiagnosticsProperty<Duration?>(
+          "periodicRefreshInterval",
+          periodicRefreshInterval,
+        ),
+      );
   }
 }
 
-class _FlowPullToRefreshState extends State<FlowPullToRefresh> {
+class _FlowPullToRefreshState extends State<FlowPullToRefresh> with WidgetsBindingObserver {
   static const _pullResistance = 0.55;
   static const _reverseResistance = 0.9;
 
+  Timer? _periodicRefreshTimer;
   double _pullExtent = 0;
   bool _isPulling = false;
   bool _hasReversed = false;
   bool _isRefreshing = false;
+  bool _refreshInFlight = false;
   bool _isSettling = false;
+  bool _appIsResumed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final lifecycleState = WidgetsBinding.instance.lifecycleState;
+    _appIsResumed = lifecycleState == null || lifecycleState == AppLifecycleState.resumed;
+    WidgetsBinding.instance.addObserver(this);
+    _startPeriodicRefreshTimer();
+  }
+
+  @override
+  void didUpdateWidget(FlowPullToRefresh oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.periodicRefreshInterval != widget.periodicRefreshInterval) {
+      _startPeriodicRefreshTimer();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final wasInactive = !_appIsResumed;
+    _appIsResumed = state == AppLifecycleState.resumed;
+    if (_appIsResumed && wasInactive) {
+      unawaited(_runPeriodicRefresh());
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _periodicRefreshTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startPeriodicRefreshTimer() {
+    _periodicRefreshTimer?.cancel();
+    final interval = widget.periodicRefreshInterval;
+    if (interval == null || interval <= Duration.zero) {
+      return;
+    }
+    _periodicRefreshTimer = Timer.periodic(interval, (_) {
+      unawaited(_runPeriodicRefresh());
+    });
+  }
 
   bool get _isAtTop {
     if (!widget.scrollController.hasClients) {
@@ -55,8 +110,27 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> {
     return position.pixels <= position.minScrollExtent + 0.5;
   }
 
+  Future<void> _runPeriodicRefresh() async {
+    final route = ModalRoute.of(context);
+    if (!_appIsResumed ||
+        _refreshInFlight ||
+        _isPulling ||
+        !_isAtTop ||
+        !TickerMode.valuesOf(context).enabled ||
+        (route != null && !route.isCurrent)) {
+      return;
+    }
+
+    _refreshInFlight = true;
+    try {
+      await widget.onRefresh();
+    } finally {
+      _refreshInFlight = false;
+    }
+  }
+
   void _handlePointerDown(PointerDownEvent event) {
-    if (_isRefreshing) {
+    if (_isRefreshing || _refreshInFlight) {
       return;
     }
 
@@ -65,7 +139,7 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> {
   }
 
   void _handlePointerMove(PointerMoveEvent event) {
-    if (_isRefreshing) {
+    if (_isRefreshing || _refreshInFlight) {
       return;
     }
 
@@ -92,7 +166,7 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> {
   }
 
   void _handlePointerEnd(PointerEvent event) {
-    if (_isRefreshing) {
+    if (_isRefreshing || _refreshInFlight) {
       return;
     }
 
@@ -108,6 +182,12 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> {
   }
 
   Future<void> _runRefresh() async {
+    if (_refreshInFlight) {
+      _collapseIndicator();
+      return;
+    }
+
+    _refreshInFlight = true;
     setState(() {
       _isRefreshing = true;
       _isSettling = false;
@@ -117,6 +197,7 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> {
     try {
       await widget.onRefresh();
     } finally {
+      _refreshInFlight = false;
       if (mounted) {
         setState(() {
           _isRefreshing = false;

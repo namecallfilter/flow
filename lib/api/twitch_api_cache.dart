@@ -3,9 +3,13 @@ import "package:flow/api/twitch_api.dart";
 typedef TwitchApiClientLoader = Future<TwitchApiClient> Function();
 
 class TwitchApiCache {
-  TwitchApiCache({required this.clientLoader});
+  TwitchApiCache({
+    required this.clientLoader,
+    this.maxEntries = 128,
+  }) : assert(maxEntries > 0);
 
   final TwitchApiClientLoader clientLoader;
+  final int maxEntries;
   final _values = <String, Object?>{};
   final _inFlight = <String, Object>{};
   int _revision = 0;
@@ -132,7 +136,9 @@ class TwitchApiCache {
     required bool refresh,
   }) async {
     if (!refresh && _values.containsKey(key)) {
-      return _values[key]! as T;
+      final value = _values.remove(key);
+      _values[key] = value;
+      return value as T;
     }
 
     if (!refresh) {
@@ -149,7 +155,11 @@ class TwitchApiCache {
     try {
       final value = await future;
       if (revision == _revision) {
+        _values.remove(key);
         _values[key] = value;
+        while (_values.length > maxEntries) {
+          _values.remove(_values.keys.first);
+        }
       }
       return value as T;
     } finally {

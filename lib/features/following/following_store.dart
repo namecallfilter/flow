@@ -63,15 +63,11 @@ abstract class FollowingStoreBase with Store {
 
   @action
   Future<void> loadSavedConnection({bool refresh = false}) async {
-    if (!authController.config.isConfigured) {
+    if (!authController.config.isConfigured || isLoadingFollowing) {
       return;
     }
     if (!refresh && connection != null) {
       return;
-    }
-
-    if (refresh) {
-      apiCache?.clear();
     }
 
     isLoadingFollowing = true;

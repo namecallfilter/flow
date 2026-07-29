@@ -90,4 +90,29 @@ void main() {
 
     expect(channel.startedAt, startedAt);
   });
+
+  test("requests appropriately sized category artwork", () {
+    expect(
+      twitchBoxArtUrl("https://example.com/box-{width}x{height}.jpg"),
+      "https://example.com/box-300x400.jpg",
+    );
+    expect(
+      twitchBoxArtUrl("https://example.com/box-52x72.jpg"),
+      "https://example.com/box-300x400.jpg",
+    );
+  });
+
+  test("maps category viewer counts without fetching streams", () {
+    final category = browseCategoryFromApi(
+      const TwitchCategory(
+        id: "27471",
+        name: "Minecraft",
+        boxArtUrl: "https://example.com/box-{width}x{height}.jpg",
+        viewerCount: 4200,
+      ),
+    );
+
+    expect(category.viewerCount, 4200);
+    expect(category.viewers, "4.2K");
+  });
 }

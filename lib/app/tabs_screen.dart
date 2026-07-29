@@ -87,6 +87,8 @@ class FlowTabsScreen extends StatefulWidget {
 }
 
 class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObserver {
+  static const _topLevelRefreshInterval = Duration(seconds: 30);
+
   final _followingNavigatorKey = GlobalKey<NavigatorState>();
   final _browseNavigatorKey = GlobalKey<NavigatorState>();
   final _settingsNavigatorKey = GlobalKey<NavigatorState>();
@@ -102,6 +104,9 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
   late final _TabNavigatorObserver _browseNavigatorObserver;
   late final _TabNavigatorObserver _settingsNavigatorObserver;
   late final ValueNotifier<double> _tabBackProgress;
+  Timer? _topLevelRefreshTimer;
+  bool _topLevelRefreshInFlight = false;
+  bool _appIsResumed = false;
   String? _predictiveBackTab;
   SwipeEdge _predictiveBackSwipeEdge = SwipeEdge.left;
 
@@ -115,6 +120,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
     _tabsStore = widget.tabsStore ?? TabsStore(initialRoute: widget.initialRoute);
     _visitedRoutes
       ..add(FlowRoutes.following)
+      ..add(FlowRoutes.browse)
       ..add(_tabsStore.currentRoute);
     _browseStore = widget.browseStore ?? BrowseStore(apiCache: _apiCache);
     _followingStore =
@@ -130,7 +136,17 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
     _browseNavigatorObserver = _TabNavigatorObserver(_handleTabNavigatorChanged);
     _settingsNavigatorObserver = _TabNavigatorObserver(_handleTabNavigatorChanged);
     _tabBackProgress = ValueNotifier(0);
+    final lifecycleState = WidgetsBinding.instance.lifecycleState;
+    _appIsResumed = lifecycleState == null || lifecycleState == AppLifecycleState.resumed;
     WidgetsBinding.instance.addObserver(this);
+    _topLevelRefreshTimer = Timer.periodic(_topLevelRefreshInterval, (_) {
+      if (_appIsResumed) {
+        unawaited(_refreshTopLevelData(refresh: true));
+      }
+    });
+    if (_appIsResumed) {
+      unawaited(_refreshTopLevelData(refresh: false));
+    }
   }
 
   TwitchAuthController _buildDefaultAuthController() {
@@ -163,13 +179,50 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
       _visitedRoutes.add(nextRoute);
     });
     _tabsStore.setCurrentRoute(nextRoute);
+    if (nextRoute == FlowRoutes.browse &&
+        (!_browseStore.categoriesLoaded || !_browseStore.liveChannelsLoaded)) {
+      unawaited(_refreshTopLevelData(refresh: false));
+    }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _topLevelRefreshTimer?.cancel();
     _tabBackProgress.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final wasResumed = _appIsResumed;
+    _appIsResumed = state == AppLifecycleState.resumed;
+    if (_appIsResumed && !wasResumed) {
+      unawaited(_refreshTopLevelData(refresh: true));
+    }
+  }
+
+  Future<void> _refreshTopLevelData({required bool refresh}) async {
+    if (_topLevelRefreshInFlight) {
+      return;
+    }
+
+    _topLevelRefreshInFlight = true;
+    try {
+      await Future.wait([
+        _followingStore.loadSavedConnection(refresh: refresh),
+        if (refresh || !_browseStore.categoriesLoaded)
+          refresh && _browseStore.categoriesLoaded
+              ? _browseStore.refreshCategoriesFirstPage()
+              : _browseStore.loadCategories(reset: true, refresh: refresh),
+        if (refresh || !_browseStore.liveChannelsLoaded)
+          refresh && _browseStore.liveChannelsLoaded
+              ? _browseStore.refreshLiveChannelsFirstPage()
+              : _browseStore.loadLiveChannels(reset: true, refresh: refresh),
+      ]);
+    } finally {
+      _topLevelRefreshInFlight = false;
+    }
   }
 
   @override
@@ -203,6 +256,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
                   followingStore: _followingStore,
                   openTwitchLogin: widget.openTwitchLogin,
                   bottomNavigationBar: const SizedBox.shrink(),
+                  periodicRefreshInterval: null,
                 ),
               ),
             ),
@@ -218,6 +272,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
                   browseStore: _browseStore,
                   preferences: _preferences,
                   bottomNavigationBar: const SizedBox.shrink(),
+                  periodicRefreshInterval: null,
                 ),
               ),
             ),

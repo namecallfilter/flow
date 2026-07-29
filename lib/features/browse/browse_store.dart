@@ -13,6 +13,8 @@ abstract class BrowseStoreBase with Store {
   BrowseStoreBase({required this.apiCache});
 
   final TwitchApiCache apiCache;
+  int _categoriesFirstPageLength = 0;
+  int _liveChannelsFirstPageLength = 0;
 
   @observable
   List<BrowseCategory> categories = const <BrowseCategory>[];
@@ -92,6 +94,7 @@ abstract class BrowseStoreBase with Store {
   Future<void> loadCategories({
     bool reset = false,
     bool refresh = false,
+    bool preserveTail = false,
   }) async {
     if (isLoadingCategories || (!reset && categoriesLoaded && categoriesCursor == null)) {
       return;
@@ -99,7 +102,14 @@ abstract class BrowseStoreBase with Store {
 
     isLoadingCategories = true;
     categoriesError = null;
-    if (reset) {
+    final preservedCursor = categoriesCursor;
+    final tailStart = _categoriesFirstPageLength > categories.length
+        ? categories.length
+        : _categoriesFirstPageLength;
+    final preservedTail = preserveTail
+        ? categories.skip(tailStart).toList(growable: false)
+        : const <BrowseCategory>[];
+    if (reset && !preserveTail) {
       categoriesCursor = null;
     }
 
@@ -108,13 +118,25 @@ abstract class BrowseStoreBase with Store {
         cursor: reset ? null : categoriesCursor,
         refresh: refresh,
       );
-      final nextCategories = await Future.wait([
-        for (final category in page.data)
-          browseCategoryFromApi(apiCache, category, refresh: refresh),
-      ]);
+      final nextCategories = [
+        for (final category in page.data) browseCategoryFromApi(category),
+      ];
 
-      categories = reset ? nextCategories : [...categories, ...nextCategories];
-      categoriesCursor = page.cursor;
+      if (reset) {
+        final firstPageCategories = _mergeCategories(
+          const <BrowseCategory>[],
+          nextCategories,
+        );
+        categories = preserveTail
+            ? _prependUniqueCategories(firstPageCategories, preservedTail)
+            : firstPageCategories;
+        _categoriesFirstPageLength = firstPageCategories.length;
+      } else {
+        categories = _mergeCategories(categories, nextCategories);
+      }
+      categoriesCursor = preserveTail && preservedTail.isNotEmpty
+          ? preservedCursor
+          : page.cursor;
       categoriesLoaded = true;
     } on Object catch (error) {
       categoriesError = browseErrorMessage(error);
@@ -127,6 +149,7 @@ abstract class BrowseStoreBase with Store {
   Future<void> loadLiveChannels({
     bool reset = false,
     bool refresh = false,
+    bool preserveTail = false,
   }) async {
     if (isLoadingLiveChannels || (!reset && liveChannelsLoaded && liveChannelsCursor == null)) {
       return;
@@ -134,7 +157,14 @@ abstract class BrowseStoreBase with Store {
 
     isLoadingLiveChannels = true;
     liveChannelsError = null;
-    if (reset) {
+    final preservedCursor = liveChannelsCursor;
+    final tailStart = _liveChannelsFirstPageLength > liveChannels.length
+        ? liveChannels.length
+        : _liveChannelsFirstPageLength;
+    final preservedTail = preserveTail
+        ? liveChannels.skip(tailStart).toList(growable: false)
+        : const <StreamChannel>[];
+    if (reset && !preserveTail) {
       liveChannelsCursor = null;
     }
 
@@ -155,8 +185,21 @@ abstract class BrowseStoreBase with Store {
             ),
       ];
 
-      liveChannels = reset ? nextChannels : [...liveChannels, ...nextChannels];
-      liveChannelsCursor = page.cursor;
+      if (reset) {
+        final firstPageChannels = _mergeLiveChannels(
+          const <StreamChannel>[],
+          nextChannels,
+        );
+        liveChannels = preserveTail
+            ? _prependUniqueLiveChannels(firstPageChannels, preservedTail)
+            : firstPageChannels;
+        _liveChannelsFirstPageLength = firstPageChannels.length;
+      } else {
+        liveChannels = _mergeLiveChannels(liveChannels, nextChannels);
+      }
+      liveChannelsCursor = preserveTail && preservedTail.isNotEmpty
+          ? preservedCursor
+          : page.cursor;
       liveChannelsLoaded = true;
     } on Object catch (error) {
       liveChannelsError = browseErrorMessage(error);
@@ -171,4 +214,85 @@ abstract class BrowseStoreBase with Store {
     }
     return loadLiveChannels(reset: true, refresh: true);
   }
+
+  Future<void> refreshCategoriesFirstPage() =>
+      loadCategories(reset: true, refresh: true, preserveTail: true);
+
+  Future<void> refreshLiveChannelsFirstPage() =>
+      loadLiveChannels(reset: true, refresh: true, preserveTail: true);
+}
+
+List<BrowseCategory> _prependUniqueCategories(
+  List<BrowseCategory> firstPage,
+  List<BrowseCategory> tail,
+) {
+  final seen = <String>{};
+  return [
+    for (final category in firstPage.followedBy(tail))
+      if (seen.add(category.id)) category,
+  ];
+}
+
+List<BrowseCategory> _mergeCategories(
+  List<BrowseCategory> current,
+  List<BrowseCategory> next,
+) {
+  final merged = <BrowseCategory>[];
+  final indicesById = <String, int>{};
+
+  for (final category in current.followedBy(next)) {
+    final existingIndex = indicesById[category.id];
+    if (existingIndex == null) {
+      indicesById[category.id] = merged.length;
+      merged.add(category);
+    } else {
+      merged[existingIndex] = category;
+    }
+  }
+
+  return merged;
+}
+
+List<StreamChannel> _prependUniqueLiveChannels(
+  List<StreamChannel> firstPage,
+  List<StreamChannel> tail,
+) {
+  final seen = <String>{};
+  return [
+    for (final channel in firstPage.followedBy(tail))
+      if (seen.add(_liveChannelIdentity(channel))) channel,
+  ];
+}
+
+List<StreamChannel> _mergeLiveChannels(
+  List<StreamChannel> current,
+  List<StreamChannel> next,
+) {
+  final merged = <StreamChannel>[];
+  final indicesByIdentity = <String, int>{};
+
+  for (final channel in current.followedBy(next)) {
+    final identity = _liveChannelIdentity(channel);
+    final existingIndex = indicesByIdentity[identity];
+    if (existingIndex == null) {
+      indicesByIdentity[identity] = merged.length;
+      merged.add(channel);
+    } else {
+      merged[existingIndex] = channel;
+    }
+  }
+
+  return merged;
+}
+
+String _liveChannelIdentity(StreamChannel channel) {
+  final id = channel.id.trim();
+  if (id.isNotEmpty) {
+    return "id:$id";
+  }
+  final login = channel.login.trim().toLowerCase();
+  if (login.isNotEmpty) {
+    return "login:$login";
+  }
+  return "name:${channel.name.trim().toLowerCase()}";
 }

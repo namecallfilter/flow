@@ -52,6 +52,12 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(followedLiveRequests, 1);
+    expect(topCategoriesRequests, 1);
+    expect(topLiveStreamsRequests, 1);
+    expect(
+      find.byKey(const ValueKey("browse_title"), skipOffstage: false),
+      findsOneWidget,
+    );
 
     await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Browse")));
     await tester.pumpAndSettle();
@@ -76,6 +82,93 @@ void main() {
     expect(topCategoriesRequests, 1);
     expect(topLiveStreamsRequests, 1);
     expect(followedLiveRequests, 1);
+  });
+
+  testWidgets("refreshes Following and Browse roots while hidden and on resume", (
+    tester,
+  ) async {
+    var topCategoriesRequests = 0;
+    var topLiveStreamsRequests = 0;
+    var followedLiveRequests = 0;
+    var categoryStreamsRequests = 0;
+    var channelDetailsRequests = 0;
+    final store = _MemoryTwitchStore()
+      ..accessToken = "token-123"
+      ..webSessionToken = "gql-token-123";
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.light),
+        home: FlowTabsScreen(
+          authController: _authController(
+            secureStore: store,
+            onRequest: (request) {
+              if (_isGraphQlOperation(request, "FlowTopGames") &&
+                  _graphQlVariables(request)["after"] == null) {
+                topCategoriesRequests++;
+              }
+              if (_isGraphQlOperation(request, "FlowTopStreams") &&
+                  _graphQlVariables(request)["after"] == null) {
+                topLiveStreamsRequests++;
+              }
+              if (_isGraphQlOperation(request, "FlowFollowedLiveUsers")) {
+                followedLiveRequests++;
+              }
+              if (_isGraphQlOperation(request, "FlowGameStreams")) {
+                categoryStreamsRequests++;
+              }
+              if (_isGraphQlOperation(request, "FlowChannelDetails")) {
+                channelDetailsRequests++;
+              }
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(topCategoriesRequests, 1);
+    expect(topLiveStreamsRequests, 1);
+    expect(followedLiveRequests, 1);
+    expect(categoryStreamsRequests, 0);
+    expect(channelDetailsRequests, 0);
+
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pumpAndSettle();
+
+    expect(topCategoriesRequests, 2);
+    expect(topLiveStreamsRequests, 2);
+    expect(followedLiveRequests, 2);
+
+    await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Browse")));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pumpAndSettle();
+
+    expect(topCategoriesRequests, 3);
+    expect(topLiveStreamsRequests, 3);
+    expect(followedLiveRequests, 3);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pumpAndSettle();
+
+    expect(topCategoriesRequests, 3);
+    expect(topLiveStreamsRequests, 3);
+    expect(followedLiveRequests, 3);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    expect(topCategoriesRequests, 4);
+    expect(topLiveStreamsRequests, 4);
+    expect(followedLiveRequests, 4);
+    expect(categoryStreamsRequests, 0);
+    expect(channelDetailsRequests, 0);
   });
 
   testWidgets("keeps Browse category route when switching tabs", (tester) async {

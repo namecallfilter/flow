@@ -1,6 +1,7 @@
 import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
+import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
 import "package:flow/features/following/following_store.dart";
 import "package:flutter_test/flutter_test.dart";
@@ -32,6 +33,19 @@ void main() {
     await store.loadSavedConnection(refresh: true);
 
     expect(followedRequests, 2);
+  });
+
+  test("does not clear the shared API cache during a Following refresh", () async {
+    final apiCache = _TrackingApiCache();
+    final store = FollowingStore(
+      authController: _authController(),
+      apiCache: apiCache,
+    );
+
+    await store.loadSavedConnection();
+    await store.loadSavedConnection(refresh: true);
+
+    expect(apiCache.clearCount, 0);
   });
 }
 
@@ -231,4 +245,18 @@ class _StaticCookieExtractor implements TwitchCookieExtractor {
 
   @override
   Future<String?> extractTwitchAuthToken() async => null;
+}
+
+class _TrackingApiCache extends TwitchApiCache {
+  _TrackingApiCache()
+    : super(
+        clientLoader: () async => throw StateError("API cache should not load"),
+      );
+
+  int clearCount = 0;
+
+  @override
+  void clear() {
+    clearCount++;
+  }
 }

@@ -82,6 +82,126 @@ void main() {
     expect(durationBadgeRect.bottom, closeTo(thumbnailRect.bottom - 5, 1));
   });
 
+  testWidgets("updates the active broadcast duration locally every second", (
+    tester,
+  ) async {
+    final streamStartedAt = DateTime.parse("2026-07-04T01:00:00Z");
+    var apiRequests = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: ChannelScreen(
+          apiCache: TwitchApiCache(
+            clientLoader: () async => TwitchApiClient(
+              clientId: "client-123",
+              accessToken: "token-123",
+              httpClient: MockClient((_) async {
+                apiRequests++;
+                return _channelDetailsResponse(
+                  videoTitles: const ["Live archive", "Earlier stream"],
+                  streamStartedAt: streamStartedAt,
+                  firstVideoCreatedAt: streamStartedAt,
+                );
+              }),
+            ),
+          ),
+          initialChannel: const ChannelPreview(
+            login: "jason",
+            displayName: "Jason",
+            isLive: true,
+          ),
+        ),
+      ),
+    );
+
+    await tester.pumpAndSettle();
+
+    expect(find.text("4:59:59"), findsNWidgets(2));
+    expect(apiRequests, 1);
+
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(find.text("5:00:00"), findsOneWidget);
+    expect(find.text("4:59:59"), findsOneWidget);
+    expect(apiRequests, 1);
+
+    await tester.pump(const Duration(seconds: 2));
+
+    expect(find.text("5:00:02"), findsOneWidget);
+    expect(find.text("4:59:59"), findsOneWidget);
+    expect(apiRequests, 1);
+  });
+
+  testWidgets("refetches the channel and keeps live duration current when reopened", (
+    tester,
+  ) async {
+    final streamStartedAt = DateTime.now();
+    final reopenedResponse = Completer<http.Response>();
+    var apiRequests = 0;
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+        httpClient: MockClient((_) {
+          apiRequests++;
+          if (apiRequests == 1) {
+            return Future.value(
+              _channelDetailsResponse(
+                videoLengthSeconds: 49,
+                streamStartedAt: streamStartedAt,
+                firstVideoCreatedAt: streamStartedAt,
+              ),
+            );
+          }
+          return reopenedResponse.future;
+        }),
+      ),
+    );
+
+    final reopenedChannelResponse = _channelDetailsResponse(
+      videoLengthSeconds: 55,
+      streamStartedAt: streamStartedAt,
+      firstVideoCreatedAt: streamStartedAt,
+    );
+
+    Widget buildChannel() => MaterialApp(
+      theme: buildFlowTheme(Brightness.dark),
+      home: ChannelScreen(
+        apiCache: apiCache,
+        initialChannel: const ChannelPreview(
+          login: "jason",
+          displayName: "Jason",
+          isLive: true,
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(buildChannel());
+    await tester.pumpAndSettle();
+
+    expect(find.text("0:49"), findsOneWidget);
+    expect(apiRequests, 1);
+
+    await tester.pump(const Duration(seconds: 6));
+
+    expect(find.text("0:55"), findsOneWidget);
+
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(buildChannel());
+    await tester.pump();
+
+    expect(apiRequests, 2);
+    expect(find.text("0:49"), findsNothing);
+
+    reopenedResponse.complete(reopenedChannelResponse);
+    await tester.pumpAndSettle();
+
+    expect(find.text("0:55"), findsOneWidget);
+    expect(apiRequests, 2);
+  });
+
   testWidgets("wraps a long live category without ellipsizing", (tester) async {
     const longCategory = "Really Long Category Name That Needs More Than One Line To Render Fully";
 
@@ -143,8 +263,7 @@ void main() {
           final query = body["query"]?.toString() ?? "";
           if (query.contains("FlowGameStreams")) {
             final variables =
-                (body["variables"] as Map<String, Object?>?) ??
-                const <String, Object?>{};
+                (body["variables"] as Map<String, Object?>?) ?? const <String, Object?>{};
             requestedGameIds.add(variables["id"]?.toString() ?? "");
             return http.Response(
               jsonEncode({
@@ -474,6 +593,9 @@ http.Response _channelDetailsResponse({
   String category = "Just Chatting",
   String? nextCursor,
   bool isLive = true,
+  DateTime? streamStartedAt,
+  DateTime? firstVideoCreatedAt,
+  int videoLengthSeconds = 17999,
 }) {
   final titles = videoTitles ?? [videoTitle];
 
@@ -490,7 +612,9 @@ http.Response _channelDetailsResponse({
           "stream": isLive
               ? {
                   "id": "live-1",
-                  "createdAt": "2026-07-04T01:00:00Z",
+                  "createdAt": (streamStartedAt ?? DateTime.parse("2026-07-04T01:00:00Z"))
+                      .toUtc()
+                      .toIso8601String(),
                   "game": {"id": "509658", "displayName": category},
                   "previewImageURL":
                       "https://static-cdn.jtvnw.net/previews-ttv/live_user_jason-320x180.jpg",
@@ -509,17 +633,21 @@ http.Response _channelDetailsResponse({
                     "id": index == 0 ? videoId : "$videoId-$index",
                     "title": titles[index],
                     "game": {"id": "509658", "displayName": "Just Chatting"},
-                    "lengthSeconds": 17999,
+                    "lengthSeconds": videoLengthSeconds,
                     "previewThumbnailURL":
                         "https://static-cdn.jtvnw.net/${index == 0 ? videoId : "$videoId-$index"}.jpg",
                     "publishedAt": DateTime.now()
                         .subtract(Duration(days: 2 + index, hours: 1))
                         .toUtc()
                         .toIso8601String(),
-                    "createdAt": DateTime.now()
-                        .subtract(Duration(days: 2 + index, hours: 2))
-                        .toUtc()
-                        .toIso8601String(),
+                    "createdAt":
+                        (index == 0 && firstVideoCreatedAt != null
+                                ? firstVideoCreatedAt
+                                : DateTime.now().subtract(
+                                    Duration(days: 2 + index, hours: 2),
+                                  ))
+                            .toUtc()
+                            .toIso8601String(),
                     "viewCount": 91234,
                   },
                 },

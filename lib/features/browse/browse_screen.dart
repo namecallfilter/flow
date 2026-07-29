@@ -36,6 +36,7 @@ class BrowseScreen extends StatefulWidget {
     this.bottomNavigationBar,
     this.browseStore,
     this.preferences,
+    this.periodicRefreshInterval = const Duration(seconds: 30),
   });
 
   final TwitchAuthController? authController;
@@ -43,6 +44,7 @@ class BrowseScreen extends StatefulWidget {
   final Widget? bottomNavigationBar;
   final BrowseStore? browseStore;
   final FlowPreferences? preferences;
+  final Duration? periodicRefreshInterval;
 
   @override
   State<BrowseScreen> createState() => _BrowseScreenState();
@@ -55,6 +57,9 @@ class BrowseScreen extends StatefulWidget {
     properties.add(DiagnosticsProperty<Widget?>("bottomNavigationBar", bottomNavigationBar));
     properties.add(DiagnosticsProperty<BrowseStore?>("browseStore", browseStore));
     properties.add(DiagnosticsProperty<FlowPreferences?>("preferences", preferences));
+    properties.add(
+      DiagnosticsProperty<Duration?>("periodicRefreshInterval", periodicRefreshInterval),
+    );
   }
 }
 
@@ -254,6 +259,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
                 onRefresh: _refreshActiveSection,
                 indicatorStartTop: topScrollPadding + 16,
                 indicatorMaxTravel: 72,
+                periodicRefreshInterval: widget.periodicRefreshInterval,
                 child: ListView(
                   controller: _scrollController,
                   physics: const AlwaysScrollableScrollPhysics(
@@ -271,36 +277,40 @@ class _BrowseScreenState extends State<BrowseScreen> {
                       onSectionSelected: _selectSection,
                     ),
                     const SizedBox(height: AppSpacing.md),
-                    if (_store.activeLoading && _store.activeItemsEmpty)
-                      switch (_store.selectedSection) {
-                        BrowseSection.categories => const _CategoryGridSkeleton(),
-                        BrowseSection.liveChannels => const _StreamListSkeleton(
+                    Offstage(
+                      key: const ValueKey("browse_categories_section"),
+                      offstage: _store.selectedSection != BrowseSection.categories,
+                      child: _RetainedBrowseSection(
+                        isLoading: _store.isLoadingCategories,
+                        hasItems: _store.categories.isNotEmpty,
+                        errorMessage: _store.categoriesError,
+                        loadingSkeleton: const _CategoryGridSkeleton(),
+                        child: _CategoryGrid(
+                          key: const ValueKey("browse_categories_content"),
+                          categories: _store.categories,
+                          onCategorySelected: _openCategory,
+                        ),
+                      ),
+                    ),
+                    Offstage(
+                      key: const ValueKey("browse_live_channels_section"),
+                      offstage: _store.selectedSection != BrowseSection.liveChannels,
+                      child: _RetainedBrowseSection(
+                        isLoading: _store.isLoadingLiveChannels,
+                        hasItems: _store.liveChannels.isNotEmpty,
+                        errorMessage: _store.liveChannelsError,
+                        loadingSkeleton: const _StreamListSkeleton(
                           key: ValueKey("browse_live_channels_skeleton"),
                           semanticLabel: "Loading live channels",
                         ),
-                      }
-                    else if (_store.activeError != null)
-                      _StatusMessage(message: _store.activeError!)
-                    else if (_store.selectedSection == BrowseSection.categories)
-                      _CategoryGrid(
-                        categories: _store.categories,
-                        onCategorySelected: _openCategory,
-                      )
-                    else
-                      _LiveChannelsList(
-                        channels: _store.liveChannels,
-                        onChannelSelected: _openLiveChannel,
-                        onStreamSelected: _openPlayer,
-                      ),
-                    if (_store.activeLoading && !_store.activeItemsEmpty) ...[
-                      const SizedBox(height: AppSpacing.md),
-                      const Center(
-                        child: SizedBox.square(
-                          dimension: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2.4),
+                        child: _LiveChannelsList(
+                          key: const ValueKey("browse_live_channels_content"),
+                          channels: _store.liveChannels,
+                          onChannelSelected: _openLiveChannel,
+                          onStreamSelected: _openPlayer,
                         ),
                       ),
-                    ],
+                    ),
                   ],
                 ),
               ),
@@ -1617,11 +1627,73 @@ class _BrowseSectionSelector extends StatelessWidget {
   }
 }
 
+class _RetainedBrowseSection extends StatelessWidget {
+  const _RetainedBrowseSection({
+    required this.isLoading,
+    required this.hasItems,
+    required this.errorMessage,
+    required this.loadingSkeleton,
+    required this.child,
+  });
+
+  final bool isLoading;
+  final bool hasItems;
+  final String? errorMessage;
+  final Widget loadingSkeleton;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final error = errorMessage;
+    if (!hasItems) {
+      if (isLoading) {
+        return loadingSkeleton;
+      }
+      if (error != null) {
+        return _StatusMessage(message: error);
+      }
+      return child;
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (error != null) ...[
+          _StatusMessage(message: error),
+          const SizedBox(height: AppSpacing.md),
+        ],
+        child,
+        if (isLoading) ...[
+          const SizedBox(height: AppSpacing.md),
+          const Center(
+            child: SizedBox.square(
+              dimension: 22,
+              child: CircularProgressIndicator(strokeWidth: 2.4),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties
+      ..add(FlagProperty("isLoading", value: isLoading, ifTrue: "loading"))
+      ..add(FlagProperty("hasItems", value: hasItems, ifTrue: "has items"))
+      ..add(StringProperty("errorMessage", errorMessage))
+      ..add(DiagnosticsProperty<Widget>("loadingSkeleton", loadingSkeleton))
+      ..add(DiagnosticsProperty<Widget>("child", child));
+  }
+}
+
 class _LiveChannelsList extends StatelessWidget {
   const _LiveChannelsList({
     required this.channels,
     required this.onChannelSelected,
     required this.onStreamSelected,
+    super.key,
     this.showCategories = true,
   });
 
@@ -1641,6 +1713,9 @@ class _LiveChannelsList extends StatelessWidget {
       children: [
         for (final channel in channels)
           StreamCard(
+            key: ValueKey(
+              channel.id.isNotEmpty ? channel.id : channel.login.toLowerCase(),
+            ),
             channel: channel,
             onChannelSelected: onChannelSelected,
             onStreamSelected: onStreamSelected,
@@ -1793,6 +1868,7 @@ class _CategoryGrid extends StatelessWidget {
   const _CategoryGrid({
     required this.categories,
     required this.onCategorySelected,
+    super.key,
   });
 
   final List<BrowseCategory> categories;
@@ -1810,7 +1886,14 @@ class _CategoryGrid extends StatelessWidget {
       physics: const NeverScrollableScrollPhysics(),
       itemCount: categories.length,
       gridDelegate: _categoryGridDelegate(context),
+      findChildIndexCallback: (key) {
+        final index = categories.indexWhere(
+          (category) => ValueKey(category.id) == key,
+        );
+        return index < 0 ? null : index;
+      },
       itemBuilder: (context, index) => _CategoryCard(
+        key: ValueKey(categories[index].id),
         category: categories[index],
         onTap: () => onCategorySelected(categories[index]),
       ),
@@ -1849,6 +1932,7 @@ class _CategoryCard extends StatelessWidget {
   const _CategoryCard({
     required this.category,
     required this.onTap,
+    super.key,
   });
 
   final BrowseCategory category;
@@ -1935,6 +2019,7 @@ class _CategoryThumbnail extends StatelessWidget {
       imageUrl,
       fit: BoxFit.cover,
       filterQuality: FilterQuality.high,
+      gaplessPlayback: true,
       errorBuilder: (_, _, _) => fallback,
     );
   }

@@ -283,9 +283,17 @@ mixin _$BrowseStore on BrowseStoreBase, Store {
   );
 
   @override
-  Future<void> loadCategories({bool reset = false, bool refresh = false}) {
+  Future<void> loadCategories({
+    bool reset = false,
+    bool refresh = false,
+    bool preserveTail = false,
+  }) {
     return _$loadCategoriesAsyncAction.run(
-      () => super.loadCategories(reset: reset, refresh: refresh),
+      () => super.loadCategories(
+        reset: reset,
+        refresh: refresh,
+        preserveTail: preserveTail,
+      ),
     );
   }
 
@@ -295,9 +303,17 @@ mixin _$BrowseStore on BrowseStoreBase, Store {
   );
 
   @override
-  Future<void> loadLiveChannels({bool reset = false, bool refresh = false}) {
+  Future<void> loadLiveChannels({
+    bool reset = false,
+    bool refresh = false,
+    bool preserveTail = false,
+  }) {
     return _$loadLiveChannelsAsyncAction.run(
-      () => super.loadLiveChannels(reset: reset, refresh: refresh),
+      () => super.loadLiveChannels(
+        reset: reset,
+        refresh: refresh,
+        preserveTail: preserveTail,
+      ),
     );
   }
 

@@ -71,9 +71,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
           login: widget.initialChannel.login,
         );
     _scrollController.addListener(_loadMoreWhenNearBottom);
-    if (_store.channel == null) {
-      unawaited(_store.load());
-    }
+    unawaited(_store.load(refresh: true));
   }
 
   @override
@@ -178,8 +176,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
                           onProfileTap: livePlayerChannel == null
                               ? null
                               : () => _openLiveStream(livePlayerChannel),
-                          onCategoryTap:
-                              liveStream == null || liveStream.categoryId.trim().isEmpty
+                          onCategoryTap: liveStream == null || liveStream.categoryId.trim().isEmpty
                               ? null
                               : () => _openCategory(liveStream),
                         ),
@@ -189,8 +186,16 @@ class _ChannelScreenState extends State<ChannelScreen> {
                         if (channel == null || channel.pastBroadcasts.isEmpty)
                           const _StatusMessage(message: "No past broadcasts.")
                         else ...[
-                          for (final broadcast in channel.pastBroadcasts)
-                            _PastBroadcastCard(broadcast: broadcast),
+                          for (var index = 0; index < channel.pastBroadcasts.length; index++)
+                            _PastBroadcastCard(
+                              broadcast: channel.pastBroadcasts[index],
+                              isLive:
+                                  index == 0 &&
+                                  _isLivePastBroadcast(
+                                    channel.liveStream,
+                                    channel.pastBroadcasts[index],
+                                  ),
+                            ),
                           if (_store.pastBroadcastsError != null)
                             _StatusMessage(message: _store.pastBroadcastsError!)
                           else if (_store.isLoadingPastBroadcasts) ...[
@@ -807,9 +812,13 @@ class _LiveBadge extends StatelessWidget {
 }
 
 class _PastBroadcastCard extends StatelessWidget {
-  const _PastBroadcastCard({required this.broadcast});
+  const _PastBroadcastCard({
+    required this.broadcast,
+    required this.isLive,
+  });
 
   final TwitchPastBroadcast broadcast;
+  final bool isLive;
 
   @override
   Widget build(BuildContext context) {
@@ -842,6 +851,7 @@ class _PastBroadcastCard extends StatelessWidget {
                     child: _DurationBadge(
                       key: ValueKey("past_broadcast_duration_${broadcast.id}"),
                       duration: broadcast.duration,
+                      isLive: isLive,
                     ),
                   ),
                 ],
@@ -896,6 +906,7 @@ class _PastBroadcastCard extends StatelessWidget {
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<TwitchPastBroadcast>("broadcast", broadcast));
+    properties.add(DiagnosticsProperty<bool>("isLive", isLive));
   }
 }
 
@@ -941,13 +952,88 @@ class _BroadcastThumbnail extends StatelessWidget {
   }
 }
 
-class _DurationBadge extends StatelessWidget {
+class _DurationBadge extends StatefulWidget {
   const _DurationBadge({
     required this.duration,
+    required this.isLive,
     super.key,
   });
 
   final Duration duration;
+  final bool isLive;
+
+  @override
+  State<_DurationBadge> createState() => _DurationBadgeState();
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(DiagnosticsProperty<Duration>("duration", duration));
+    properties.add(DiagnosticsProperty<bool>("isLive", isLive));
+  }
+}
+
+class _DurationBadgeState extends State<_DurationBadge> {
+  Timer? _timer;
+  late Duration _baselineDuration;
+  int _timerTick = 0;
+  int _baselineTimerTick = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _baselineDuration = widget.duration;
+    _updateTimer();
+  }
+
+  @override
+  void didUpdateWidget(_DurationBadge oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final displayedDuration = _displayedDuration;
+    _baselineDuration = widget.isLive && oldWidget.isLive && displayedDuration > widget.duration
+        ? displayedDuration
+        : widget.duration;
+    _baselineTimerTick = _timerTick;
+    if (widget.isLive != oldWidget.isLive) {
+      _updateTimer();
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _updateTimer() {
+    _timer?.cancel();
+    _timerTick = 0;
+    _baselineTimerTick = 0;
+    if (!widget.isLive) {
+      return;
+    }
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        return;
+      }
+      _timerTick = timer.tick;
+      final lifecycleState = WidgetsBinding.instance.lifecycleState;
+      final route = ModalRoute.of(context);
+      if ((lifecycleState != null && lifecycleState != AppLifecycleState.resumed) ||
+          !TickerMode.valuesOf(context).enabled ||
+          (route != null && !route.isCurrent)) {
+        return;
+      }
+      setState(() {});
+    });
+  }
+
+  Duration get _displayedDuration {
+    if (!widget.isLive) {
+      return _baselineDuration;
+    }
+    return _baselineDuration + Duration(seconds: _timerTick - _baselineTimerTick);
+  }
 
   @override
   Widget build(BuildContext context) => DecoratedBox(
@@ -958,7 +1044,7 @@ class _DurationBadge extends StatelessWidget {
     child: Padding(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
       child: Text(
-        _durationText(duration),
+        _durationText(_displayedDuration),
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
           color: Colors.white,
           fontSize: 10.5,
@@ -969,12 +1055,6 @@ class _DurationBadge extends StatelessWidget {
       ),
     ),
   );
-
-  @override
-  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
-    super.debugFillProperties(properties);
-    properties.add(DiagnosticsProperty<Duration>("duration", duration));
-  }
 }
 
 class _StatusMessage extends StatelessWidget {
@@ -1065,6 +1145,27 @@ String _durationText(Duration duration) {
     return "$hours:$minutes:$seconds";
   }
   return "${duration.inMinutes}:$seconds";
+}
+
+bool _isLivePastBroadcast(
+  TwitchChannelLiveStream? liveStream,
+  TwitchPastBroadcast broadcast,
+) {
+  if (liveStream == null) {
+    return false;
+  }
+  final streamId = liveStream.id.trim();
+  if (streamId.isNotEmpty && streamId == broadcast.id.trim()) {
+    return true;
+  }
+
+  final streamStartedAt = liveStream.startedAt;
+  final broadcastStartedAt = broadcast.createdAt ?? broadcast.publishedAt;
+  if (streamStartedAt == null || broadcastStartedAt == null) {
+    return false;
+  }
+
+  return streamStartedAt.difference(broadcastStartedAt).abs() <= const Duration(minutes: 5);
 }
 
 String? _broadcastAgeText(TwitchPastBroadcast broadcast) {

@@ -1,5 +1,4 @@
 import "package:flow/api/twitch_api.dart";
-import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flutter/material.dart";
@@ -91,30 +90,14 @@ StreamChannel streamChannelFromStream(
   );
 }
 
-Future<BrowseCategory> browseCategoryFromApi(
-  TwitchApiCache apiCache,
-  TwitchCategory category, {
-  bool refresh = false,
-}) async {
-  final streams = await apiCache.fetchLiveStreamsPage(
-    first: 100,
-    gameIds: [category.id],
-    refresh: refresh,
-  );
-  final viewerCount = streams.data.fold<int>(
-    0,
-    (total, stream) => total + stream.viewerCount,
-  );
-
-  return BrowseCategory(
-    id: category.id,
-    name: category.name,
-    viewerCount: viewerCount,
-    viewers: formatCompactCount(viewerCount),
-    imageUrl: twitchBoxArtUrl(category.boxArtUrl),
-    colors: colorsForText(category.id),
-  );
-}
+BrowseCategory browseCategoryFromApi(TwitchCategory category) => BrowseCategory(
+  id: category.id,
+  name: category.name,
+  viewerCount: category.viewerCount,
+  viewers: formatCompactCount(category.viewerCount),
+  imageUrl: twitchBoxArtUrl(category.boxArtUrl),
+  colors: colorsForText(category.id),
+);
 
 String browseErrorMessage(Object error) {
   if (error is TwitchApiException) {
@@ -213,8 +196,8 @@ String? twitchBoxArtUrl(String? template) {
   if (template == null || template.isEmpty) {
     return null;
   }
-  const width = "1200";
-  const height = "1600";
+  const width = "300";
+  const height = "400";
   final templatedUrl = template.replaceAll("{width}", width).replaceAll("{height}", height);
   if (templatedUrl != template) {
     return templatedUrl;

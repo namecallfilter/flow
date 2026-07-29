@@ -6,6 +6,42 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  test("fetches category viewer counts with top games", () async {
+    late http.Request capturedRequest;
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      httpClient: MockClient((request) async {
+        capturedRequest = request;
+        return _jsonResponse({
+          "data": {
+            "games": {
+              "edges": [
+                {
+                  "cursor": null,
+                  "node": {
+                    "id": "27471",
+                    "displayName": "Minecraft",
+                    "boxArtURL":
+                        "https://static-cdn.jtvnw.net/ttv-boxart/27471-{width}x{height}.jpg",
+                    "viewersCount": 4200,
+                  },
+                },
+              ],
+              "pageInfo": {"hasNextPage": false},
+            },
+          },
+        });
+      }),
+    );
+
+    final categories = await client.fetchTopCategories();
+    final body = jsonDecode(capturedRequest.body) as Map<String, Object?>;
+
+    expect(body["query"], contains("viewersCount"));
+    expect(categories.single.viewerCount, 4200);
+  });
+
   test("fetches channel details with live status and past broadcasts", () async {
     late http.Request capturedRequest;
     final client = TwitchApiClient(
