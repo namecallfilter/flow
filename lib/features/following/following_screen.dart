@@ -1,6 +1,5 @@
 import "dart:async";
 import "dart:math" as math;
-import "dart:ui";
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
@@ -22,6 +21,7 @@ import "package:flow/shared/widgets/avatar_ring.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flow/shared/widgets/page_header_title.dart";
 import "package:flow/shared/widgets/pull_to_refresh.dart";
+import "package:flow/shared/widgets/scroll_reactive_chrome.dart";
 import "package:flow/shared/widgets/section_header.dart";
 import "package:flow/shared/widgets/skeleton.dart";
 import "package:flutter/foundation.dart";
@@ -276,6 +276,7 @@ class _FollowingScreenState extends State<FollowingScreen> {
           ? browseStore!.liveChannelsError
           : _store.followingError;
       const bottomScrollPadding = PageHeaderLayout.bottomNavigationScrollPadding;
+      final topSafeAreaInset = ScrollReactiveChrome.safeAreaInsetsOf(context).top;
 
       return Scaffold(
         extendBody: true,
@@ -286,85 +287,77 @@ class _FollowingScreenState extends State<FollowingScreen> {
               currentRoute: FlowRoutes.following,
               showLiveChannels: showsAnonymousChannels,
             ),
-        body: SafeArea(
-          bottom: false,
+        body: ScrollReactiveChrome(
+          scrollController: _scrollController,
+          header: _FrostedTopBar(
+            title: showsAnonymousChannels ? "Live Channels" : "Following",
+            onProfilePressed: _openMe,
+            profileInitials: initialsForName(
+              profileUser?.displayName ?? "Me",
+            ),
+            profileImageUrl: profileUser?.profileImageUrl,
+          ),
           child: LayoutBuilder(
-            builder: (context, constraints) => Stack(
-              children: [
-                FlowPullToRefresh(
-                  scrollController: _scrollController,
-                  onRefresh: _refreshFollowing,
-                  indicatorStartTop: PageHeaderLayout.largeTitleRefreshIndicatorStartTop,
-                  indicatorMaxTravel: 52,
-                  periodicRefreshInterval: widget.periodicRefreshInterval,
-                  child: ListView(
-                    controller: _scrollController,
-                    physics: const AlwaysScrollableScrollPhysics(
-                      parent: ClampingScrollPhysics(),
-                    ),
-                    padding: PageHeaderLayout.scrollPadding(
-                      top: PageHeaderLayout.largeTitleContentTopPadding,
-                      bottom: bottomScrollPadding,
-                    ),
-                    children: [
-                      if (isLoadingInitialChannels)
-                        _FollowingSkeleton(
-                          viewportHeight: constraints.maxHeight,
-                          showOfflineCard: !showsAnonymousChannels,
-                          semanticLabel: showsAnonymousChannels
-                              ? "Loading live channels"
-                              : "Loading following channels",
-                        )
-                      else ...[
-                        if (channelsError != null) ...[
-                          _StatusBanner(message: channelsError),
-                          const SizedBox(height: AppSpacing.lg),
-                        ],
-                        if (showLiveEmptyState)
-                          _EmptyState(
-                            message: showsAnonymousChannels
-                                ? "No live channels are available right now."
-                                : "No followed channels are live now.",
-                          )
-                        else
-                          for (final channel in liveChannels)
-                            StreamCard(
-                              key: ValueKey((
-                                channel.id,
-                                channel.login,
-                                channel.name,
-                              )),
-                              channel: channel,
-                              onChannelSelected: _openLiveChannel,
-                              onStreamSelected: _openPlayer,
-                            ),
-                        if (!showsAnonymousChannels) ...[
-                          const SizedBox(height: AppSpacing.sm),
-                          _OfflineCard(
-                            channels: offlineChannels,
-                            expanded: offlineExpanded,
-                            onToggle: _store.toggleOfflineExpanded,
-                            onChannelSelected: _openOfflineChannel,
-                          ),
-                        ],
-                      ],
+            builder: (context, constraints) => FlowPullToRefresh(
+              scrollController: _scrollController,
+              onRefresh: _refreshFollowing,
+              indicatorStartTop:
+                  PageHeaderLayout.largeTitleRefreshIndicatorStartTop + topSafeAreaInset,
+              indicatorMaxTravel: 52,
+              periodicRefreshInterval: widget.periodicRefreshInterval,
+              child: ListView(
+                controller: _scrollController,
+                physics: const AlwaysScrollableScrollPhysics(
+                  parent: ClampingScrollPhysics(),
+                ),
+                padding: PageHeaderLayout.scrollPadding(
+                  top: PageHeaderLayout.largeTitleContentTopPadding + topSafeAreaInset,
+                  bottom: bottomScrollPadding,
+                ),
+                children: [
+                  if (isLoadingInitialChannels)
+                    _FollowingSkeleton(
+                      viewportHeight: constraints.maxHeight - topSafeAreaInset,
+                      showOfflineCard: !showsAnonymousChannels,
+                      semanticLabel: showsAnonymousChannels
+                          ? "Loading live channels"
+                          : "Loading following channels",
+                    )
+                  else ...[
+                    if (channelsError != null) ...[
+                      _StatusBanner(message: channelsError),
+                      const SizedBox(height: AppSpacing.lg),
                     ],
-                  ),
-                ),
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: _FrostedTopBar(
-                    title: showsAnonymousChannels ? "Live Channels" : "Following",
-                    onProfilePressed: _openMe,
-                    profileInitials: initialsForName(
-                      profileUser?.displayName ?? "Me",
-                    ),
-                    profileImageUrl: profileUser?.profileImageUrl,
-                  ),
-                ),
-              ],
+                    if (showLiveEmptyState)
+                      _EmptyState(
+                        message: showsAnonymousChannels
+                            ? "No live channels are available right now."
+                            : "No followed channels are live now.",
+                      )
+                    else
+                      for (final channel in liveChannels)
+                        StreamCard(
+                          key: ValueKey((
+                            channel.id,
+                            channel.login,
+                            channel.name,
+                          )),
+                          channel: channel,
+                          onChannelSelected: _openLiveChannel,
+                          onStreamSelected: _openPlayer,
+                        ),
+                    if (!showsAnonymousChannels) ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      _OfflineCard(
+                        channels: offlineChannels,
+                        expanded: offlineExpanded,
+                        onToggle: _store.toggleOfflineExpanded,
+                        onChannelSelected: _openOfflineChannel,
+                      ),
+                    ],
+                  ],
+                ],
+              ),
             ),
           ),
         ),
@@ -509,44 +502,16 @@ class _FrostedTopBar extends StatelessWidget {
   final String? profileImageUrl;
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final headerSurface = theme.scaffoldBackgroundColor;
-    final topAlpha = theme.brightness == Brightness.dark ? 0.92 : 0.94;
-    final bottomAlpha = theme.brightness == Brightness.dark ? 0.30 : 0.42;
-
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: Container(
-          key: const ValueKey("frosted_top_bar"),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                headerSurface.withValues(alpha: topAlpha),
-                headerSurface.withValues(alpha: bottomAlpha),
-              ],
-            ),
-            border: Border(
-              bottom: BorderSide(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.22),
-                width: 0.5,
-              ),
-            ),
-          ),
-          padding: PageHeaderLayout.largeTitleTopBarPadding,
-          child: _TopBarContent(
-            title: title,
-            onProfilePressed: onProfilePressed,
-            profileInitials: profileInitials,
-            profileImageUrl: profileImageUrl,
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Padding(
+    key: const ValueKey("frosted_top_bar"),
+    padding: PageHeaderLayout.largeTitleTopBarPadding,
+    child: _TopBarContent(
+      title: title,
+      onProfilePressed: onProfilePressed,
+      profileInitials: profileInitials,
+      profileImageUrl: profileImageUrl,
+    ),
+  );
 
   @override
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {

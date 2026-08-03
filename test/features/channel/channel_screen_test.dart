@@ -48,7 +48,7 @@ void main() {
       tester,
       header: find.ancestor(
         of: find.byKey(const ValueKey("channel_back_button")),
-        matching: find.byType(ClipRect),
+        matching: find.byKey(const ValueKey("scroll_reactive_header_clip")),
       ),
       content: find.byKey(const ValueKey("channel_header_card")),
     );
