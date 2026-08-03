@@ -16,6 +16,7 @@ import "package:flow/features/settings/settings_screen.dart";
 import "package:flow/shared/external_url_opener.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/widgets/app_bottom_nav.dart";
+import "package:flow/shared/widgets/scroll_reactive_chrome.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
@@ -90,7 +91,8 @@ class FlowTabsScreen extends StatefulWidget {
   }
 }
 
-class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObserver {
+class _FlowTabsScreenState extends State<FlowTabsScreen>
+    with WidgetsBindingObserver, TickerProviderStateMixin {
   static const _topLevelRefreshInterval = Duration(seconds: 30);
 
   final _followingNavigatorKey = GlobalKey<NavigatorState>();
@@ -108,6 +110,9 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
   late final _TabNavigatorObserver _browseNavigatorObserver;
   late final _TabNavigatorObserver _settingsNavigatorObserver;
   late final ValueNotifier<double> _tabBackProgress;
+  late final AnimationController _footerSlideProgress;
+  double _footerExtent = AppBottomNav.contentHeight;
+  bool _isFooterHidden = false;
   Timer? _topLevelRefreshTimer;
   Future<void>? _topLevelRefresh;
   bool _topLevelRefreshQueued = false;
@@ -157,6 +162,10 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
     _browseNavigatorObserver = _TabNavigatorObserver(_handleTabNavigatorChanged);
     _settingsNavigatorObserver = _TabNavigatorObserver(_handleTabNavigatorChanged);
     _tabBackProgress = ValueNotifier(0);
+    _footerSlideProgress = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 180),
+    );
     final lifecycleState = WidgetsBinding.instance.lifecycleState;
     _appIsResumed = lifecycleState == null || lifecycleState == AppLifecycleState.resumed;
     WidgetsBinding.instance.addObserver(this);
@@ -324,6 +333,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
       return;
     }
 
+    _revealFooter();
     setState(() {
       _visitedRoutes.add(nextRoute);
     });
@@ -339,6 +349,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
     WidgetsBinding.instance.removeObserver(this);
     _topLevelRefreshTimer?.cancel();
     _tabBackProgress.dispose();
+    _footerSlideProgress.dispose();
     super.dispose();
   }
 
@@ -440,89 +451,142 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
     return _buildTabs(context);
   }
 
-  Widget _buildTabs(BuildContext context) => Scaffold(
-    extendBody: true,
-    backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-    body: PopScope<void>(
-      canPop: _tabsStore.currentRoute == FlowRoutes.following && !_activeNavigatorCanPop(),
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) {
-          return;
-        }
-        unawaited(_handleBackNavigation());
-      },
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          _buildTabSlot(
-            routeName: FlowRoutes.following,
-            child: _buildTabNavigator(
-              routeName: FlowRoutes.following,
-              navigatorKey: _followingNavigatorKey,
-              observers: [
-                ...widget.navigatorObservers,
-                _followingNavigatorObserver,
-              ],
-              rootBuilder: (_) => FollowingScreen(
-                authController: _authController,
-                apiCache: _apiCache,
-                followingStore: _followingStore,
-                browseStore: _browseStore,
-                openTwitchLogin: widget.openTwitchLogin,
-                onMeRequested: _handleMeRequested,
-                bottomNavigationBar: const SizedBox.shrink(),
-                periodicRefreshInterval: null,
-              ),
-            ),
-          ),
-          _buildTabSlot(
-            routeName: FlowRoutes.browse,
-            child: _buildTabNavigator(
-              routeName: FlowRoutes.browse,
-              navigatorKey: _browseNavigatorKey,
-              observers: [_browseNavigatorObserver],
-              rootBuilder: (_) => Observer(
-                builder: (_) => BrowseScreen(
-                  authController: _authController,
-                  apiCache: _apiCache,
-                  browseStore: _browseStore,
-                  preferences: _preferences,
-                  showLiveChannelsSection: _followingStore.isLoggedIn,
-                  bottomNavigationBar: const SizedBox.shrink(),
-                  periodicRefreshInterval: null,
+  Widget _buildTabs(BuildContext context) {
+    _footerExtent = AppBottomNav.contentHeight + MediaQuery.paddingOf(context).bottom;
+
+    return NotificationListener<ScrollReactiveHeaderProgressNotification>(
+      onNotification: _handleHeaderProgressNotification,
+      child: Scaffold(
+        extendBody: true,
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        body: PopScope<void>(
+          canPop: _tabsStore.currentRoute == FlowRoutes.following && !_activeNavigatorCanPop(),
+          onPopInvokedWithResult: (didPop, _) {
+            if (didPop) {
+              return;
+            }
+            unawaited(_handleBackNavigation());
+          },
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              _buildTabSlot(
+                routeName: FlowRoutes.following,
+                child: _buildTabNavigator(
+                  routeName: FlowRoutes.following,
+                  navigatorKey: _followingNavigatorKey,
+                  observers: [
+                    ...widget.navigatorObservers,
+                    _followingNavigatorObserver,
+                  ],
+                  rootBuilder: (_) => FollowingScreen(
+                    authController: _authController,
+                    apiCache: _apiCache,
+                    followingStore: _followingStore,
+                    browseStore: _browseStore,
+                    openTwitchLogin: widget.openTwitchLogin,
+                    onMeRequested: _handleMeRequested,
+                    bottomNavigationBar: const SizedBox.shrink(),
+                    periodicRefreshInterval: null,
+                  ),
                 ),
               ),
-            ),
-          ),
-          _buildTabSlot(
-            routeName: FlowRoutes.settings,
-            child: _buildTabNavigator(
-              routeName: FlowRoutes.settings,
-              navigatorKey: _settingsNavigatorKey,
-              observers: [_settingsNavigatorObserver],
-              rootBuilder: (_) => Observer(
-                builder: (_) => SettingsScreen(
-                  settingsStore: _settingsStore,
-                  openExternalUrl: widget.openExternalUrl,
-                  twitchAccount: _followingStore.profileUser,
-                  onSwitchTwitchAccount: _switchTwitchAccount,
-                  onSignOutTwitch: _signOutFromSettings,
-                  bottomNavigationBar: const SizedBox.shrink(),
+              _buildTabSlot(
+                routeName: FlowRoutes.browse,
+                child: _buildTabNavigator(
+                  routeName: FlowRoutes.browse,
+                  navigatorKey: _browseNavigatorKey,
+                  observers: [_browseNavigatorObserver],
+                  rootBuilder: (_) => Observer(
+                    builder: (_) => BrowseScreen(
+                      authController: _authController,
+                      apiCache: _apiCache,
+                      browseStore: _browseStore,
+                      preferences: _preferences,
+                      showLiveChannelsSection: _followingStore.isLoggedIn,
+                      bottomNavigationBar: const SizedBox.shrink(),
+                      periodicRefreshInterval: null,
+                    ),
+                  ),
                 ),
               ),
+              _buildTabSlot(
+                routeName: FlowRoutes.settings,
+                child: _buildTabNavigator(
+                  routeName: FlowRoutes.settings,
+                  navigatorKey: _settingsNavigatorKey,
+                  observers: [_settingsNavigatorObserver],
+                  rootBuilder: (_) => Observer(
+                    builder: (_) => SettingsScreen(
+                      settingsStore: _settingsStore,
+                      openExternalUrl: widget.openExternalUrl,
+                      twitchAccount: _followingStore.profileUser,
+                      onSwitchTwitchAccount: _switchTwitchAccount,
+                      onSignOutTwitch: _signOutFromSettings,
+                      bottomNavigationBar: const SizedBox.shrink(),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        bottomNavigationBar: AnimatedBuilder(
+          animation: _footerSlideProgress,
+          child: Observer(
+            builder: (_) => AppBottomNav(
+              currentRoute: _tabsStore.currentRoute,
+              onRouteSelected: _selectRoute,
+              showLiveChannels: !_followingStore.isLoggedIn,
             ),
           ),
-        ],
+          builder: (context, child) {
+            final isHidden = _footerSlideProgress.value >= 0.999;
+            return IgnorePointer(
+              ignoring: isHidden,
+              child: ExcludeSemantics(
+                excluding: isHidden,
+                child: Transform.translate(
+                  key: const ValueKey("scroll_reactive_footer"),
+                  offset: Offset(0, _footerExtent * _footerSlideProgress.value),
+                  child: child,
+                ),
+              ),
+            );
+          },
+        ),
       ),
-    ),
-    bottomNavigationBar: Observer(
-      builder: (_) => AppBottomNav(
-        currentRoute: _tabsStore.currentRoute,
-        onRouteSelected: _selectRoute,
-        showLiveChannels: !_followingStore.isLoggedIn,
+    );
+  }
+
+  bool _handleHeaderProgressNotification(
+    ScrollReactiveHeaderProgressNotification notification,
+  ) {
+    const hideThreshold = 0.52;
+    const revealThreshold = 0.48;
+    if (!_isFooterHidden && notification.hiddenFraction >= hideThreshold) {
+      _setFooterHidden(true);
+    } else if (_isFooterHidden && notification.hiddenFraction <= revealThreshold) {
+      _setFooterHidden(false);
+    }
+    return false;
+  }
+
+  void _setFooterHidden(bool isHidden) {
+    if (_isFooterHidden == isHidden) {
+      return;
+    }
+    _isFooterHidden = isHidden;
+    unawaited(
+      _footerSlideProgress.animateTo(
+        isHidden ? 1 : 0,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOutCubic,
       ),
-    ),
-  );
+    );
+  }
+
+  void _revealFooter() => _setFooterHidden(false);
 
   Widget _buildTabSlot({
     required String routeName,
@@ -682,6 +746,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
     if (!mounted) {
       return;
     }
+    _revealFooter();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) {
         return;

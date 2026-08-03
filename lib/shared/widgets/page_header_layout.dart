@@ -16,21 +16,21 @@ abstract final class PageHeaderLayout {
     AppSpacing.lg,
     AppSpacing.lg,
     AppSpacing.lg,
-    AppSpacing.lg,
+    AppSpacing.lg + 0.5,
   );
 
   static const backButtonTopBarPadding = EdgeInsets.fromLTRB(
     AppSpacing.lg,
     AppSpacing.lg,
     AppSpacing.lg,
-    AppSpacing.lg,
+    AppSpacing.lg + 0.5,
   );
 
   static const settingsTopBarPadding = EdgeInsets.fromLTRB(
     AppSpacing.lg,
     AppSpacing.lg,
     AppSpacing.lg,
-    AppSpacing.xl,
+    AppSpacing.xl + 0.5,
   );
 
   static EdgeInsets scrollPadding({

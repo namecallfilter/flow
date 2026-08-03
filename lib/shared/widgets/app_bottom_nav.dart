@@ -14,6 +14,8 @@ class AppBottomNav extends StatelessWidget {
     this.showLiveChannels = false,
   });
 
+  static const contentHeight = 60.0;
+
   final String currentRoute;
   final ValueChanged<String>? onRouteSelected;
   final bool showLiveChannels;
@@ -49,7 +51,7 @@ class AppBottomNav extends StatelessWidget {
           child: SafeArea(
             top: false,
             child: SizedBox(
-              height: 60,
+              height: contentHeight,
               child: Row(
                 children: [
                   _BottomNavItem(

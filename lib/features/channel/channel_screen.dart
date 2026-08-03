@@ -1,6 +1,5 @@
 import "dart:async";
 import "dart:math" as math;
-import "dart:ui";
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
@@ -13,6 +12,7 @@ import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flow/shared/widgets/pull_to_refresh.dart";
+import "package:flow/shared/widgets/scroll_reactive_chrome.dart";
 import "package:flow/shared/widgets/section_header.dart";
 import "package:flow/shared/widgets/skeleton.dart";
 import "package:flutter/foundation.dart";
@@ -143,99 +143,94 @@ class _ChannelScreenState extends State<ChannelScreen> {
       final channel = _store.channel;
       final livePlayerChannel = _livePlayerChannel(channel, widget.initialChannel);
       final liveStream = channel?.liveStream;
+      final topSafeAreaInset = ScrollReactiveChrome.safeAreaInsetsOf(context).top;
       final bottomScrollPadding = 24 + MediaQuery.of(context).padding.bottom;
 
       return Scaffold(
         key: ValueKey("channel_page_${widget.initialChannel.login}"),
         backgroundColor: theme.scaffoldBackgroundColor,
-        body: SafeArea(
-          bottom: false,
+        body: ScrollReactiveChrome(
+          scrollController: _scrollController,
+          header: const _ChannelTopBar(),
           child: LayoutBuilder(
-            builder: (context, constraints) => Stack(
-              children: [
-                FlowPullToRefresh(
-                  scrollController: _scrollController,
-                  onRefresh: _refresh,
-                  indicatorStartTop: PageHeaderLayout.backButtonRefreshIndicatorStartTop,
-                  indicatorMaxTravel: 52,
-                  child: ListView(
-                    controller: _scrollController,
-                    physics: const AlwaysScrollableScrollPhysics(
-                      parent: ClampingScrollPhysics(),
+            builder: (context, constraints) => FlowPullToRefresh(
+              scrollController: _scrollController,
+              onRefresh: _refresh,
+              indicatorStartTop:
+                  PageHeaderLayout.backButtonRefreshIndicatorStartTop + topSafeAreaInset,
+              indicatorMaxTravel: 52,
+              child: ListView(
+                controller: _scrollController,
+                physics: const AlwaysScrollableScrollPhysics(
+                  parent: ClampingScrollPhysics(),
+                ),
+                padding: PageHeaderLayout.scrollPadding(
+                  top: PageHeaderLayout.backButtonContentTopPadding + topSafeAreaInset,
+                  bottom: bottomScrollPadding,
+                ),
+                children: [
+                  if (_store.isInitialLoading)
+                    _ChannelSkeleton(
+                      viewportHeight: constraints.maxHeight - topSafeAreaInset,
+                    )
+                  else if (_store.errorMessage != null && channel == null)
+                    _StatusMessage(message: _store.errorMessage!)
+                  else ...[
+                    _ChannelHeader(
+                      channel: channel,
+                      initialChannel: widget.initialChannel,
+                      onProfileTap: livePlayerChannel == null
+                          ? null
+                          : () => _openLiveStream(livePlayerChannel),
+                      onCategoryTap:
+                          liveStream == null ||
+                              liveStream.categoryId.trim().isEmpty ||
+                              liveStream.category.trim().isEmpty
+                          ? null
+                          : () => _openCategory(
+                              id: liveStream.categoryId,
+                              name: liveStream.category,
+                            ),
                     ),
-                    padding: PageHeaderLayout.scrollPadding(
-                      top: PageHeaderLayout.backButtonContentTopPadding,
-                      bottom: bottomScrollPadding,
-                    ),
-                    children: [
-                      if (_store.isInitialLoading)
-                        _ChannelSkeleton(viewportHeight: constraints.maxHeight)
-                      else if (_store.errorMessage != null && channel == null)
-                        _StatusMessage(message: _store.errorMessage!)
-                      else ...[
-                        _ChannelHeader(
-                          channel: channel,
-                          initialChannel: widget.initialChannel,
-                          onProfileTap: livePlayerChannel == null
-                              ? null
-                              : () => _openLiveStream(livePlayerChannel),
+                    const SizedBox(height: AppSpacing.xxl),
+                    const SectionHeader(title: "Past broadcasts"),
+                    const SizedBox(height: AppSpacing.sm),
+                    if (channel == null || channel.pastBroadcasts.isEmpty)
+                      const _StatusMessage(message: "No past broadcasts.")
+                    else ...[
+                      for (var index = 0; index < channel.pastBroadcasts.length; index++)
+                        _PastBroadcastCard(
+                          broadcast: channel.pastBroadcasts[index],
+                          isLive:
+                              index == 0 &&
+                              _isLivePastBroadcast(
+                                channel.liveStream,
+                                channel.pastBroadcasts[index],
+                              ),
                           onCategoryTap:
-                              liveStream == null ||
-                                  liveStream.categoryId.trim().isEmpty ||
-                                  liveStream.category.trim().isEmpty
+                              channel.pastBroadcasts[index].categoryId.trim().isEmpty ||
+                                  channel.pastBroadcasts[index].category.trim().isEmpty
                               ? null
                               : () => _openCategory(
-                                  id: liveStream.categoryId,
-                                  name: liveStream.category,
+                                  id: channel.pastBroadcasts[index].categoryId,
+                                  name: channel.pastBroadcasts[index].category,
                                 ),
                         ),
-                        const SizedBox(height: AppSpacing.xxl),
-                        const SectionHeader(title: "Past broadcasts"),
+                      if (_store.pastBroadcastsError != null)
+                        _StatusMessage(message: _store.pastBroadcastsError!)
+                      else if (_store.isLoadingPastBroadcasts) ...[
                         const SizedBox(height: AppSpacing.sm),
-                        if (channel == null || channel.pastBroadcasts.isEmpty)
-                          const _StatusMessage(message: "No past broadcasts.")
-                        else ...[
-                          for (var index = 0; index < channel.pastBroadcasts.length; index++)
-                            _PastBroadcastCard(
-                              broadcast: channel.pastBroadcasts[index],
-                              isLive:
-                                  index == 0 &&
-                                  _isLivePastBroadcast(
-                                    channel.liveStream,
-                                    channel.pastBroadcasts[index],
-                                  ),
-                              onCategoryTap:
-                                  channel.pastBroadcasts[index].categoryId.trim().isEmpty ||
-                                      channel.pastBroadcasts[index].category.trim().isEmpty
-                                  ? null
-                                  : () => _openCategory(
-                                      id: channel.pastBroadcasts[index].categoryId,
-                                      name: channel.pastBroadcasts[index].category,
-                                    ),
-                            ),
-                          if (_store.pastBroadcastsError != null)
-                            _StatusMessage(message: _store.pastBroadcastsError!)
-                          else if (_store.isLoadingPastBroadcasts) ...[
-                            const SizedBox(height: AppSpacing.sm),
-                            const Center(
-                              child: SizedBox.square(
-                                dimension: 22,
-                                child: CircularProgressIndicator(strokeWidth: 2.4),
-                              ),
-                            ),
-                          ],
-                        ],
+                        const Center(
+                          child: SizedBox.square(
+                            dimension: 22,
+                            child: CircularProgressIndicator(strokeWidth: 2.4),
+                          ),
+                        ),
                       ],
                     ],
-                  ),
-                ),
-                const Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  child: _ChannelTopBar(),
-                ),
-              ],
+                  ],
+                ],
+              ),
             ),
           ),
         ),
@@ -500,55 +495,27 @@ class _ChannelTopBar extends StatelessWidget {
   const _ChannelTopBar();
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final headerSurface = theme.scaffoldBackgroundColor;
-    final topAlpha = theme.brightness == Brightness.dark ? 0.92 : 0.94;
-    final bottomAlpha = theme.brightness == Brightness.dark ? 0.30 : 0.42;
-
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                headerSurface.withValues(alpha: topAlpha),
-                headerSurface.withValues(alpha: bottomAlpha),
-              ],
-            ),
-            border: Border(
-              bottom: BorderSide(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.22),
-                width: 0.5,
-              ),
-            ),
-          ),
-          padding: PageHeaderLayout.backButtonTopBarPadding,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                width: 40,
-                height: 32,
-                child: IconButton(
-                  key: const ValueKey("channel_back_button"),
-                  tooltip: "Back",
-                  onPressed: Navigator.of(context).maybePop,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints.tightFor(width: 40, height: 32),
-                  alignment: Alignment.centerLeft,
-                  icon: Icon(Icons.adaptive.arrow_back),
-                ),
-              ),
-            ],
+  Widget build(BuildContext context) => Padding(
+    padding: PageHeaderLayout.backButtonTopBarPadding,
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 40,
+          height: 32,
+          child: IconButton(
+            key: const ValueKey("channel_back_button"),
+            tooltip: "Back",
+            onPressed: Navigator.of(context).maybePop,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints.tightFor(width: 40, height: 32),
+            alignment: Alignment.centerLeft,
+            icon: Icon(Icons.adaptive.arrow_back),
           ),
         ),
-      ),
-    );
-  }
+      ],
+    ),
+  );
 }
 
 class _ChannelHeader extends StatelessWidget {

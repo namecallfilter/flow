@@ -1,6 +1,5 @@
 import "dart:async";
 import "dart:math" as math;
-import "dart:ui";
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
@@ -22,6 +21,7 @@ import "package:flow/shared/widgets/avatar_ring.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flow/shared/widgets/page_header_title.dart";
 import "package:flow/shared/widgets/pull_to_refresh.dart";
+import "package:flow/shared/widgets/scroll_reactive_chrome.dart";
 import "package:flow/shared/widgets/skeleton.dart";
 import "package:flutter/cupertino.dart";
 import "package:flutter/foundation.dart";
@@ -269,7 +269,8 @@ class _BrowseScreenState extends State<BrowseScreen> {
     builder: (_) {
       final theme = Theme.of(context);
       final selectedSection = _visibleSection;
-      const topScrollPadding = 140.0;
+      final topSafeAreaInset = ScrollReactiveChrome.safeAreaInsetsOf(context).top;
+      final topScrollPadding = 140 + topSafeAreaInset;
       const bottomScrollPadding = 114.0;
 
       return Scaffold(
@@ -281,81 +282,76 @@ class _BrowseScreenState extends State<BrowseScreen> {
               currentRoute: FlowRoutes.browse,
               showLiveChannels: !widget.showLiveChannelsSection,
             ),
-        body: SafeArea(
-          bottom: false,
-          child: Stack(
-            children: [
-              FlowPullToRefresh(
-                scrollController: _scrollController,
-                onRefresh: _refreshActiveSection,
-                indicatorStartTop: topScrollPadding + 16,
-                indicatorMaxTravel: 72,
-                periodicRefreshInterval: widget.periodicRefreshInterval,
-                child: ListView(
-                  controller: _scrollController,
-                  physics: const AlwaysScrollableScrollPhysics(
-                    parent: ClampingScrollPhysics(),
-                  ),
-                  padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.lg,
-                    topScrollPadding,
-                    AppSpacing.lg,
-                    0,
-                  ).copyWith(bottom: bottomScrollPadding),
-                  children: [
-                    if (widget.showLiveChannelsSection) ...[
-                      _BrowseSectionSelector(
-                        selectedSection: selectedSection,
-                        onSectionSelected: _selectSection,
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                    ],
-                    Offstage(
-                      key: const ValueKey("browse_categories_section"),
-                      offstage: selectedSection != BrowseSection.categories,
-                      child: _RetainedBrowseSection(
-                        isLoading: _store.isLoadingCategories,
-                        hasItems: _store.categories.isNotEmpty,
-                        errorMessage: _store.categoriesError,
-                        loadingSkeleton: const _CategoryGridSkeleton(),
-                        child: _CategoryGrid(
-                          key: const ValueKey("browse_categories_content"),
-                          categories: _store.categories,
-                          onCategorySelected: _openCategory,
-                        ),
-                      ),
+        body: NotificationListener<ScrollNotification>(
+          onNotification: (_) => _isRestoringScrollOffset,
+          child: ScrollReactiveChrome(
+            scrollController: _scrollController,
+            ignoreScrollUpdates: () => _isRestoringScrollOffset,
+            header: _BrowseTopBar(
+              onSearchPressed: _openSearch,
+            ),
+            child: FlowPullToRefresh(
+              scrollController: _scrollController,
+              onRefresh: _refreshActiveSection,
+              indicatorStartTop: topScrollPadding + 16,
+              indicatorMaxTravel: 72,
+              periodicRefreshInterval: widget.periodicRefreshInterval,
+              child: ListView(
+                controller: _scrollController,
+                physics: const AlwaysScrollableScrollPhysics(
+                  parent: ClampingScrollPhysics(),
+                ),
+                padding: EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  topScrollPadding,
+                  AppSpacing.lg,
+                  0,
+                ).copyWith(bottom: bottomScrollPadding),
+                children: [
+                  if (widget.showLiveChannelsSection) ...[
+                    _BrowseSectionSelector(
+                      selectedSection: selectedSection,
+                      onSectionSelected: _selectSection,
                     ),
-                    Offstage(
-                      key: const ValueKey("browse_live_channels_section"),
-                      offstage: selectedSection != BrowseSection.liveChannels,
-                      child: _RetainedBrowseSection(
-                        isLoading: _store.isLoadingLiveChannels,
-                        hasItems: _store.liveChannels.isNotEmpty,
-                        errorMessage: _store.liveChannelsError,
-                        loadingSkeleton: const _StreamListSkeleton(
-                          key: ValueKey("browse_live_channels_skeleton"),
-                          semanticLabel: "Loading live channels",
-                        ),
-                        child: _LiveChannelsList(
-                          key: const ValueKey("browse_live_channels_content"),
-                          channels: _store.liveChannels,
-                          onChannelSelected: _openLiveChannel,
-                          onStreamSelected: _openPlayer,
-                        ),
-                      ),
-                    ),
+                    const SizedBox(height: AppSpacing.md),
                   ],
-                ),
+                  Offstage(
+                    key: const ValueKey("browse_categories_section"),
+                    offstage: selectedSection != BrowseSection.categories,
+                    child: _RetainedBrowseSection(
+                      isLoading: _store.isLoadingCategories,
+                      hasItems: _store.categories.isNotEmpty,
+                      errorMessage: _store.categoriesError,
+                      loadingSkeleton: const _CategoryGridSkeleton(),
+                      child: _CategoryGrid(
+                        key: const ValueKey("browse_categories_content"),
+                        categories: _store.categories,
+                        onCategorySelected: _openCategory,
+                      ),
+                    ),
+                  ),
+                  Offstage(
+                    key: const ValueKey("browse_live_channels_section"),
+                    offstage: selectedSection != BrowseSection.liveChannels,
+                    child: _RetainedBrowseSection(
+                      isLoading: _store.isLoadingLiveChannels,
+                      hasItems: _store.liveChannels.isNotEmpty,
+                      errorMessage: _store.liveChannelsError,
+                      loadingSkeleton: const _StreamListSkeleton(
+                        key: ValueKey("browse_live_channels_skeleton"),
+                        semanticLabel: "Loading live channels",
+                      ),
+                      child: _LiveChannelsList(
+                        key: const ValueKey("browse_live_channels_content"),
+                        channels: _store.liveChannels,
+                        onChannelSelected: _openLiveChannel,
+                        onStreamSelected: _openPlayer,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: _BrowseTopBar(
-                  onSearchPressed: _openSearch,
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       );
@@ -392,6 +388,7 @@ class BrowseSearchScreen extends StatefulWidget {
 
 class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
   final TextEditingController _searchController = TextEditingController();
+  final ScrollController _scrollController = ScrollController(keepScrollOffset: false);
   final FocusNode _focusNode = FocusNode();
   Timer? _debounceTimer;
   late final BrowseSearchStore _store;
@@ -423,6 +420,7 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
   void dispose() {
     _debounceTimer?.cancel();
     _searchController.dispose();
+    _scrollController.dispose();
     _focusNode.dispose();
     super.dispose();
   }
@@ -470,47 +468,40 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
     builder: (_) {
       final theme = Theme.of(context);
       final query = _searchController.text.trim();
-      const topScrollPadding = PageHeaderLayout.searchContentTopPadding;
+      final topSafeAreaInset = ScrollReactiveChrome.safeAreaInsetsOf(context).top;
+      final topScrollPadding = PageHeaderLayout.searchContentTopPadding + topSafeAreaInset;
 
       return Scaffold(
         key: const ValueKey("browse_search_page"),
         backgroundColor: theme.scaffoldBackgroundColor,
-        body: SafeArea(
-          bottom: false,
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: query.isEmpty
-                    ? _SearchHistoryView(
-                        history: _store.searchHistory,
-                        topPadding: topScrollPadding,
-                        onHistorySelected: _searchFromHistory,
-                        onClearHistory: _clearSearchHistory,
-                      )
-                    : _SearchResults(
-                        channels: _store.channels,
-                        categories: _store.categories,
-                        errorMessage: _store.errorMessage,
-                        isSearching: _isDebouncing || _store.isSearching,
-                        topPadding: topScrollPadding,
-                        onChannelSelected: _openChannel,
-                        onStreamSelected: _openPlayer,
-                        onCategorySelected: _openCategory,
-                      ),
-              ),
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: _SearchPageTopBar(
-                  controller: _searchController,
-                  focusNode: _focusNode,
-                  onChanged: _handleQueryChanged,
-                  onClear: _clearSearch,
-                ),
-              ),
-            ],
+        body: ScrollReactiveChrome(
+          scrollController: _scrollController,
+          header: _SearchPageTopBar(
+            controller: _searchController,
+            focusNode: _focusNode,
+            onChanged: _handleQueryChanged,
+            onClear: _clearSearch,
           ),
+          child: query.isEmpty
+              ? _SearchHistoryView(
+                  scrollController: _scrollController,
+                  history: _store.searchHistory,
+                  topPadding: topScrollPadding,
+                  topSafeAreaInset: topSafeAreaInset,
+                  onHistorySelected: _searchFromHistory,
+                  onClearHistory: _clearSearchHistory,
+                )
+              : _SearchResults(
+                  scrollController: _scrollController,
+                  channels: _store.channels,
+                  categories: _store.categories,
+                  errorMessage: _store.errorMessage,
+                  isSearching: _isDebouncing || _store.isSearching,
+                  topPadding: topScrollPadding,
+                  onChannelSelected: _openChannel,
+                  onStreamSelected: _openPlayer,
+                  onCategorySelected: _openCategory,
+                ),
         ),
       );
     },
@@ -587,84 +578,54 @@ class _SearchPageTopBar extends StatelessWidget {
   final VoidCallback onClear;
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final headerSurface = theme.scaffoldBackgroundColor;
-    final topAlpha = theme.brightness == Brightness.dark ? 0.92 : 0.94;
-    final bottomAlpha = theme.brightness == Brightness.dark ? 0.30 : 0.42;
-
-    return ClipRect(
-      key: const ValueKey("browse_search_top_bar"),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                headerSurface.withValues(alpha: topAlpha),
-                headerSurface.withValues(alpha: bottomAlpha),
-              ],
-            ),
-            border: Border(
-              bottom: BorderSide(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.22),
-                width: 0.5,
+  Widget build(BuildContext context) => Padding(
+    key: const ValueKey("browse_search_top_bar"),
+    padding: const EdgeInsets.fromLTRB(
+      AppSpacing.sm,
+      AppSpacing.md,
+      AppSpacing.lg,
+      AppSpacing.md,
+    ),
+    child: Row(
+      children: [
+        SizedBox.square(
+          dimension: PageHeaderLayout.searchFieldHeight,
+          child: IconButton(
+            tooltip: "Back",
+            onPressed: Navigator.of(context).pop,
+            icon: Icon(Icons.adaptive.arrow_back),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.xs),
+        Expanded(
+          child: SizedBox(
+            height: PageHeaderLayout.searchFieldHeight,
+            child: TextField(
+              key: const ValueKey("browse_search_page_field"),
+              controller: controller,
+              focusNode: focusNode,
+              autocorrect: false,
+              textAlignVertical: TextAlignVertical.center,
+              textInputAction: TextInputAction.search,
+              onChanged: onChanged,
+              decoration: InputDecoration(
+                hintText: "Search channels or categories",
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: controller.text.isEmpty
+                    ? null
+                    : IconButton(
+                        key: const ValueKey("browse_search_clear_button"),
+                        tooltip: "Clear search",
+                        onPressed: onClear,
+                        icon: const Icon(Icons.close),
+                      ),
               ),
             ),
           ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpacing.sm,
-              AppSpacing.md,
-              AppSpacing.lg,
-              AppSpacing.md,
-            ),
-            child: Row(
-              children: [
-                SizedBox.square(
-                  dimension: PageHeaderLayout.searchFieldHeight,
-                  child: IconButton(
-                    tooltip: "Back",
-                    onPressed: Navigator.of(context).pop,
-                    icon: Icon(Icons.adaptive.arrow_back),
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.xs),
-                Expanded(
-                  child: SizedBox(
-                    height: PageHeaderLayout.searchFieldHeight,
-                    child: TextField(
-                      key: const ValueKey("browse_search_page_field"),
-                      controller: controller,
-                      focusNode: focusNode,
-                      autocorrect: false,
-                      textAlignVertical: TextAlignVertical.center,
-                      textInputAction: TextInputAction.search,
-                      onChanged: onChanged,
-                      decoration: InputDecoration(
-                        hintText: "Search channels or categories",
-                        prefixIcon: const Icon(Icons.search),
-                        suffixIcon: controller.text.isEmpty
-                            ? null
-                            : IconButton(
-                                key: const ValueKey("browse_search_clear_button"),
-                                tooltip: "Clear search",
-                                onPressed: onClear,
-                                icon: const Icon(Icons.close),
-                              ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
         ),
-      ),
-    );
-  }
+      ],
+    ),
+  );
 
   @override
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
@@ -678,14 +639,18 @@ class _SearchPageTopBar extends StatelessWidget {
 
 class _SearchHistoryView extends StatelessWidget {
   const _SearchHistoryView({
+    required this.scrollController,
     required this.history,
     required this.topPadding,
+    required this.topSafeAreaInset,
     required this.onHistorySelected,
     required this.onClearHistory,
   });
 
+  final ScrollController scrollController;
   final List<String> history;
   final double topPadding;
+  final double topSafeAreaInset;
   final ValueChanged<String> onHistorySelected;
   final VoidCallback onClearHistory;
 
@@ -693,30 +658,34 @@ class _SearchHistoryView extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     if (history.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.history,
-              key: const ValueKey("browse_search_empty_history_icon"),
-              size: 42,
-              color: theme.colorScheme.onSurface.withValues(alpha: 0.42),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Text(
-              "No recent searches",
-              style: theme.textTheme.titleMedium?.copyWith(
-                color: theme.colorScheme.onSurface.withValues(alpha: 0.58),
-                fontWeight: FontWeight.w800,
+      return Padding(
+        padding: EdgeInsets.only(top: topSafeAreaInset),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.history,
+                key: const ValueKey("browse_search_empty_history_icon"),
+                size: 42,
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.42),
               ),
-            ),
-          ],
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                "No recent searches",
+                style: theme.textTheme.titleMedium?.copyWith(
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.58),
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
         ),
       );
     }
 
     return ListView(
+      controller: scrollController,
       padding: EdgeInsets.only(
         top: topPadding,
         left: AppSpacing.lg,
@@ -775,21 +744,28 @@ class _SearchHistoryView extends StatelessWidget {
   @override
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
-    properties.add(IterableProperty<String>("history", history));
-    properties.add(DoubleProperty("topPadding", topPadding));
-    properties.add(
-      ObjectFlagProperty<ValueChanged<String>>.has(
-        "onHistorySelected",
-        onHistorySelected,
-      ),
-    );
-    properties.add(ObjectFlagProperty<VoidCallback>.has("onClearHistory", onClearHistory));
+    properties
+      ..add(DiagnosticsProperty<ScrollController>("scrollController", scrollController))
+      ..add(IterableProperty<String>("history", history))
+      ..add(DoubleProperty("topPadding", topPadding))
+      ..add(DoubleProperty("topSafeAreaInset", topSafeAreaInset))
+      ..add(
+        ObjectFlagProperty<ValueChanged<String>>.has(
+          "onHistorySelected",
+          onHistorySelected,
+        ),
+      )
+      ..add(ObjectFlagProperty<VoidCallback>.has("onClearHistory", onClearHistory));
   }
 }
 
 class _SearchResultsSkeleton extends StatelessWidget {
-  const _SearchResultsSkeleton({required this.topPadding});
+  const _SearchResultsSkeleton({
+    required this.scrollController,
+    required this.topPadding,
+  });
 
+  final ScrollController scrollController;
   final double topPadding;
 
   @override
@@ -818,6 +794,7 @@ class _SearchResultsSkeleton extends StatelessWidget {
           key: const ValueKey("browse_search_skeleton"),
           label: "Loading search results",
           child: ListView(
+            controller: scrollController,
             padding: EdgeInsets.only(
               top: topPadding,
               left: AppSpacing.lg,
@@ -852,7 +829,9 @@ class _SearchResultsSkeleton extends StatelessWidget {
   @override
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
-    properties.add(DoubleProperty("topPadding", topPadding));
+    properties
+      ..add(DiagnosticsProperty<ScrollController>("scrollController", scrollController))
+      ..add(DoubleProperty("topPadding", topPadding));
   }
 }
 
@@ -958,6 +937,7 @@ class _SearchCategoryRowSkeleton extends StatelessWidget {
 
 class _SearchResults extends StatelessWidget {
   const _SearchResults({
+    required this.scrollController,
     required this.channels,
     required this.categories,
     required this.errorMessage,
@@ -968,6 +948,7 @@ class _SearchResults extends StatelessWidget {
     required this.onCategorySelected,
   });
 
+  final ScrollController scrollController;
   final List<TwitchSearchChannel> channels;
   final List<BrowseCategory> categories;
   final String? errorMessage;
@@ -980,7 +961,10 @@ class _SearchResults extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (isSearching) {
-      return _SearchResultsSkeleton(topPadding: topPadding);
+      return _SearchResultsSkeleton(
+        scrollController: scrollController,
+        topPadding: topPadding,
+      );
     }
 
     final error = errorMessage;
@@ -1025,6 +1009,7 @@ class _SearchResults extends StatelessWidget {
     ];
 
     return ListView(
+      controller: scrollController,
       padding: EdgeInsets.only(
         top: topPadding,
         left: AppSpacing.lg,
@@ -1038,29 +1023,31 @@ class _SearchResults extends StatelessWidget {
   @override
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
-    properties.add(IterableProperty<TwitchSearchChannel>("channels", channels));
-    properties.add(IterableProperty<BrowseCategory>("categories", categories));
-    properties.add(StringProperty("errorMessage", errorMessage));
-    properties.add(DiagnosticsProperty<bool>("isSearching", isSearching));
-    properties.add(DoubleProperty("topPadding", topPadding));
-    properties.add(
-      ObjectFlagProperty<ValueChanged<TwitchSearchChannel>>.has(
-        "onChannelSelected",
-        onChannelSelected,
-      ),
-    );
-    properties.add(
-      ObjectFlagProperty<ValueChanged<TwitchSearchChannel>>.has(
-        "onStreamSelected",
-        onStreamSelected,
-      ),
-    );
-    properties.add(
-      ObjectFlagProperty<ValueChanged<BrowseCategory>>.has(
-        "onCategorySelected",
-        onCategorySelected,
-      ),
-    );
+    properties
+      ..add(DiagnosticsProperty<ScrollController>("scrollController", scrollController))
+      ..add(IterableProperty<TwitchSearchChannel>("channels", channels))
+      ..add(IterableProperty<BrowseCategory>("categories", categories))
+      ..add(StringProperty("errorMessage", errorMessage))
+      ..add(DiagnosticsProperty<bool>("isSearching", isSearching))
+      ..add(DoubleProperty("topPadding", topPadding))
+      ..add(
+        ObjectFlagProperty<ValueChanged<TwitchSearchChannel>>.has(
+          "onChannelSelected",
+          onChannelSelected,
+        ),
+      )
+      ..add(
+        ObjectFlagProperty<ValueChanged<TwitchSearchChannel>>.has(
+          "onStreamSelected",
+          onStreamSelected,
+        ),
+      )
+      ..add(
+        ObjectFlagProperty<ValueChanged<BrowseCategory>>.has(
+          "onCategorySelected",
+          onCategorySelected,
+        ),
+      );
   }
 }
 
@@ -1362,68 +1349,61 @@ class _CategoryStreamsScreenState extends State<CategoryStreamsScreen> {
   Widget build(BuildContext context) => Observer(
     builder: (_) {
       final theme = Theme.of(context);
+      final topSafeAreaInset = ScrollReactiveChrome.safeAreaInsetsOf(context).top;
       final bottomScrollPadding = 24 + MediaQuery.of(context).padding.bottom;
 
       return Scaffold(
         key: ValueKey("category_streams_page_${widget.category.name}"),
         backgroundColor: theme.scaffoldBackgroundColor,
-        body: SafeArea(
-          bottom: false,
-          child: Stack(
-            children: [
-              FlowPullToRefresh(
-                scrollController: _scrollController,
-                onRefresh: () => _store.loadStreams(reset: true, refresh: true),
-                indicatorStartTop: PageHeaderLayout.backButtonRefreshIndicatorStartTop,
-                indicatorMaxTravel: 52,
-                child: ListView(
-                  controller: _scrollController,
-                  physics: const AlwaysScrollableScrollPhysics(
-                    parent: ClampingScrollPhysics(),
-                  ),
-                  padding: PageHeaderLayout.scrollPadding(
-                    top: PageHeaderLayout.backButtonContentTopPadding,
-                    bottom: bottomScrollPadding,
-                  ),
-                  children: [
-                    if (_store.isLoading && _store.channels.isEmpty)
-                      const _StreamListSkeleton(
-                        key: ValueKey("category_streams_skeleton"),
-                        semanticLabel: "Loading category streams",
-                        showCategories: false,
-                      )
-                    else if (_store.errorMessage != null)
-                      _StatusMessage(message: _store.errorMessage!)
-                    else if (_store.channels.isEmpty)
-                      _StatusMessage(
-                        message: "No live channels streaming ${widget.category.name}.",
-                      )
-                    else
-                      _LiveChannelsList(
-                        channels: _store.channels,
-                        onChannelSelected: _openLiveChannel,
-                        onStreamSelected: _openPlayer,
-                        showCategories: false,
-                      ),
-                    if (_store.isLoading && _store.channels.isNotEmpty) ...[
-                      const SizedBox(height: AppSpacing.md),
-                      const Center(
-                        child: SizedBox.square(
-                          dimension: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2.4),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
+        body: ScrollReactiveChrome(
+          scrollController: _scrollController,
+          header: _CategoryStreamsTopBar(category: widget.category),
+          child: FlowPullToRefresh(
+            scrollController: _scrollController,
+            onRefresh: () => _store.loadStreams(reset: true, refresh: true),
+            indicatorStartTop:
+                PageHeaderLayout.backButtonRefreshIndicatorStartTop + topSafeAreaInset,
+            indicatorMaxTravel: 52,
+            child: ListView(
+              controller: _scrollController,
+              physics: const AlwaysScrollableScrollPhysics(
+                parent: ClampingScrollPhysics(),
               ),
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: _CategoryStreamsTopBar(category: widget.category),
+              padding: PageHeaderLayout.scrollPadding(
+                top: PageHeaderLayout.backButtonContentTopPadding + topSafeAreaInset,
+                bottom: bottomScrollPadding,
               ),
-            ],
+              children: [
+                if (_store.isLoading && _store.channels.isEmpty)
+                  const _StreamListSkeleton(
+                    key: ValueKey("category_streams_skeleton"),
+                    semanticLabel: "Loading category streams",
+                    showCategories: false,
+                  )
+                else if (_store.errorMessage != null)
+                  _StatusMessage(message: _store.errorMessage!)
+                else if (_store.channels.isEmpty)
+                  _StatusMessage(
+                    message: "No live channels streaming ${widget.category.name}.",
+                  )
+                else
+                  _LiveChannelsList(
+                    channels: _store.channels,
+                    onChannelSelected: _openLiveChannel,
+                    onStreamSelected: _openPlayer,
+                    showCategories: false,
+                  ),
+                if (_store.isLoading && _store.channels.isNotEmpty) ...[
+                  const SizedBox(height: AppSpacing.md),
+                  const Center(
+                    child: SizedBox.square(
+                      dimension: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2.4),
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
         ),
       );
@@ -1437,63 +1417,35 @@ class _CategoryStreamsTopBar extends StatelessWidget {
   final BrowseCategory category;
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final headerSurface = theme.scaffoldBackgroundColor;
-    final topAlpha = theme.brightness == Brightness.dark ? 0.92 : 0.94;
-    final bottomAlpha = theme.brightness == Brightness.dark ? 0.30 : 0.42;
-
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                headerSurface.withValues(alpha: topAlpha),
-                headerSurface.withValues(alpha: bottomAlpha),
-              ],
-            ),
-            border: Border(
-              bottom: BorderSide(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.22),
-                width: 0.5,
-              ),
-            ),
-          ),
-          padding: PageHeaderLayout.backButtonTopBarPadding,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                width: 40,
-                height: PageHeaderTitle.fontSize * PageHeaderTitle.lineHeight,
-                child: IconButton(
-                  tooltip: "Back",
-                  onPressed: Navigator.of(context).pop,
-                  padding: EdgeInsets.zero,
-                  alignment: Alignment.centerLeft,
-                  icon: Icon(Icons.adaptive.arrow_back),
-                ),
-              ),
-              const SizedBox(width: AppSpacing.xs),
-              Expanded(
-                child: Align(
-                  alignment: Alignment.topLeft,
-                  child: PageHeaderTitle(
-                    key: ValueKey("category_streams_title_${category.name}"),
-                    title: category.name,
-                  ),
-                ),
-              ),
-            ],
+  Widget build(BuildContext context) => Padding(
+    padding: PageHeaderLayout.backButtonTopBarPadding,
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 40,
+          height: PageHeaderTitle.fontSize * PageHeaderTitle.lineHeight,
+          child: IconButton(
+            tooltip: "Back",
+            onPressed: Navigator.of(context).pop,
+            padding: EdgeInsets.zero,
+            alignment: Alignment.centerLeft,
+            icon: Icon(Icons.adaptive.arrow_back),
           ),
         ),
-      ),
-    );
-  }
+        const SizedBox(width: AppSpacing.xs),
+        Expanded(
+          child: Align(
+            alignment: Alignment.topLeft,
+            child: PageHeaderTitle(
+              key: ValueKey("category_streams_title_${category.name}"),
+              title: category.name,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 
   @override
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
@@ -1532,61 +1484,33 @@ class _BrowseTopBar extends StatelessWidget {
   final VoidCallback onSearchPressed;
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final headerSurface = theme.scaffoldBackgroundColor;
-    final topAlpha = theme.brightness == Brightness.dark ? 0.92 : 0.94;
-    final bottomAlpha = theme.brightness == Brightness.dark ? 0.30 : 0.42;
-
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                headerSurface.withValues(alpha: topAlpha),
-                headerSurface.withValues(alpha: bottomAlpha),
-              ],
-            ),
-            border: Border(
-              bottom: BorderSide(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.22),
-                width: 0.5,
-              ),
-            ),
-          ),
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.lg,
-            AppSpacing.lg,
-            AppSpacing.lg,
-            AppSpacing.xl,
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const PageHeaderTitle(
-                key: ValueKey("browse_title"),
-                title: "Browse",
-              ),
-              const SizedBox(height: AppSpacing.md),
-              TextField(
-                key: const ValueKey("browse_search_field"),
-                readOnly: true,
-                onTap: onSearchPressed,
-                decoration: const InputDecoration(
-                  hintText: "Search Twitch",
-                  prefixIcon: Icon(Icons.search),
-                ),
-              ),
-            ],
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(
+      AppSpacing.lg,
+      AppSpacing.lg,
+      AppSpacing.lg,
+      AppSpacing.xl + 0.5,
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const PageHeaderTitle(
+          key: ValueKey("browse_title"),
+          title: "Browse",
+        ),
+        const SizedBox(height: AppSpacing.md),
+        TextField(
+          key: const ValueKey("browse_search_field"),
+          readOnly: true,
+          onTap: onSearchPressed,
+          decoration: const InputDecoration(
+            hintText: "Search Twitch",
+            prefixIcon: Icon(Icons.search),
           ),
         ),
-      ),
-    );
-  }
+      ],
+    ),
+  );
 
   @override
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
@@ -1846,6 +1770,7 @@ class _CategoryGridSkeleton extends StatelessWidget {
         key: const ValueKey("browse_categories_skeleton"),
         label: "Loading categories",
         child: GridView.builder(
+          padding: EdgeInsets.zero,
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           itemCount: rowCount * 3,
@@ -1904,6 +1829,7 @@ class _CategoryGrid extends StatelessWidget {
 
     return GridView.builder(
       key: const ValueKey("browse_categories_grid"),
+      padding: EdgeInsets.zero,
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       itemCount: categories.length,

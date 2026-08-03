@@ -57,7 +57,7 @@ void main() {
       tester,
       header: find.ancestor(
         of: find.byKey(const ValueKey("settings_title")),
-        matching: find.byType(ClipRect),
+        matching: find.byKey(const ValueKey("scroll_reactive_header_clip")),
       ),
       content: find.byKey(const ValueKey("settings_theme_group")),
     );
