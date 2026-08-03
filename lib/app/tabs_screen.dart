@@ -171,6 +171,22 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
   }
 
   Future<void> _restoreInitialSession() async {
+    final sessionRestore = _followingStore.loadSavedConnection();
+    if (_authController.config.isConfigured) {
+      try {
+        final tokens = await _authController.readSavedTokens();
+        if (mounted &&
+            (tokens.accessToken?.isNotEmpty ?? false) &&
+            (tokens.webSessionToken?.trim().isNotEmpty ?? false)) {
+          setState(() {
+            _isStartupResolved = true;
+          });
+        }
+      } on Object catch (error) {
+        debugPrint("Couldn't inspect the saved Twitch session: $error");
+      }
+    }
+
     var isLoginOfferDismissed = false;
     try {
       isLoginOfferDismissed = await _preferences.readLoginOfferDismissed();
@@ -178,7 +194,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
       debugPrint("Couldn't read the login offer preference: $error");
     }
 
-    await _followingStore.loadSavedConnection();
+    await sessionRestore;
     if (!mounted) {
       return;
     }
@@ -487,7 +503,9 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
                   apiCache: _apiCache,
                   browseStore: _browseStore,
                   preferences: _preferences,
-                  showLiveChannelsSection: _followingStore.isLoggedIn,
+                  showLiveChannelsSection:
+                      _followingStore.isLoggedIn ||
+                      _followingStore.sessionStatus == TwitchSessionStatus.restoring,
                   bottomNavigationBar: const SizedBox.shrink(),
                   periodicRefreshInterval: null,
                 ),
@@ -519,7 +537,9 @@ class _FlowTabsScreenState extends State<FlowTabsScreen> with WidgetsBindingObse
       builder: (_) => AppBottomNav(
         currentRoute: _tabsStore.currentRoute,
         onRouteSelected: _selectRoute,
-        showLiveChannels: !_followingStore.isLoggedIn,
+        showLiveChannels:
+            !_followingStore.isLoggedIn &&
+            _followingStore.sessionStatus != TwitchSessionStatus.restoring,
       ),
     ),
   );

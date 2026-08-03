@@ -146,6 +146,54 @@ void main() {
     });
   }
 
+  testWidgets("shows the Following skeleton while a saved session restores", (tester) async {
+    final secureStore = _DelayedAccessTwitchStore()..webSessionToken = "gql-token-123";
+    final validationStarted = Completer<void>();
+    final validationRelease = Completer<void>();
+    final authController = _authController(
+      secureStore: secureStore,
+      validationStarted: validationStarted,
+      validationRelease: validationRelease.future,
+    );
+    final followingStore = FollowingStore(authController: authController);
+    final browseStore = BrowseStore(apiCache: _DelayedTopLevelBrowseCache())
+      ..categoriesLoaded = true
+      ..liveChannelsLoaded = true;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.light),
+        home: FlowTabsScreen(
+          followingStore: followingStore,
+          browseStore: browseStore,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey("startup_gate")), findsOneWidget);
+    expect(find.byKey(const ValueKey("following_skeleton")), findsNothing);
+
+    secureStore.accessTokenRead.complete("token-123");
+    await validationStarted.future;
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey("startup_gate")), findsNothing);
+    expect(find.byKey(const ValueKey("login_offer_screen")), findsNothing);
+    expect(find.byKey(const ValueKey("following_skeleton")), findsOneWidget);
+    expect(find.byKey(const ValueKey("bottom_nav_item_Following")), findsOneWidget);
+    expect(find.byKey(const ValueKey("bottom_nav_item_Live Channels")), findsNothing);
+
+    validationRelease.complete();
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey("following_skeleton")), findsNothing);
+    expect(find.byKey(const ValueKey("following_title")), findsOneWidget);
+    expect(followingStore.sessionStatus, TwitchSessionStatus.authenticated);
+    expect(followingStore.isLoggedIn, isTrue);
+  });
+
   testWidgets("dismisses the startup login offer after a resumed restore succeeds", (
     tester,
   ) async {
@@ -1128,6 +1176,8 @@ class _BackPlatformSpy {
 TwitchAuthController _authController({
   required _MemoryTwitchStore secureStore,
   _RequestObserver? onRequest,
+  Completer<void>? validationStarted,
+  Future<void>? validationRelease,
 }) => TwitchAuthController(
   config: const TwitchAuthConfig(clientId: "client-123"),
   secureStore: secureStore,
@@ -1135,15 +1185,27 @@ TwitchAuthController _authController({
     clientId: "client-123",
     accessToken: accessToken,
     gqlAccessToken: gqlAccessToken,
-    httpClient: _flowHttpClient(onRequest: onRequest),
+    httpClient: _flowHttpClient(
+      onRequest: onRequest,
+      validationStarted: validationStarted,
+      validationRelease: validationRelease,
+    ),
   ),
   cookieExtractor: const _StaticCookieExtractor(),
 );
 
-MockClient _flowHttpClient({_RequestObserver? onRequest}) => MockClient((request) async {
+MockClient _flowHttpClient({
+  _RequestObserver? onRequest,
+  Completer<void>? validationStarted,
+  Future<void>? validationRelease,
+}) => MockClient((request) async {
   onRequest?.call(request);
 
   if (request.url.host == "id.twitch.tv" && request.url.path == "/oauth2/validate") {
+    validationStarted?.complete();
+    if (validationRelease != null) {
+      await validationRelease;
+    }
     return _jsonResponse({"client_id": "client-123", "user_id": "user-123"});
   }
 
