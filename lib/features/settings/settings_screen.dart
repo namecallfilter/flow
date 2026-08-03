@@ -1,5 +1,4 @@
 import "dart:async";
-import "dart:ui";
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/app/app_settings_store.dart";
@@ -11,6 +10,7 @@ import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/widgets/app_bottom_nav.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flow/shared/widgets/page_header_title.dart";
+import "package:flow/shared/widgets/scroll_reactive_chrome.dart";
 import "package:flutter/cupertino.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
@@ -73,6 +73,7 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  final ScrollController _scrollController = ScrollController();
   late final AppSettingsStore _settingsStore;
   bool _settingsLoadFailed = false;
 
@@ -87,6 +88,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!_settingsStore.isLoaded) {
       unawaited(_loadSettings());
     }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadSettings() async {
@@ -231,22 +238,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
     builder: (_) {
       final theme = Theme.of(context);
       const bottomScrollPadding = PageHeaderLayout.bottomNavigationScrollPadding;
+      final topSafeAreaInset = ScrollReactiveChrome.safeAreaInsetsOf(context).top;
 
       return Scaffold(
         extendBody: true,
         backgroundColor: theme.scaffoldBackgroundColor,
         bottomNavigationBar:
             widget.bottomNavigationBar ?? const AppBottomNav(currentRoute: FlowRoutes.settings),
-        body: SafeArea(
-          bottom: false,
+        body: ScrollReactiveChrome(
+          scrollController: _scrollController,
+          header: const _SettingsTopBar(),
           child: Stack(
             children: [
               AbsorbPointer(
                 key: const ValueKey("settings_content_interaction_gate"),
                 absorbing: !_settingsStore.isLoaded,
                 child: ListView(
+                  controller: _scrollController,
                   padding: PageHeaderLayout.scrollPadding(
-                    top: PageHeaderLayout.settingsContentTopPadding,
+                    top: PageHeaderLayout.settingsContentTopPadding + topSafeAreaInset,
                     bottom: bottomScrollPadding,
                   ),
                   children: [
@@ -342,21 +352,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
               if (_settingsLoadFailed)
                 Positioned.fill(
-                  child: Center(
-                    child: FilledButton.icon(
-                      key: const ValueKey("settings_load_retry"),
-                      onPressed: _retrySettingsLoad,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text("Couldn't load settings. Retry"),
+                  child: Padding(
+                    padding: EdgeInsets.only(top: topSafeAreaInset),
+                    child: Center(
+                      child: FilledButton.icon(
+                        key: const ValueKey("settings_load_retry"),
+                        onPressed: _retrySettingsLoad,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text("Couldn't load settings. Retry"),
+                      ),
                     ),
                   ),
                 ),
-              const Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: _SettingsTopBar(),
-              ),
             ],
           ),
         ),
@@ -552,41 +559,13 @@ class _SettingsTopBar extends StatelessWidget {
   const _SettingsTopBar();
 
   @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final headerSurface = theme.scaffoldBackgroundColor;
-    final topAlpha = theme.brightness == Brightness.dark ? 0.92 : 0.94;
-    final bottomAlpha = theme.brightness == Brightness.dark ? 0.30 : 0.42;
-
-    return ClipRect(
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-        child: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                headerSurface.withValues(alpha: topAlpha),
-                headerSurface.withValues(alpha: bottomAlpha),
-              ],
-            ),
-            border: Border(
-              bottom: BorderSide(
-                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.22),
-                width: 0.5,
-              ),
-            ),
-          ),
-          padding: PageHeaderLayout.settingsTopBarPadding,
-          child: const PageHeaderTitle(
-            key: ValueKey("settings_title"),
-            title: "Settings",
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => const Padding(
+    padding: PageHeaderLayout.settingsTopBarPadding,
+    child: PageHeaderTitle(
+      key: ValueKey("settings_title"),
+      title: "Settings",
+    ),
+  );
 }
 
 class _SettingsGroup extends StatelessWidget {

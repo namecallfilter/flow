@@ -117,6 +117,39 @@ void main() {
     expect(find.byKey(const ValueKey("bottom_nav_item_Live Channels")), findsOneWidget);
   });
 
+  testWidgets("uses the same content gap for Categories and Live Channels", (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 1200);
+    tester.view.padding = const FakeViewPadding(top: 59);
+    tester.view.viewPadding = const FakeViewPadding(top: 59);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetPadding);
+    addTearDown(tester.view.resetViewPadding);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.light),
+        home: BrowseScreen(authController: _authController()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final selector = find.byKey(const ValueKey("browse_segmented_control"));
+    final categoryGap =
+        tester.getTopLeft(find.byKey(const ValueKey("browse_category_card_Just Chatting"))).dy -
+        tester.getBottomLeft(selector).dy;
+
+    await tester.tap(find.byKey(const ValueKey("browse_segment_live_channels")));
+    await tester.pumpAndSettle();
+
+    final liveGap =
+        tester.getTopLeft(find.byKey(const ValueKey("browse_live_channels"))).dy -
+        tester.getBottomLeft(selector).dy;
+    expect(categoryGap, closeTo(AppSpacing.md, 0.1));
+    expect(liveGap, closeTo(categoryGap, 0.1));
+  });
+
   testWidgets("matches stream skeleton geometry in Browse Live Channels", (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(390, 1200);
@@ -440,7 +473,7 @@ void main() {
       tester,
       header: find.ancestor(
         of: find.byKey(const ValueKey("browse_title")),
-        matching: find.byType(ClipRect),
+        matching: find.byKey(const ValueKey("scroll_reactive_header_clip")),
       ),
       content: find.byKey(const ValueKey("browse_segmented_control")),
     );
@@ -460,7 +493,7 @@ void main() {
       tester,
       header: find.ancestor(
         of: find.byKey(const ValueKey("category_streams_title_Just Chatting")),
-        matching: find.byType(ClipRect),
+        matching: find.byKey(const ValueKey("scroll_reactive_header_clip")),
       ),
       content: find.byKey(const ValueKey("browse_live_channels")),
     );

@@ -13,6 +13,8 @@ import "package:flow/app/theme.dart";
 import "package:flow/features/browse/browse_store.dart";
 import "package:flow/features/following/following_store.dart";
 import "package:flow/shared/preferences/preferences.dart";
+import "package:flow/shared/widgets/page_header_layout.dart";
+import "package:flutter/cupertino.dart";
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 import "package:flutter_test/flutter_test.dart";
@@ -621,6 +623,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Browse")));
     await tester.pumpAndSettle();
     expect(topCategoriesRequests, 1);
+    final onSectionChanged = tester
+        .widget<CupertinoSlidingSegmentedControl<BrowseSection>>(
+          find.byKey(const ValueKey("browse_segmented_control")),
+        )
+        .onValueChanged;
 
     await tester.tap(find.byKey(const ValueKey("browse_segment_live_channels")));
     await tester.pumpAndSettle();
@@ -630,6 +637,20 @@ void main() {
 
     expect(find.byKey(const ValueKey("browse_live_channels")), findsOneWidget);
     expect(find.text("NextStreamer"), findsOneWidget);
+    await tester.drag(find.byType(ListView), const Offset(0, 120));
+    await tester.pumpAndSettle();
+    final scrollController = tester.widget<ListView>(find.byType(ListView)).controller!;
+    final savedLiveOffset = scrollController.offset;
+    final footer = find.byKey(const ValueKey("app_bottom_nav_bar"));
+    final visibleFooterTop = tester.getTopLeft(footer).dy;
+
+    onSectionChanged(BrowseSection.categories);
+    await tester.pumpAndSettle();
+    onSectionChanged(BrowseSection.liveChannels);
+    await tester.pumpAndSettle();
+
+    expect(scrollController.offset, closeTo(savedLiveOffset, 0.1));
+    expect(tester.getTopLeft(footer).dy, closeTo(visibleFooterTop, 0.1));
 
     await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Following")));
     await tester.pumpAndSettle();
@@ -641,6 +662,125 @@ void main() {
     expect(topCategoriesRequests, 1);
     expect(topLiveStreamsRequests, 1);
     expect(followedLiveRequests, 1);
+  });
+
+  testWidgets("scroll-links the header while the footer transitions at its midpoint", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 800);
+    tester.view.devicePixelRatio = 1;
+    tester.view.padding = const FakeViewPadding(top: 44, bottom: 34);
+    tester.view.viewPadding = const FakeViewPadding(top: 44, bottom: 34);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPadding);
+    addTearDown(tester.view.resetViewPadding);
+    final secureStore = _MemoryTwitchStore()
+      ..accessToken = "token-123"
+      ..webSessionToken = "gql-token-123";
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.light),
+        home: FlowTabsScreen(
+          initialRoute: FlowRoutes.browse,
+          authController: _authController(secureStore: secureStore),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey("browse_segment_live_channels")));
+    await tester.pumpAndSettle();
+
+    final listView = find.ancestor(
+      of: find.byKey(const ValueKey("browse_live_channels_content")),
+      matching: find.byType(ListView),
+    );
+    final scrollController = tester.widget<ListView>(listView).controller!;
+    final header = find.ancestor(
+      of: find.byKey(const ValueKey("browse_title")),
+      matching: find.byKey(const ValueKey("scroll_reactive_header")),
+    );
+    final headerClip = find.ancestor(
+      of: find.byKey(const ValueKey("browse_title")),
+      matching: find.byKey(const ValueKey("scroll_reactive_header_clip")),
+    );
+    final headerTitle = find.byKey(const ValueKey("browse_title"));
+    final footer = find.byKey(const ValueKey("app_bottom_nav_bar"));
+    final headerMaterial =
+        tester
+                .widget<DecoratedBox>(
+                  find.byKey(const ValueKey("top_header_material_gradient")),
+                )
+                .decoration
+            as BoxDecoration;
+    final footerMaterial = tester.widget<DecoratedBox>(footer).decoration as BoxDecoration;
+    final headerTint = headerMaterial.gradient! as LinearGradient;
+    final footerTint = footerMaterial.gradient! as LinearGradient;
+    expect(
+      footerTint.colors,
+      orderedEquals([headerTint.colors[1], headerTint.colors[0]]),
+    );
+    final initialHeaderTop = tester.getTopLeft(headerTitle).dy;
+    final initialFooterTop = tester.getTopLeft(footer).dy;
+    final headerHeight = tester.getSize(header).height;
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey("browse_segmented_control"))).dy -
+          tester.getBottomLeft(headerClip).dy,
+      closeTo(PageHeaderLayout.headerContentGap, 0.1),
+    );
+    scrollController.jumpTo(headerHeight * 0.49);
+    await tester.pumpAndSettle();
+
+    expect(tester.getTopLeft(footer).dy, closeTo(initialFooterTop, 0.1));
+    expect(
+      tester.getTopLeft(headerTitle).dy - initialHeaderTop,
+      closeTo(-headerHeight * 0.49, 0.1),
+    );
+
+    scrollController.jumpTo(headerHeight * 0.53);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 90));
+
+    final footerHeight = tester.getSize(footer).height;
+    expect(
+      tester.getTopLeft(footer).dy - initialFooterTop,
+      allOf(greaterThan(0), lessThan(footerHeight)),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(footer).dy - initialFooterTop, closeTo(footerHeight, 0.1));
+    expect(
+      tester.getTopLeft(headerTitle).dy - initialHeaderTop,
+      closeTo(-headerHeight * 0.53, 0.1),
+    );
+
+    scrollController.jumpTo(headerHeight * 0.49);
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(footer).dy - initialFooterTop, closeTo(footerHeight, 0.1));
+
+    scrollController.jumpTo(headerHeight * 0.47);
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(footer).dy, closeTo(initialFooterTop, 0.1));
+
+    scrollController.jumpTo(700);
+    await tester.pumpAndSettle();
+    scrollController.jumpTo(700 - headerHeight * 0.53);
+    await tester.pump();
+
+    final badge = find.byKey(const ValueKey("scroll_to_top_badge"));
+    expect(badge, findsOneWidget);
+    final chipTop = tester.getRect(badge).top;
+    expect(chipTop, closeTo(44 + headerHeight * 0.53 + AppSpacing.md, 0.1));
+    expect(tester.getRect(badge).center.dx, closeTo(400, 0.1));
+
+    await tester.pump(const Duration(milliseconds: 90));
+    expect(
+      tester.getTopLeft(footer).dy - initialFooterTop,
+      allOf(greaterThan(0), lessThan(footerHeight)),
+    );
+    expect(tester.getRect(badge).top, closeTo(chipTop, 0.1));
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(footer).dy, closeTo(initialFooterTop, 0.1));
   });
 
   testWidgets("refreshes Following and Browse roots while hidden and on resume", (

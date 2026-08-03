@@ -600,6 +600,14 @@ void main() {
         .dy;
 
     expect(firstCardTop - headerBottom, closeTo(PageHeaderLayout.headerContentGap, 0.1));
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey("frosted_top_bar")),
+        matching: find.byType(BackdropFilter),
+      ),
+      findsNothing,
+    );
+    expect(find.byKey(const ValueKey("top_header_material")), findsOneWidget);
   });
 }
 
