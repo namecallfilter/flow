@@ -23,9 +23,11 @@ class AppBottomNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final navSurface = theme.scaffoldBackgroundColor;
-    final topAlpha = theme.brightness == Brightness.dark ? 0.30 : 0.42;
-    final bottomAlpha = theme.brightness == Brightness.dark ? 0.92 : 0.94;
+    final navSurface = theme.brightness == Brightness.dark
+        ? const Color(0xFF08080A)
+        : theme.scaffoldBackgroundColor;
+    const topAlpha = 0.46;
+    const bottomAlpha = 0.50;
 
     return ClipRect(
       child: BackdropFilter(

@@ -707,6 +707,20 @@ void main() {
     );
     final headerTitle = find.byKey(const ValueKey("browse_title"));
     final footer = find.byKey(const ValueKey("app_bottom_nav_bar"));
+    final headerMaterial =
+        tester
+                .widget<DecoratedBox>(
+                  find.byKey(const ValueKey("top_header_material_gradient")),
+                )
+                .decoration
+            as BoxDecoration;
+    final footerMaterial = tester.widget<DecoratedBox>(footer).decoration as BoxDecoration;
+    final headerTint = headerMaterial.gradient! as LinearGradient;
+    final footerTint = footerMaterial.gradient! as LinearGradient;
+    expect(
+      footerTint.colors,
+      orderedEquals([headerTint.colors[1], headerTint.colors[0]]),
+    );
     final initialHeaderTop = tester.getTopLeft(headerTitle).dy;
     final initialFooterTop = tester.getTopLeft(footer).dy;
     final headerHeight = tester.getSize(header).height;
