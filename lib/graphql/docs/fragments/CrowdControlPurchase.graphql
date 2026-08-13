@@ -1,4 +1,0 @@
-fragment CrowdControlPurchase on CrowdControlPurchase {
-  value
-  unit
-}

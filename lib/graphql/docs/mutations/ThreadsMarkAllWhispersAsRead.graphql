@@ -1,5 +1,0 @@
-mutation Threads_MarkAllWhispersAsRead ($input: UpdateAllWhisperThreadsInput!) {
-  updateAllWhisperThreads(input: $input) {
-    count
-  }
-}

@@ -1,9 +1,0 @@
-query VideoPlayer_AgeGateOverlayBroadcaster ($input: UserByAttribute!) {
-  userByAttribute(input: $input) {
-    id
-    login
-    adProperties {
-      requiredAge
-    }
-  }
-}

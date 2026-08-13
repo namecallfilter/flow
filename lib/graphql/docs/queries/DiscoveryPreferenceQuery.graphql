@@ -1,7 +1,0 @@
-#import "../fragments/ContentDiscoveryPreferenceFragment.graphql"
-
-query DiscoveryPreferenceQuery {
-  discoveryPreference {
-    ...ContentDiscoveryPreferenceFragment
-  }
-}

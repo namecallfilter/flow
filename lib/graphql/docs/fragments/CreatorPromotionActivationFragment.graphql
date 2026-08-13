@@ -1,3 +1,0 @@
-fragment CreatorPromotionActivationFragment on CreatorPromotionActivation {
-  endsAt
-}

@@ -1,5 +1,0 @@
-mutation GlobalNotificationSettings_SetNotificationSetting ($input: SetNotificationSettingInput!) {
-  setNotificationSetting(input: $input) {
-    settingState
-  }
-}

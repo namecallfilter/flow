@@ -1,6 +1,0 @@
-query UseGetUserLogin ($id: ID!) {
-  user(id: $id) {
-    id
-    login
-  }
-}

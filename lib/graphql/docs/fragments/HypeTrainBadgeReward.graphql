@@ -1,7 +1,0 @@
-fragment HypeTrainBadgeReward on HypeTrainBadgeReward {
-  badge {
-    id
-    setID
-    imageURL(size: DOUBLE)
-  }
-}

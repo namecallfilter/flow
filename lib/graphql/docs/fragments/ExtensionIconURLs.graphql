@@ -1,5 +1,0 @@
-fragment ExtensionIconURLs on ExtensionIcons {
-  square100
-  square24
-  discoverySplash
-}

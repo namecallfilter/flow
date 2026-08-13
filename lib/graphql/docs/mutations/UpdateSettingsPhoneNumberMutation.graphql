@@ -1,9 +1,0 @@
-mutation UpdateSettingsPhoneNumberMutation ($input: UpdatePhoneNumberInput!) {
-  updatePhoneNumber(input: $input) {
-    error {
-      code
-      message
-      externalCode
-    }
-  }
-}

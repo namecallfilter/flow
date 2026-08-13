@@ -1,9 +1,0 @@
-#import "./GuestStarUserWithViewcount.graphql"
-
-fragment GuestStarGuestSlotForViewers on GuestStarSlotForViewers {
-  id
-  slotID
-  user {
-    ...GuestStarUserWithViewcount
-  }
-}

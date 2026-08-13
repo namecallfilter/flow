@@ -1,7 +1,0 @@
-mutation OnsiteNotifications_DeleteNotification ($input: DeleteNotificationInput!) {
-  deleteNotification(input: $input) {
-    notification {
-      id
-    }
-  }
-}

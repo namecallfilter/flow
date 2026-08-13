@@ -1,8 +1,0 @@
-#import "../fragments/PointCustomizationFragment.graphql"
-
-query CommunityPoints_Icon ($channelLogin: String!) {
-  community: user(login: $channelLogin) {
-    id
-    ...PointCustomizationFragment
-  }
-}

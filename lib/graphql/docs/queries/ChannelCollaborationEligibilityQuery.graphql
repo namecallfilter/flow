@@ -1,8 +1,0 @@
-query ChannelCollaborationEligibilityQuery ($options: GuestStarChannelCollaborationOptions) {
-  guestStarCollaborationStatuses(options: $options) {
-    channelCollabs {
-      id
-      canJoinStatus
-    }
-  }
-}

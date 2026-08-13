@@ -1,9 +1,0 @@
-#import "./ReactionAssetMetadataFragment.graphql"
-
-fragment CurrentReactionByContentKeyFragment on CurrentReactionByContentKey {
-  id
-  type
-  reaction {
-    ...ReactionAssetMetadataFragment
-  }
-}

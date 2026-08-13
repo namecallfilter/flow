@@ -1,7 +1,0 @@
-query CanCreateClip ($broadcasterID: ID, $vodID: ID) {
-  canCreateClip(broadcasterID: $broadcasterID, vodID: $vodID) {
-    isAllowed
-    errorCode
-    requiredFollowingLengthMinutes
-  }
-}

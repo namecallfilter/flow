@@ -1,8 +1,0 @@
-fragment CommunityTrainDetails on CommunityTrainDetails {
-  status
-  currentRewardAmount
-  rewardLevelThreshold
-  previousRewardAmount
-  nextRewardAmount
-  maxRewardLevel
-}

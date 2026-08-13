@@ -1,8 +1,0 @@
-#import "./VODMidrollManagerAdProperties.graphql"
-
-fragment VODMidrollManagerBroadcaster on User {
-  id
-  adProperties {
-    ...VODMidrollManagerAdProperties
-  }
-}

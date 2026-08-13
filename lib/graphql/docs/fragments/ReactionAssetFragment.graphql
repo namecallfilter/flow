@@ -1,9 +1,0 @@
-fragment ReactionAssetFragment on ReactionAsset {
-  ... on Emote {
-    id
-    setID
-    token
-    assetType
-    type
-  }
-}

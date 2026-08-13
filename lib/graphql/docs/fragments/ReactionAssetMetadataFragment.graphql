@@ -1,8 +1,0 @@
-#import "./ReactionAssetFragment.graphql"
-
-fragment ReactionAssetMetadataFragment on ReactionAssetMetadata {
-  asset {
-    ...ReactionAssetFragment
-  }
-  type
-}

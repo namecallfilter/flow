@@ -1,4 +1,0 @@
-fragment ChannelSkinsAdsAudiencePolicy on AdsAudiencePolicy {
-  shouldShowToTurbo
-  shouldShowToChannelSubscriber
-}

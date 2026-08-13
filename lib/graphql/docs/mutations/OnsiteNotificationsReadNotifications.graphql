@@ -1,9 +1,0 @@
-mutation OnsiteNotifications_ReadNotifications ($input: ReadNotificationsInput!) {
-  readNotifications(input: $input) {
-    notifications {
-      id
-      isRead
-    }
-    count
-  }
-}

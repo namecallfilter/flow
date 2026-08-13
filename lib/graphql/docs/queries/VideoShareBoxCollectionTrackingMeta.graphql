@@ -1,9 +1,0 @@
-query VideoShareBox_CollectionTrackingMeta ($creatorID: ID!) {
-  user(id: $creatorID) {
-    id
-    login
-    roles {
-      isPartner
-    }
-  }
-}

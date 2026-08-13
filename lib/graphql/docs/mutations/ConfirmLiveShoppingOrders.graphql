@@ -1,7 +1,0 @@
-#import "../fragments/ConfirmLiveShoppingOrdersFragment.graphql"
-
-mutation ConfirmLiveShoppingOrders ($input: ConfirmLiveShoppingOrdersInput!) {
-  confirmLiveShoppingOrders(input: $input) {
-    ...ConfirmLiveShoppingOrdersFragment
-  }
-}

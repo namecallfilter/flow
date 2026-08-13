@@ -1,7 +1,0 @@
-#import "../fragments/FollowButtonFragment.graphql"
-
-query LiveNotificationsToggle_User ($login: String!) {
-  user(login: $login) {
-    ...FollowButtonFragment
-  }
-}

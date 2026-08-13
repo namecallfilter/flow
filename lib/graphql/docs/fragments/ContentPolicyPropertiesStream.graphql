@@ -1,9 +1,0 @@
-fragment ContentPolicyPropertiesStream on User {
-  id
-  stream {
-    id
-    contentPolicyProperties {
-      hasBrandedContent
-    }
-  }
-}

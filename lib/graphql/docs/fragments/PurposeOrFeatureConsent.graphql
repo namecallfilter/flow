@@ -1,9 +1,0 @@
-#import "./IabInformation.graphql"
-
-fragment PurposeOrFeatureConsent on PurposeOrFeatureConsentStatus {
-  iabInformation {
-    ...IabInformation
-  }
-  consentStatus
-  hasUserSetConsent
-}

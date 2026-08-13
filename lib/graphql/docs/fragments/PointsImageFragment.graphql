@@ -1,5 +1,0 @@
-fragment PointsImageFragment on CommunityPointsImage {
-  url
-  url2x
-  url4x
-}

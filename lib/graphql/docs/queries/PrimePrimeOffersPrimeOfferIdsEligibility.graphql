@@ -1,6 +1,0 @@
-query Prime_PrimeOffers_PrimeOfferIds_Eligibility ($dateOverride: Time, $countryCode: String) {
-  primeOffersWithoutEligibility(dateOverride: $dateOverride, countryCode: $countryCode) {
-    id
-    catalogOfferID
-  }
-}

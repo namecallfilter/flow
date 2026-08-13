@@ -1,7 +1,0 @@
-#import "../fragments/GuestStarOngoingSession.graphql"
-
-query GuestStarSessionsQuery ($options: GuestStarSessionsOptions) {
-  guestStarSessionsForViewers(options: $options) {
-    ...GuestStarOngoingSession
-  }
-}

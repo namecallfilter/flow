@@ -1,7 +1,0 @@
-fragment ConfirmLiveShoppingOrdersFragment on ConfirmLiveShoppingOrdersPayload {
-  error
-  result {
-    orderIDs
-    orderPageURL
-  }
-}

@@ -1,6 +1,0 @@
-query TrackingManager_RequestInfo {
-  requestInfo {
-    countryCode
-    ipAddress
-  }
-}

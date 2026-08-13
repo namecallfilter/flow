@@ -1,9 +1,0 @@
-query VideoPlayerStatusOverlayChannel ($channel: String) {
-  user(login: $channel) {
-    id
-    stream {
-      id
-      type
-    }
-  }
-}

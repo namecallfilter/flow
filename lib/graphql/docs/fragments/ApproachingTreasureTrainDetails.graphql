@@ -1,4 +1,0 @@
-fragment ApproachingTreasureTrainDetails on ApproachingTreasureTrainDetails {
-  discountPercentage
-  discountLevelThreshold
-}

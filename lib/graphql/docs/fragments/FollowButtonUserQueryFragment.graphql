@@ -1,9 +1,0 @@
-#import "./FollowButtonFragment.graphql"
-
-fragment FollowButtonUserQueryFragment on Query {
-  user(login: $login) {
-    id
-    displayName
-    ...FollowButtonFragment
-  }
-}

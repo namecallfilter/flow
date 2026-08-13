@@ -1,4 +1,0 @@
-fragment AdRequestTag on Tag {
-  id
-  tagName
-}

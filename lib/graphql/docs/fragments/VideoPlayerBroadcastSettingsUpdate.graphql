@@ -1,9 +1,0 @@
-fragment VideoPlayerBroadcastSettingsUpdate on BroadcastSettings {
-  id
-  game {
-    id
-    name
-    displayName
-    boxArtURL(width: 85, height: 113)
-  }
-}

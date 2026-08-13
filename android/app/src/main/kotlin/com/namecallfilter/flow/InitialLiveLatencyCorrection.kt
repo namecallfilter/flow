@@ -76,7 +76,6 @@ internal class LiveLatencyCorrectionCoordinator(
         bufferedPositionMs: Long?,
         windowDurationMs: Long?,
         bufferedSafetyMs: Long,
-        partialBufferedSafetyMs: Long,
         minimumAdvanceMs: Long,
         targetToleranceMs: Long,
     ): LiveLatencyCorrectionDecision {
@@ -102,7 +101,6 @@ internal class LiveLatencyCorrectionCoordinator(
             bufferedPositionMs = bufferedPositionMs,
             windowDurationMs = windowDurationMs,
             bufferedSafetyMs = bufferedSafetyMs,
-            partialBufferedSafetyMs = partialBufferedSafetyMs,
             minimumAdvanceMs = minimumAdvanceMs,
             targetToleranceMs = targetToleranceMs,
         )
@@ -178,9 +176,10 @@ internal data class LiveLatencyCorrectionPlan(
  * The desired position is the current position plus the measured excess latency.
  * It never uses Media3's default position or `currentLiveOffset`, and it never
  * seeks backward. A correction never enters unbuffered Twitch prefetch: when the
- * exact target is beyond the safe buffered edge, it advances to that buffered
- * edge and remains pending. The coordinator then waits for a fresh post-seek
- * measurement and performs another bounded correction toward the same target.
+ * exact target is beyond the safe buffered edge, it waits for more buffer while
+ * bounded playback-speed control continues converging toward the same target.
+ * Seeking to a partial buffered edge is intentionally forbidden because Twitch's
+ * promoted prefetch can make that edge appear buffered before it is playable.
  */
 internal fun planLiveLatencyCorrection(
     measuredLatencyMs: Long,
@@ -189,7 +188,6 @@ internal fun planLiveLatencyCorrection(
     bufferedPositionMs: Long?,
     windowDurationMs: Long?,
     bufferedSafetyMs: Long,
-    partialBufferedSafetyMs: Long,
     minimumAdvanceMs: Long,
     targetToleranceMs: Long,
 ): LiveLatencyCorrectionPlan {
@@ -198,7 +196,6 @@ internal fun planLiveLatencyCorrection(
         targetLatencyMs < 0 ||
         currentPositionMs < 0 ||
         bufferedSafetyMs < 0 ||
-        partialBufferedSafetyMs < bufferedSafetyMs ||
         minimumAdvanceMs < 0 ||
         targetToleranceMs < 0 ||
         bufferedPositionMs?.let { it < 0 } == true ||
@@ -249,33 +246,28 @@ internal fun planLiveLatencyCorrection(
             seekPositionMs = desiredPositionMs,
         )
     }
+    return LiveLatencyCorrectionPlan(LiveLatencyCorrectionPlanOutcome.WAIT_FOR_BUFFER)
+}
 
-    val partialBufferedReachMs = runCatching {
-        Math.subtractExact(knownBufferedPositionMs, partialBufferedSafetyMs)
-    }.getOrNull() ?: return LiveLatencyCorrectionPlan(
-        LiveLatencyCorrectionPlanOutcome.WAIT_FOR_BUFFER,
-    )
-    val partialWindowReachMs = windowDurationMs?.let { windowDuration ->
-        runCatching {
-            Math.subtractExact(windowDuration, partialBufferedSafetyMs)
-        }.getOrNull()
-    }
-    val safeReachMs = partialWindowReachMs?.let {
-        minOf(partialBufferedReachMs, it)
-    } ?: partialBufferedReachMs
-    val safeAdvanceMs = runCatching {
-        Math.subtractExact(safeReachMs, currentPositionMs)
-    }.getOrNull() ?: return LiveLatencyCorrectionPlan(
-        LiveLatencyCorrectionPlanOutcome.INVALID_INPUT,
-    )
-    if (safeAdvanceMs < minimumAdvanceMs) {
-        return LiveLatencyCorrectionPlan(LiveLatencyCorrectionPlanOutcome.WAIT_FOR_BUFFER)
+/** Allows one automatic behind-live-window recovery until playback renders again. */
+internal class BehindLiveWindowRecoveryCoordinator {
+    private var awaitingFirstFrameAfterRecovery = false
+
+    fun reset() {
+        awaitingFirstFrameAfterRecovery = false
     }
 
-    return LiveLatencyCorrectionPlan(
-        outcome = LiveLatencyCorrectionPlanOutcome.SEEK,
-        seekPositionMs = safeReachMs,
-    )
+    fun onRenderedFirstFrame() {
+        awaitingFirstFrameAfterRecovery = false
+    }
+
+    fun tryBeginRecovery(): Boolean {
+        if (awaitingFirstFrameAfterRecovery) {
+            return false
+        }
+        awaitingFirstFrameAfterRecovery = true
+        return true
+    }
 }
 
 internal fun shouldUseImmediateLatencyCorrection(

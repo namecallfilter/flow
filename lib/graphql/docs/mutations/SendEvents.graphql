@@ -1,5 +1,0 @@
-mutation SendEvents($input: SendSpadeEventsInput!) {
-    sendSpadeEvents(input: $input) {
-      statusCode
-    }
-  }

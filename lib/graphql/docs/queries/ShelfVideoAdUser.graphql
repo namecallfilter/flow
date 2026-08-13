@@ -1,8 +1,0 @@
-query ShelfVideoAd_User {
-  currentUser {
-    id
-    turboStatus {
-      hasActiveTurbo
-    }
-  }
-}

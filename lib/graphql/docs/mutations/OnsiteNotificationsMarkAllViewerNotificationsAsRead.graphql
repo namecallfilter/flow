@@ -1,5 +1,0 @@
-mutation OnsiteNotifications_MarkAllViewerNotificationsAsRead ($input: MarkAllViewerNotificationsAsReadInput) {
-  markAllViewerNotificationsAsRead(input: $input) {
-    hasSucceeded
-  }
-}

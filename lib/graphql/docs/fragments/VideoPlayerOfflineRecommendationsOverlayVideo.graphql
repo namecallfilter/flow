@@ -1,9 +1,0 @@
-fragment VideoPlayerOfflineRecommendationsOverlayVideo on Video {
-  id
-  title
-  previewThumbnailURL(width: 320, height: 180)
-  game {
-    id
-    name
-  }
-}

@@ -1,4 +1,0 @@
-fragment ThreadListItemSpamInfo on WhisperSpamInfo {
-  lastMarkedNotSpamAt
-  likelihood
-}

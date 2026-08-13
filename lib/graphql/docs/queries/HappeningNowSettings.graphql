@@ -1,6 +1,0 @@
-query HappeningNowSettings {
-  currentUser {
-    id
-    isChatHappeningNowEnabled
-  }
-}

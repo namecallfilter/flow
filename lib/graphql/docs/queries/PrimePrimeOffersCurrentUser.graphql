@@ -1,9 +1,0 @@
-query Prime_PrimeOffers_CurrentUser {
-  currentUser {
-    id
-    hasPrime
-  }
-  requestInfo {
-    countryCode
-  }
-}

@@ -1,7 +1,0 @@
-query DMCAViolationCountBanner ($id: ID!) {
-  user(id: $id) {
-    id
-    login
-    dmcaViolationCount
-  }
-}

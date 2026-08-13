@@ -1,9 +1,0 @@
-fragment UserConsent on UserConsent {
-  productConsent {
-    id
-    version
-    consentType
-    shouldShowNotification
-    url
-  }
-}

@@ -1,7 +1,0 @@
-#import "./VideoPlayerVideoMoment.graphql"
-
-fragment VideoPlayerVideoMomentConnection on VideoMomentEdge {
-  node {
-    ...VideoPlayerVideoMoment
-  }
-}

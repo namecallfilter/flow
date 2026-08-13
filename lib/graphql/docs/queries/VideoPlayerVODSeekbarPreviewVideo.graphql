@@ -1,6 +1,0 @@
-query VideoPlayer_VODSeekbarPreviewVideo ($videoID: ID, $includePrivate: Boolean = false) {
-  video(id: $videoID, options: { includePrivate: $includePrivate }) {
-    id
-    seekPreviewsURL
-  }
-}

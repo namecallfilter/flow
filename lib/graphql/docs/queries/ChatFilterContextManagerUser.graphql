@@ -1,6 +1,0 @@
-query ChatFilterContextManager_User {
-  currentUser {
-    id
-    createdAt
-  }
-}

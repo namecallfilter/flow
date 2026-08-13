@@ -1,5 +1,0 @@
-mutation ChannelPage_SetSessionStatus ($input: SetSessionStatusInput!) {
-  setSessionStatus(input: $input) {
-    setAgainInSeconds
-  }
-}

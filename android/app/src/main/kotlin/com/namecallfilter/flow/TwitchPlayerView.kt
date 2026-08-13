@@ -8,7 +8,6 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.LayoutInflater
-import android.view.View
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Format
@@ -32,50 +31,71 @@ import androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.ui.PlayerView
-import io.flutter.plugin.common.BinaryMessenger
-import io.flutter.plugin.common.EventChannel
-import io.flutter.plugin.common.MethodChannel
-import io.flutter.plugin.platform.PlatformView
 import java.io.IOException
 import java.net.URI
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
+
+internal sealed interface TwitchPlayerEvent {
+    data class Latency(val latencyMs: Long?) : TwitchPlayerEvent
+
+    data class Ad(
+        val active: Boolean,
+        val current: Int = 0,
+        val total: Int = 0,
+        val remainingMs: Long = 0,
+    ) : TwitchPlayerEvent
+
+    data class State(
+        val isPlaying: Boolean,
+        val isBuffering: Boolean,
+        val playWhenReady: Boolean,
+    ) : TwitchPlayerEvent
+
+    data class Qualities(
+        val qualities: List<TwitchQualityOption>,
+        val selectedId: String,
+    ) : TwitchPlayerEvent
+
+    data class Error(val message: String) : TwitchPlayerEvent
+}
+
+internal data class TwitchQualityOption(
+    val id: String,
+    val label: String,
+)
 
 @UnstableApi
 internal class TwitchPlayerView(
     context: Context,
-    messenger: BinaryMessenger,
-    viewId: Int,
     private val initialUrl: String?,
     private val proxyUrls: List<String>,
-) : PlatformView {
+    private val playbackUriRefresher: () -> String,
+    private val onEvent: (TwitchPlayerEvent) -> Unit = {},
+) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val playerView = LayoutInflater.from(context).inflate(
         R.layout.flow_twitch_player,
         null,
         false,
     ) as PlayerView
-    private val methodChannel = MethodChannel(messenger, "flow/twitch_player/$viewId")
-    private val eventChannel = EventChannel(messenger, "flow/twitch_player/$viewId/events")
     private val liveSpeedControl = TwitchLatencyPlaybackSpeedControl()
     private val latencyCorrection = LiveLatencyCorrectionCoordinator(
         maximumSeekAttempts = MAX_CORRECTION_SEEK_ATTEMPTS,
     )
+    private val behindLiveWindowRecovery = BehindLiveWindowRecoveryCoordinator()
     private val player: ExoPlayer
-    private var eventSink: EventChannel.EventSink? = null
     private var latencySession: TwitchLatencySession? = null
     private var metadataListener: Player.Listener? = null
     private var sessionGeneration = 0L
     private var latestLatencyMs: Long? = null
     private var lastPrimaryLatencyRealtimeMs: Long? = null
     private var latestError: String? = null
-    private var latestQualities: List<Map<String, Any?>> = emptyList()
+    private var latestQualities: List<TwitchQualityOption> = emptyList()
     private var selectedQualityId = AUTO_QUALITY_ID
     private val qualityOverrides = mutableMapOf<String, TrackSelectionOverride>()
     private val adCues = mutableMapOf<String, TwitchAdCue>()
     private val stitchedAdLatencyFallback = StitchedAdLatencyFallback()
-    private var latestAdEvent: Map<String, Any?> = inactiveAdEvent()
+    private var latestAdEvent = inactiveAdEvent()
     private var hasRenderedFirstFrame = false
     private var latestCorrectionMeasurement: LiveLatencyMeasurement? = null
     private var correctionMeasurementSequence = 0L
@@ -123,12 +143,20 @@ internal class TwitchPlayerView(
         }
 
         override fun onPlayerError(error: PlaybackException) {
+            if (
+                error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW &&
+                behindLiveWindowRecovery.tryBeginRecovery()
+            ) {
+                recoverFromBehindLiveWindow(error)
+                return
+            }
             latestError = error.message ?: "The stream could not be played."
             Log.e(LOG_TAG, "playback failed", error)
             emitError(latestError!!)
         }
 
         override fun onRenderedFirstFrame() {
+            behindLiveWindowRecovery.onRenderedFirstFrame()
             hasRenderedFirstFrame = true
             maybeApplyPendingLatencyCorrection()
         }
@@ -180,77 +208,53 @@ internal class TwitchPlayerView(
                 "${TwitchLatencyPlaybackSpeedControl.MAX_PLAYBACK_SPEED}x",
         )
 
-        eventChannel.setStreamHandler(
-            object : EventChannel.StreamHandler {
-                override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
-                    eventSink = events
-                    emitState()
-                    emitLatency(latestLatencyMs)
-                    emitQualities()
-                    emit(latestAdEvent)
-                    latestError?.let(::emitError)
-                }
-
-                override fun onCancel(arguments: Any?) {
-                    eventSink = null
-                }
-            },
-        )
-        methodChannel.setMethodCallHandler { call, result ->
-            when (call.method) {
-                "initialize" -> {
-                    if (!initialized) {
-                        initialized = true
-                        initialUrl?.takeIf { it.isNotBlank() }?.let(::load)
-                    }
-                    result.success(null)
-                }
-
-                "play" -> {
-                    resumeAtLiveEdge()
-                    result.success(null)
-                }
-
-                "pause" -> {
-                    player.pause()
-                    result.success(null)
-                }
-
-                "togglePlayback" -> {
-                    if (player.playWhenReady) player.pause() else resumeAtLiveEdge()
-                    result.success(null)
-                }
-
-                "jumpToLive" -> {
-                    jumpToLiveEdge()
-                    result.success(null)
-                }
-
-                "setQuality" -> setQuality(call.arguments as? String, result)
-
-                else -> result.notImplemented()
-            }
-        }
-
         mainHandler.post(adProgressTicker)
     }
 
-    override fun getView(): View = playerView
+    val view: PlayerView
+        get() = playerView
 
-    override fun dispose() {
+    fun initialize() {
+        if (initialized || disposed) return
+        initialized = true
+        initialUrl?.takeIf { it.isNotBlank() }?.let(::load)
+        emitState()
+        emitLatency(latestLatencyMs)
+        emitQualities()
+        emit(latestAdEvent)
+        latestError?.let(::emitError)
+    }
+
+    fun play() {
+        if (!disposed) resumeAtLiveEdge()
+    }
+
+    fun pause() {
+        if (!disposed) player.pause()
+    }
+
+    fun togglePlayback() {
+        if (disposed) return
+        if (player.playWhenReady) player.pause() else resumeAtLiveEdge()
+    }
+
+    fun jumpToLive() {
+        if (!disposed) jumpToLiveEdge()
+    }
+
+    fun release() {
+        if (disposed) return
         disposed = true
         mainHandler.removeCallbacks(adProgressTicker)
         sessionGeneration++
         liveSpeedControl.reset()
         latencyCorrection.reset()
+        behindLiveWindowRecovery.reset()
         metadataListener?.let(player::removeListener)
         metadataListener = null
         latencySession = null
         adCues.clear()
         stitchedAdLatencyFallback.reset()
-        methodChannel.setMethodCallHandler(null)
-        eventChannel.setStreamHandler(null)
-        eventSink = null
         playerView.player = null
         player.release()
     }
@@ -260,6 +264,7 @@ internal class TwitchPlayerView(
         val generation = ++sessionGeneration
         liveSpeedControl.reset()
         latencyCorrection.reset()
+        behindLiveWindowRecovery.reset()
         latestLatencyMs = null
         lastPrimaryLatencyRealtimeMs = null
         latestError = null
@@ -392,56 +397,19 @@ internal class TwitchPlayerView(
         if (Looper.myLooper() == Looper.getMainLooper()) {
             throw IOException("Playback URI refresh cannot run on the main thread")
         }
-        val completed = CountDownLatch(1)
-        var refreshedUrl: String? = null
-        var refreshError: IOException? = null
-        mainHandler.post {
-            if (disposed) {
-                refreshError = IOException("Twitch player was disposed")
-                completed.countDown()
-                return@post
-            }
-            methodChannel.invokeMethod(
-                "refreshPlaybackUri",
-                null,
-                object : MethodChannel.Result {
-                    override fun success(result: Any?) {
-                        val value = result as? String
-                        val uri = value?.let { runCatching { URI(it) }.getOrNull() }
-                        if (
-                            value.isNullOrBlank() ||
-                            uri?.scheme != "https" ||
-                            uri.host.isNullOrBlank()
-                        ) {
-                            refreshError = IOException("Flutter returned an invalid playback URI")
-                        } else {
-                            refreshedUrl = withDeviceSupportedTwitchCodecs(value)
-                        }
-                        completed.countDown()
-                    }
-
-                    override fun error(code: String, message: String?, details: Any?) {
-                        refreshError = IOException(message ?: "Playback URI refresh failed ($code)")
-                        completed.countDown()
-                    }
-
-                    override fun notImplemented() {
-                        refreshError = IOException("Playback URI refresh is unavailable")
-                        completed.countDown()
-                    }
-                },
-            )
+        if (disposed) throw IOException("Twitch player was disposed")
+        val value = try {
+            playbackUriRefresher()
+        } catch (error: IOException) {
+            throw error
+        } catch (error: Exception) {
+            throw IOException(error.message ?: "Playback URI refresh failed", error)
         }
-        try {
-            if (!completed.await(PLAYBACK_URI_REFRESH_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                throw IOException("Playback URI refresh timed out")
-            }
-        } catch (error: InterruptedException) {
-            Thread.currentThread().interrupt()
-            throw IOException("Playback URI refresh was interrupted", error)
+        val uri = runCatching { URI(value) }.getOrNull()
+        if (value.isBlank() || uri?.scheme != "https" || uri.host.isNullOrBlank()) {
+            throw IOException("Playback URI refresh returned an invalid URL")
         }
-        refreshError?.let { throw it }
-        return refreshedUrl ?: throw IOException("Playback URI refresh returned no URL")
+        return withDeviceSupportedTwitchCodecs(value)
     }
 
     private fun resumeAtLiveEdge() {
@@ -450,6 +418,37 @@ internal class TwitchPlayerView(
 
     private fun jumpToLiveEdge() {
         requestLatencyCorrection(LiveLatencyCorrectionReason.EXPLICIT_JUMP)
+    }
+
+    private fun recoverFromBehindLiveWindow(error: PlaybackException) {
+        val resumePlayback = player.playWhenReady
+        Log.w(
+            LOG_TAG,
+            "behind live window; recovering at default position " +
+                "playWhenReady=$resumePlayback",
+            error,
+        )
+
+        hasRenderedFirstFrame = false
+        latestError = null
+        latestCorrectionMeasurement = null
+        lastPrimaryLatencyRealtimeMs = null
+        lastCorrectionWaitReason = null
+        emitLatency(null)
+        liveSpeedControl.invalidateMeasurementForDiscontinuity("behind live window recovery")
+        latencyCorrection.arm(
+            reason = LiveLatencyCorrectionReason.RESUME,
+            targetLatencyMs = TARGET_LIVE_OFFSET_MS,
+            requireMeasurementAfterSequence = correctionMeasurementSequence,
+        )
+        logLatencyCorrectionArmed(
+            reason = LiveLatencyCorrectionReason.RESUME,
+            measurementBarrier = correctionMeasurementSequence,
+        )
+
+        player.seekToDefaultPosition()
+        player.prepare()
+        player.playWhenReady = resumePlayback
     }
 
     private fun requestLatencyCorrection(reason: LiveLatencyCorrectionReason) {
@@ -530,7 +529,6 @@ internal class TwitchPlayerView(
             bufferedPositionMs = bufferedPositionMs,
             windowDurationMs = windowDurationMs,
             bufferedSafetyMs = CORRECTION_EDGE_GUARD_MS,
-            partialBufferedSafetyMs = CORRECTION_PARTIAL_BUFFER_SAFETY_MS,
             minimumAdvanceMs = CORRECTION_MINIMUM_ADVANCE_MS,
             targetToleranceMs = CORRECTION_TARGET_TOLERANCE_MS,
         )
@@ -714,45 +712,40 @@ internal class TwitchPlayerView(
             selectedQualityId = AUTO_QUALITY_ID
         }
         latestQualities = visibleQualities.map { quality ->
-            mapOf(
-                "id" to quality["id"],
-                "label" to quality["label"],
+            TwitchQualityOption(
+                id = quality["id"].toString(),
+                label = quality["label"].toString(),
             )
         }
         emitQualities()
     }
 
-    private fun setQuality(id: String?, result: MethodChannel.Result) {
+    fun setQuality(id: String): Boolean {
         if (id == selectedQualityId) {
-            result.success(null)
-            return
+            return true
         }
         if (id == AUTO_QUALITY_ID) {
             clearVideoTrackOverride()
-            finishQualityChange(AUTO_QUALITY_ID, result)
-            return
+            finishQualityChange(AUTO_QUALITY_ID)
+            return true
         }
 
-        val override = id?.let(qualityOverrides::get)
-        if (id == null || override == null) {
-            result.error("invalid_quality", "That video quality is no longer available.", null)
-            return
-        }
+        val override = qualityOverrides[id] ?: return false
         player.trackSelectionParameters = player.trackSelectionParameters
             .buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
             .setOverrideForType(override)
             .build()
-        finishQualityChange(id, result)
+        finishQualityChange(id)
+        return true
     }
 
-    private fun finishQualityChange(id: String, result: MethodChannel.Result) {
+    private fun finishQualityChange(id: String) {
         selectedQualityId = id
         emitQualities()
         if (player.playWhenReady) {
             requestLatencyCorrection(LiveLatencyCorrectionReason.QUALITY_CHANGE)
         }
-        result.success(null)
     }
 
     private fun clearVideoTrackOverride() {
@@ -779,47 +772,44 @@ internal class TwitchPlayerView(
 
     private fun emitLatency(latencyMs: Long?) {
         latestLatencyMs = latencyMs
-        emit(mapOf("type" to "latency", "latencyMs" to latencyMs))
+        emit(TwitchPlayerEvent.Latency(latencyMs))
     }
 
     private fun emitState() {
         emit(
-            mapOf(
-                "type" to "state",
-                "isPlaying" to player.isPlaying,
-                "isBuffering" to (player.playbackState == Player.STATE_BUFFERING),
-                "playWhenReady" to player.playWhenReady,
+            TwitchPlayerEvent.State(
+                isPlaying = player.isPlaying,
+                isBuffering = player.playbackState == Player.STATE_BUFFERING,
+                playWhenReady = player.playWhenReady,
             ),
         )
     }
 
     private fun emitQualities() {
         emit(
-            mapOf(
-                "type" to "qualities",
-                "qualities" to latestQualities,
-                "selectedId" to selectedQualityId,
+            TwitchPlayerEvent.Qualities(
+                qualities = latestQualities,
+                selectedId = selectedQualityId,
             ),
         )
     }
 
     private fun emitAd(progress: TwitchAdProgress?) {
-        val event = if (progress == null) {
+        val event: TwitchPlayerEvent.Ad = if (progress == null) {
             inactiveAdEvent()
         } else {
-            mapOf(
-                "type" to "ad",
-                "active" to true,
-                "current" to progress.current,
-                "total" to progress.total,
-                "remainingMs" to progress.podRemainingMs,
+            TwitchPlayerEvent.Ad(
+                active = true,
+                current = progress.current,
+                total = progress.total,
+                remainingMs = progress.podRemainingMs,
             )
         }
         if (event == latestAdEvent) {
             return
         }
-        val wasActive = latestAdEvent["active"] == true
-        val isActive = event["active"] == true
+        val wasActive = latestAdEvent.active
+        val isActive = event.active
         latestAdEvent = event
         if (wasActive != isActive) {
             Log.d(LOG_TAG, if (isActive) "stitched ad started" else "stitched ad ended")
@@ -828,14 +818,14 @@ internal class TwitchPlayerView(
     }
 
     private fun emitError(message: String) {
-        emit(mapOf("type" to "error", "message" to message))
+        emit(TwitchPlayerEvent.Error(message))
     }
 
-    private fun emit(event: Map<String, Any?>) {
+    private fun emit(event: TwitchPlayerEvent) {
         if (Looper.myLooper() == Looper.getMainLooper()) {
-            eventSink?.success(event)
+            onEvent(event)
         } else {
-            mainHandler.post { eventSink?.success(event) }
+            mainHandler.post { onEvent(event) }
         }
     }
 
@@ -859,13 +849,11 @@ internal class TwitchPlayerView(
         const val AUTO_QUALITY_MIN_DURATION_TO_RETAIN_MS = 10_000
         const val AUTO_QUALITY_BANDWIDTH_FRACTION = 0.60f
         const val AUTO_QUALITY_BUFFERED_FRACTION_TO_LIVE_EDGE = 0.90f
-        const val PLAYBACK_URI_REFRESH_TIMEOUT_SECONDS = 15L
         const val AD_PROGRESS_INTERVAL_MS = 500L
         const val EXPIRED_AD_CUE_RETENTION_MS = 30 * 60_000L
         const val PRIMARY_LATENCY_FRESHNESS_MS = 2500L
         // Keep every correction seek above Media3's post-rebuffer threshold.
         const val CORRECTION_EDGE_GUARD_MS = BUFFER_AFTER_REBUFFER_MS + 500L
-        const val CORRECTION_PARTIAL_BUFFER_SAFETY_MS = CORRECTION_EDGE_GUARD_MS
         const val CORRECTION_MINIMUM_ADVANCE_MS = 100L
         const val CORRECTION_TARGET_TOLERANCE_MS = 100L
         const val CORRECTION_MEASUREMENT_MAX_AGE_MS = 2500L
@@ -884,10 +872,7 @@ internal fun deduplicateQualities(
             .thenByDescending { (it["fps"] as? Number)?.toDouble() ?: 0.0 },
     )
 
-private fun inactiveAdEvent(): Map<String, Any?> = mapOf(
-    "type" to "ad",
-    "active" to false,
-)
+private fun inactiveAdEvent() = TwitchPlayerEvent.Ad(active = false)
 
 internal fun roundRemainingAdTimeMs(remainingMs: Long): Long =
     if (remainingMs <= 0) 0 else ((remainingMs + 999L) / 1000L) * 1000L

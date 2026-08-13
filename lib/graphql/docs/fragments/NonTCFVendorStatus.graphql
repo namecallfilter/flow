@@ -1,8 +1,0 @@
-fragment NonTCFVendorStatus on NonTCFCookieVendor {
-  name
-  consentStatus
-  hasUserSetConsent
-  isVisible
-  cookieVendorType
-  policyURL
-}

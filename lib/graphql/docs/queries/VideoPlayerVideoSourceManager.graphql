@@ -1,6 +1,0 @@
-query VideoPlayer_VideoSourceManager ($input: UserByAttribute!) {
-  userByAttribute(input: $input) {
-    id
-    login
-  }
-}

@@ -1,5 +1,0 @@
-query ExtensionsUIContext_ChannelID ($channelLogin: String) {
-  user(login: $channelLogin) {
-    id
-  }
-}

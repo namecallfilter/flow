@@ -1,9 +1,0 @@
-fragment StoryLayerPlacementFragment on StoryLayerPlacement {
-  scale
-  positionX
-  positionY
-  rotation
-  zIndex
-  relativeHeight
-  relativeWidth
-}

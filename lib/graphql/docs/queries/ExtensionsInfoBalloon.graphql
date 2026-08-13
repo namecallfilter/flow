@@ -1,6 +1,0 @@
-query ExtensionsInfoBalloon ($extensionID: ID!, $extensionVersion: String) {
-  extension(id: $extensionID, version: $extensionVersion) {
-    id
-    screenshotURLs
-  }
-}

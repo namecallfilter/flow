@@ -1,6 +1,0 @@
-query Ads_Components_AdManager_User {
-  currentUser {
-    id
-    hasTurbo
-  }
-}

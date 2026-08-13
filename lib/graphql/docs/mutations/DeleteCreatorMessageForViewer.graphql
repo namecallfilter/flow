@@ -1,7 +1,0 @@
-mutation DeleteCreatorMessageForViewer ($input: DeleteCreatorMessageForViewerInput!) {
-  deleteCreatorMessageForViewer(input: $input) {
-    error {
-      code
-    }
-  }
-}

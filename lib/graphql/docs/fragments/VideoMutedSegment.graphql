@@ -1,4 +1,0 @@
-fragment VideoMutedSegment on VideoMutedSegment {
-  duration
-  offset
-}

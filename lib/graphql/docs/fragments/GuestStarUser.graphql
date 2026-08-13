@@ -1,8 +1,0 @@
-fragment GuestStarUser on User {
-  id
-  login
-  displayName
-  profileImageURL(width: 300)
-  primaryColorHex
-  description
-}

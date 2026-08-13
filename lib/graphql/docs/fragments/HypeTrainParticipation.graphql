@@ -1,5 +1,0 @@
-fragment HypeTrainParticipation on HypeTrainParticipation {
-  source
-  action
-  quantity
-}

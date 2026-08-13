@@ -1,8 +1,0 @@
-mutation sendChatMessage ($input: SendChatMessageInput!) {
-  sendChatMessage(input: $input) {
-    dropReason
-    message {
-      id
-    }
-  }
-}

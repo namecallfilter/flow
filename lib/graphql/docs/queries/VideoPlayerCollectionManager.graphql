@@ -1,7 +1,0 @@
-#import "../fragments/VideoPlayerCollectionManagerCollection.graphql"
-
-query VideoPlayer_CollectionManager ($collectionID: ID!) {
-  collection(id: $collectionID) {
-    ...VideoPlayerCollectionManagerCollection
-  }
-}

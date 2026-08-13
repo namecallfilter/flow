@@ -1,5 +1,0 @@
-fragment HypeTrainExecutionSelfEdgeUpdate on HypeTrainExecution {
-  self {
-    isEligibleForRewards
-  }
-}

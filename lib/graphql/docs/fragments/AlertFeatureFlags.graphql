@@ -1,4 +1,0 @@
-fragment AlertFeatureFlags on AlertsFeatureLaunchFlags {
-  isTextToSpeechEnabled
-  isUserIdsConditionEnabled
-}

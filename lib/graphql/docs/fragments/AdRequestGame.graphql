@@ -1,9 +1,0 @@
-#import "./AdRequestTag.graphql"
-
-fragment AdRequestGame on Game {
-  id
-  name
-  tags(tagType: CONTENT) {
-    ...AdRequestTag
-  }
-}

@@ -1,4 +1,0 @@
-fragment AdRequestCurrentUser on User {
-  id
-  hasTurbo
-}

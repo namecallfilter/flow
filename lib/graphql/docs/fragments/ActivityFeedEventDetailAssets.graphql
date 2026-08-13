@@ -1,7 +1,0 @@
-#import "./ActivityFeedEventDetailAsset.graphql"
-
-fragment ActivityFeedEventDetailAssets on ActivityFeedEventDetailAssets {
-  items {
-    ...ActivityFeedEventDetailAsset
-  }
-}

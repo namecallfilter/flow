@@ -1,5 +1,0 @@
-mutation SyncedSettingsSetCelebrations ($input: SetCelebrationsEnabledInput!) {
-  setCelebrationsEnabled(input: $input) {
-    isCelebrationsEnabled
-  }
-}

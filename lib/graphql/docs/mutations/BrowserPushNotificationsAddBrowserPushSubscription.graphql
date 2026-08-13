@@ -1,5 +1,0 @@
-mutation BrowserPushNotifications_AddBrowserPushSubscription ($input: AddBrowserPushSubscriptionInput!) {
-  addBrowserPushSubscription(input: $input) {
-    browserPushSubscriptionID
-  }
-}

@@ -1,7 +1,0 @@
-mutation DeleteCreatorMessage ($input: DeleteCreatorMessageInput!) {
-  deleteCreatorMessage(input: $input) {
-    error {
-      code
-    }
-  }
-}

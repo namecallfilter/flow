@@ -1,3 +1,0 @@
-query UsernameValidator_User ($username: String!) {
-  isUsernameAvailable(username: $username)
-}

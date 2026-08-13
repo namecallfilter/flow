@@ -1,9 +1,0 @@
-query VideoPlayerStreamMetadata ($channel: String) {
-  user(login: $channel) {
-    id
-    stream {
-      id
-      isEncrypted
-    }
-  }
-}

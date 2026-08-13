@@ -1,9 +1,0 @@
-query VideoPlayer_ViewCount ($login: String!) {
-  user(login: $login) {
-    id
-    stream {
-      id
-      viewersCount
-    }
-  }
-}

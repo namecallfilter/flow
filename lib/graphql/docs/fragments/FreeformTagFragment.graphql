@@ -1,4 +1,0 @@
-fragment FreeformTagFragment on FreeformTag {
-  id
-  name
-}

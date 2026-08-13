@@ -1,9 +1,0 @@
-mutation SetAlertStatusMutation ($input: UpdateActivityFeedAlertStatusInput!) {
-  updateActivityFeedAlertStatus(input: $input) {
-    alert {
-      id
-      status
-    }
-    error
-  }
-}

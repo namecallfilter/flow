@@ -1,5 +1,0 @@
-query CelebrationContextChannelID ($channelLogin: String!) {
-  channel(name: $channelLogin) {
-    id
-  }
-}

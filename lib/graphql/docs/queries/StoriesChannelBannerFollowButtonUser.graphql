@@ -1,9 +1,0 @@
-#import "../fragments/FollowButtonFragment.graphql"
-
-query StoriesChannelBannerFollowButton_User ($login: String!) {
-  user(login: $login) {
-    id
-    displayName
-    ...FollowButtonFragment
-  }
-}

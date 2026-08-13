@@ -1,6 +1,0 @@
-fragment SocialMedia on SocialMedia {
-  id
-  name
-  title
-  url
-}

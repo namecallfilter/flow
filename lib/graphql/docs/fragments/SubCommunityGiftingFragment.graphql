@@ -1,9 +1,0 @@
-#import "./SubProductOfferWithPromotions.graphql"
-
-fragment SubCommunityGiftingFragment on SubscriptionGifting {
-  community {
-    offer {
-      ...SubProductOfferWithPromotions
-    }
-  }
-}

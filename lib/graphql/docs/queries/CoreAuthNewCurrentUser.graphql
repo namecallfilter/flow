@@ -1,5 +1,0 @@
-query CoreAuthNewCurrentUser {
-  currentUser {
-    id
-  }
-}

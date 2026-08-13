@@ -1,5 +1,0 @@
-fragment TreasureTrainDetails on TreasureTrainDetails {
-  discountPercentage
-  discountLevelThreshold
-  status
-}

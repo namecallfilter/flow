@@ -1,7 +1,0 @@
-mutation removeReactionByContentKey ($input: RemoveReactionByContentKeyInput!) {
-  removeReactionByContentKey(input: $input) {
-    error {
-      code
-    }
-  }
-}

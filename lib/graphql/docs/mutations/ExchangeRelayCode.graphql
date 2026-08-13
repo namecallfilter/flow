@@ -1,9 +1,0 @@
-mutation ExchangeRelayCode ($relayCode: String!) {
-  exchangeRelayCode(input: { relayCode: $relayCode }) {
-    accessToken
-    error {
-      code
-      message
-    }
-  }
-}

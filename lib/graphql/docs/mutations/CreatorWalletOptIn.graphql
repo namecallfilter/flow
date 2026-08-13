@@ -1,8 +1,0 @@
-mutation creatorWalletOptIn {
-  optInSpendableBalance {
-    error {
-      code
-      ineligibilityReasons
-    }
-  }
-}

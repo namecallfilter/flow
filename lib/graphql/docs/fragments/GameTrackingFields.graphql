@@ -1,4 +1,0 @@
-fragment GameTrackingFields on Game {
-  id
-  name
-}

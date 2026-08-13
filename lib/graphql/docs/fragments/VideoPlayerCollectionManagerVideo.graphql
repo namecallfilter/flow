@@ -1,3 +1,0 @@
-fragment VideoPlayerCollectionManagerVideo on Video {
-  id
-}

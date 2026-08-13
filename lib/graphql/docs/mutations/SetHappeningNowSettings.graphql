@@ -1,5 +1,0 @@
-mutation SetHappeningNowSettings ($input: SetChatHappeningNowSettingsInput!) {
-  setChatHappeningNowSettings(input: $input) {
-    isChatHappeningNowEnabled
-  }
-}

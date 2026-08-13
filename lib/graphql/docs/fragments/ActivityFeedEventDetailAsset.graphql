@@ -1,7 +1,0 @@
-fragment ActivityFeedEventDetailAsset on ActivityFeedEventDetailAsset {
-  content {
-    ... on ActivityFeedEventDetailAssetClip {
-      slug
-    }
-  }
-}

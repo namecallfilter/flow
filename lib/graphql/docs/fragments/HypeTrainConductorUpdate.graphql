@@ -1,7 +1,0 @@
-#import "./HypeTrainConductor.graphql"
-
-fragment HypeTrainConductorUpdate on HypeTrainExecution {
-  conductors {
-    ...HypeTrainConductor
-  }
-}

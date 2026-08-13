@@ -1,22 +1,14 @@
-allprojects {
-    repositories {
-        google()
-        mavenCentral()
+buildscript {
+    dependencies {
+        // AGP 9 provides built-in Kotlin. This overrides its bundled compiler so
+        // the Kotlin and Compose compiler plugins remain on the same version.
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.3.21")
     }
 }
 
-val newBuildDir: Directory =
-    rootProject.layout.buildDirectory
-        .dir("../../build")
-        .get()
-rootProject.layout.buildDirectory.value(newBuildDir)
-
-subprojects {
-    val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
-    project.layout.buildDirectory.value(newSubprojectBuildDir)
-}
-subprojects {
-    project.evaluationDependsOn(":app")
+plugins {
+    id("com.android.application") version "9.2.1" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.3.21" apply false
 }
 
 tasks.register<Delete>("clean") {

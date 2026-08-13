@@ -1,9 +1,0 @@
-fragment HypeTrainCompleted on HypeTrainCompleted {
-  level {
-    id
-    value
-  }
-  goal
-  progression
-  total
-}

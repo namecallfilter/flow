@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- The player deliberately uses Media3 APIs marked unstable in 1.10.1. -->
+    <issue id="UnsafeOptInUsageError">
+        <option
+            name="opt-in"
+            value="androidx.media3.common.util.UnstableApi" />
+    </issue>
+</lint>

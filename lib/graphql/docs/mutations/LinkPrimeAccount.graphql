@@ -1,7 +1,0 @@
-mutation LinkPrimeAccount ($input: LinkPrimeAccountInput!) {
-  linkPrimeAccount(input: $input) {
-    error {
-      code
-    }
-  }
-}

@@ -1,5 +1,0 @@
-fragment ActivityFeedUser on User {
-  userID: id
-  displayName
-  login
-}

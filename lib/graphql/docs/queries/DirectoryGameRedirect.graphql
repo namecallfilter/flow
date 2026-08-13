@@ -1,6 +1,0 @@
-query DirectoryGameRedirect ($name: String!) {
-  game(name: $name) {
-    id
-    slug
-  }
-}

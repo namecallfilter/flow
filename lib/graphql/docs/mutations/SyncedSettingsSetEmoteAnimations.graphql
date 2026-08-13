@@ -1,5 +1,0 @@
-mutation SyncedSettingsSetEmoteAnimations ($input: SetEmoteAnimationsEnabledInput!) {
-  setEmoteAnimationsEnabled(input: $input) {
-    isEmoteAnimationsEnabled
-  }
-}

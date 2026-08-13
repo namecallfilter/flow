@@ -1,3 +1,0 @@
-fragment DmaUserPreferences on DMAUserPreferences {
-  hasDmaOptIn
-}

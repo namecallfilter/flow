@@ -1,5 +1,0 @@
-query GetUserID ($login: String!, $lookupType: UserLookupType!) {
-  user(login: $login, lookupType: $lookupType) {
-    id
-  }
-}

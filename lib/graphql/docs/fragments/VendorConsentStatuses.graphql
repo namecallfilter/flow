@@ -1,7 +1,0 @@
-#import "./GDPRVendorStatus.graphql"
-
-fragment VendorConsentStatuses on VendorConsent {
-  ... on GDPRVendorConsent {
-    ...GDPRVendorStatus
-  }
-}

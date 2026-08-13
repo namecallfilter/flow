@@ -1,8 +1,0 @@
-#import "./PlatformEventSettingFragment.graphql"
-
-fragment NotificationSettingFragment on EventNotificationSetting {
-  category
-  platforms {
-    ...PlatformEventSettingFragment
-  }
-}

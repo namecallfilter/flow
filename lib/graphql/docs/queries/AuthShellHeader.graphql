@@ -1,8 +1,0 @@
-query AuthShellHeader {
-  currentUser {
-    id
-    login
-    displayName
-    profileImageURL(width: 50)
-  }
-}

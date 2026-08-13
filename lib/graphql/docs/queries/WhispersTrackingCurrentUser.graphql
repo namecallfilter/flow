@@ -1,8 +1,0 @@
-query Whispers_Tracking_CurrentUser {
-  currentUser {
-    id
-    hasTurbo
-    availability
-    login
-  }
-}

@@ -1,9 +1,0 @@
-query LiveStreamTime ($login: String!) {
-  user(login: $login) {
-    id
-    stream {
-      id
-      createdAt
-    }
-  }
-}

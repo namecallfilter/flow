@@ -1,5 +1,0 @@
-mutation GlobalNotificationSettings_setLiveNotificationsEnrollment ($input: SetLiveNotificationsEnrollmentInput!) {
-  setLiveNotificationsEnrollment(input: $input) {
-    error
-  }
-}

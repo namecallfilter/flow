@@ -1,7 +1,0 @@
-mutation AdFormatTracking_RecordAdEvent ($input: RecordAdEventInput!) {
-  recordAdEvent(input: $input) {
-    error {
-      code
-    }
-  }
-}

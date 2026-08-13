@@ -1,5 +1,0 @@
-mutation VerifyEmail ($input: VerifyContactMethodInput!) {
-  verifyContactMethod(input: $input) {
-    isSuccess
-  }
-}
