@@ -228,7 +228,7 @@ class TwitchApiClient {
   }) : graphQlClientId = _nonEmptyValue(graphQlClientId) ?? defaultGraphQlClientId,
        _httpClient = httpClient ?? http.Client();
 
-  static const _gqlEndpoint = "https://gql.twitch.tv/gql/";
+  static const _gqlEndpoint = "https://gql.twitch.tv/gql";
   static const _maxPageSize = 100;
   static const _maxTopStreamsPageSize = 30;
   static const defaultGraphQlClientId = "ue6666qo983tsx6so1t0vnawi233wa";

@@ -100,6 +100,7 @@ void main() {
 
     expect(capturedRequest.method, "POST");
     expect(capturedRequest.url.host, "gql.twitch.tv");
+    expect(capturedRequest.url.path, "/gql");
     expect(body["query"], contains("edges"));
     expect(body["query"], contains("node"));
     expect(body["query"], contains("pageInfo"));
