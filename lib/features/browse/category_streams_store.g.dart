@@ -9,6 +9,24 @@ part of 'category_streams_store.dart';
 // ignore_for_file: non_constant_identifier_names, unnecessary_brace_in_string_interps, unnecessary_lambdas, prefer_expression_function_bodies, lines_longer_than_80_chars, avoid_as, avoid_annotating_with_dynamic, no_leading_underscores_for_local_identifiers
 
 mixin _$CategoryStreamsStore on CategoryStreamsStoreBase, Store {
+  late final _$streamSortAtom = Atom(
+    name: 'CategoryStreamsStoreBase.streamSort',
+    context: context,
+  );
+
+  @override
+  StreamSort get streamSort {
+    _$streamSortAtom.reportRead();
+    return super.streamSort;
+  }
+
+  @override
+  set streamSort(StreamSort value) {
+    _$streamSortAtom.reportWrite(value, super.streamSort, () {
+      super.streamSort = value;
+    });
+  }
+
   late final _$channelsAtom = Atom(
     name: 'CategoryStreamsStoreBase.channels',
     context: context,
@@ -99,6 +117,18 @@ mixin _$CategoryStreamsStore on CategoryStreamsStoreBase, Store {
     });
   }
 
+  late final _$selectStreamSortAsyncAction = AsyncAction(
+    'CategoryStreamsStoreBase.selectStreamSort',
+    context: context,
+  );
+
+  @override
+  Future<void> selectStreamSort(StreamSort sort) {
+    return _$selectStreamSortAsyncAction.run(
+      () => super.selectStreamSort(sort),
+    );
+  }
+
   late final _$loadStreamsAsyncAction = AsyncAction(
     'CategoryStreamsStoreBase.loadStreams',
     context: context,
@@ -114,6 +144,7 @@ mixin _$CategoryStreamsStore on CategoryStreamsStoreBase, Store {
   @override
   String toString() {
     return '''
+streamSort: ${streamSort},
 channels: ${channels},
 isLoading: ${isLoading},
 loaded: ${loaded},

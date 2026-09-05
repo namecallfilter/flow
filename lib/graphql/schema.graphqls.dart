@@ -1,5 +1,117 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 // ignore_for_file: type=lint
+class Input$StreamOptions {
+  factory Input$StreamOptions({Enum$StreamSort? sort}) =>
+      Input$StreamOptions._({if (sort != null) r'sort': sort});
+
+  Input$StreamOptions._(this._$data);
+
+  factory Input$StreamOptions.fromJson(Map<String, dynamic> data) {
+    final result$data = <String, dynamic>{};
+    if (data.containsKey('sort')) {
+      final l$sort = data['sort'];
+      result$data['sort'] = l$sort == null
+          ? null
+          : fromJson$Enum$StreamSort((l$sort as String));
+    }
+    return Input$StreamOptions._(result$data);
+  }
+
+  Map<String, dynamic> _$data;
+
+  Enum$StreamSort? get sort => (_$data['sort'] as Enum$StreamSort?);
+
+  Map<String, dynamic> toJson() {
+    final result$data = <String, dynamic>{};
+    final l$sort = _$data.containsKey('sort') ? sort : null;
+    result$data['sort'] = l$sort == null
+        ? null
+        : toJson$Enum$StreamSort(l$sort);
+    return result$data;
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other is! Input$StreamOptions || runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$sort = sort;
+    final lOther$sort = other.sort;
+    if (_$data.containsKey('sort') != other._$data.containsKey('sort')) {
+      return false;
+    }
+    if (l$sort != lOther$sort) {
+      return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode {
+    final l$sort = sort;
+    return Object.hashAll([_$data.containsKey('sort') ? l$sort : const {}]);
+  }
+}
+
+class Input$GameStreamOptions {
+  factory Input$GameStreamOptions({Enum$StreamSort? sort}) =>
+      Input$GameStreamOptions._({if (sort != null) r'sort': sort});
+
+  Input$GameStreamOptions._(this._$data);
+
+  factory Input$GameStreamOptions.fromJson(Map<String, dynamic> data) {
+    final result$data = <String, dynamic>{};
+    if (data.containsKey('sort')) {
+      final l$sort = data['sort'];
+      result$data['sort'] = l$sort == null
+          ? null
+          : fromJson$Enum$StreamSort((l$sort as String));
+    }
+    return Input$GameStreamOptions._(result$data);
+  }
+
+  Map<String, dynamic> _$data;
+
+  Enum$StreamSort? get sort => (_$data['sort'] as Enum$StreamSort?);
+
+  Map<String, dynamic> toJson() {
+    final result$data = <String, dynamic>{};
+    final l$sort = _$data.containsKey('sort') ? sort : null;
+    result$data['sort'] = l$sort == null
+        ? null
+        : toJson$Enum$StreamSort(l$sort);
+    return result$data;
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other is! Input$GameStreamOptions || runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$sort = sort;
+    final lOther$sort = other.sort;
+    if (_$data.containsKey('sort') != other._$data.containsKey('sort')) {
+      return false;
+    }
+    if (l$sort != lOther$sort) {
+      return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode {
+    final l$sort = sort;
+    return Object.hashAll([_$data.containsKey('sort') ? l$sort : const {}]);
+  }
+}
+
 class Input$AdProperty_TrackingPixels_Consent_Input {
   factory Input$AdProperty_TrackingPixels_Consent_Input({
     bool? allowAmazon,
@@ -2268,6 +2380,44 @@ class Input$Query_Video_Options_Input {
     return Object.hashAll([
       _$data.containsKey('includePrivate') ? l$includePrivate : const {},
     ]);
+  }
+}
+
+enum Enum$StreamSort {
+  RELEVANCE,
+  VIEWER_COUNT,
+  VIEWER_COUNT_ASC,
+  $unknown;
+
+  factory Enum$StreamSort.fromJson(String value) =>
+      fromJson$Enum$StreamSort(value);
+
+  String toJson() => toJson$Enum$StreamSort(this);
+}
+
+String toJson$Enum$StreamSort(Enum$StreamSort e) {
+  switch (e) {
+    case Enum$StreamSort.RELEVANCE:
+      return r'RELEVANCE';
+    case Enum$StreamSort.VIEWER_COUNT:
+      return r'VIEWER_COUNT';
+    case Enum$StreamSort.VIEWER_COUNT_ASC:
+      return r'VIEWER_COUNT_ASC';
+    case Enum$StreamSort.$unknown:
+      return r'$unknown';
+  }
+}
+
+Enum$StreamSort fromJson$Enum$StreamSort(String value) {
+  switch (value) {
+    case r'RELEVANCE':
+      return Enum$StreamSort.RELEVANCE;
+    case r'VIEWER_COUNT':
+      return Enum$StreamSort.VIEWER_COUNT;
+    case r'VIEWER_COUNT_ASC':
+      return Enum$StreamSort.VIEWER_COUNT_ASC;
+    default:
+      return Enum$StreamSort.$unknown;
   }
 }
 

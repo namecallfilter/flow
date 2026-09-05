@@ -3,11 +3,46 @@ import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
+import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  test("live directory cache and cursors are isolated by server ordering", () async {
+    final requests = <Map<String, Object?>>[];
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      gqlAccessToken: "web-token-123",
+      httpClient: MockClient((request) async {
+        final body = jsonDecode(request.body) as Map<String, Object?>;
+        requests.add(body["variables"]! as Map<String, Object?>);
+        expect(request.headers["Authorization"], "OAuth web-token-123");
+        return _jsonResponse({
+          "data": {
+            "streams": {
+              "edges": <Object?>[],
+              "pageInfo": {"hasNextPage": false},
+            },
+          },
+        });
+      }),
+    );
+    final cache = TwitchApiCache(clientLoader: () async => client);
+    for (final sort in StreamSort.values) {
+      await cache.fetchLiveStreamsPage(sort: sort);
+      await cache.fetchLiveStreamsPage(sort: sort);
+    }
+    await cache.fetchLiveStreamsPage(sort: StreamSort.viewersLowToHigh, cursor: "ascending-page-2");
+    expect(requests.map((variables) => (variables["options"]! as Map<String, Object?>)["sort"]), [
+      "RELEVANCE",
+      "VIEWER_COUNT",
+      "VIEWER_COUNT_ASC",
+      "VIEWER_COUNT_ASC",
+    ]);
+    expect(requests.last["after"], "ascending-page-2");
+  });
   test("a slow request cannot replace the result of a newer refresh", () async {
     final responses = <Completer<http.Response>>[];
     final cache = TwitchApiCache(

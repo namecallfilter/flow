@@ -242,7 +242,7 @@ http.Response _jsonResponse(Map<String, Object?> body) => http.Response(
   headers: {"content-type": "application/json"},
 );
 
-class _MemoryFlowPreferences implements FlowPreferences {
+class _MemoryFlowPreferences extends MemoryFlowPreferences {
   @override
   Future<bool> readAdProxyEnabled() async => false;
 

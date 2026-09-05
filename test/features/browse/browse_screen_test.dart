@@ -13,6 +13,7 @@ import "package:flow/features/browse/category_streams_store.dart";
 import "package:flow/features/following/following_screen.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/preferences/preferences.dart";
+import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flow/shared/widgets/avatar_ring.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
@@ -25,6 +26,38 @@ import "package:http/testing.dart";
 typedef _RequestObserver = void Function(http.Request request);
 
 void main() {
+  testWidgets("live sort picker saves the choice and sends a new server order", (tester) async {
+    final requests = <http.Request>[];
+    final preferences = MemoryFlowPreferences();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: BrowseScreen(
+          authController: _authController(onRequest: requests.add),
+          preferences: preferences,
+          periodicRefreshInterval: null,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    // Live channels have already been fetched while the Categories section is visible.
+    expect(
+      requests.where((request) => _isGraphQlOperation(request, "FlowTopStreams")),
+      hasLength(1),
+    );
+    await tester.tap(find.byKey(const ValueKey("browse_segment_live_channels")));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text("Viewers: High to Low"));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(CheckedPopupMenuItem<StreamSort>, "Recommended"));
+    await tester.pumpAndSettle();
+    final request = requests.lastWhere((request) => _isGraphQlOperation(request, "FlowTopStreams"));
+    expect(_graphQlVariables(request)["options"], {"sort": "RELEVANCE"});
+    expect(_graphQlVariables(request)["after"], isNull);
+    expect(await preferences.readStreamSort("browse"), StreamSort.recommended);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets("keeps loaded category streams visible after refresh errors", (tester) async {
     final apiCache = TwitchApiCache(
       clientLoader: () async => throw StateError("Unexpected request"),
@@ -251,7 +284,7 @@ void main() {
     expect(find.byKey(const ValueKey("bottom_nav_item_Live Channels")), findsOneWidget);
   });
 
-  testWidgets("uses the same content gap for Categories and Live Channels", (tester) async {
+  testWidgets("leaves room for the live sort picker after the section selector", (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(390, 1200);
     tester.view.padding = const FakeViewPadding(top: 59);
@@ -280,7 +313,8 @@ void main() {
     final liveGap =
         tester.getTopLeft(find.byType(StreamCard).first).dy - tester.getBottomLeft(selector).dy;
     expect(categoryGap, closeTo(AppSpacing.md, 0.1));
-    expect(liveGap, closeTo(categoryGap, 0.1));
+    final sortHeight = tester.getSize(find.byKey(const ValueKey("browse_stream_sort"))).height;
+    expect(liveGap, closeTo(categoryGap + sortHeight, 0.1));
   });
 
   testWidgets("matches stream skeleton geometry in Browse Live Channels", (tester) async {
@@ -628,7 +662,7 @@ void main() {
         of: find.byKey(const ValueKey("category_streams_title_Just Chatting")),
         matching: find.byKey(const ValueKey("scroll_reactive_header_clip")),
       ),
-      content: find.byType(StreamCard).first,
+      content: find.byKey(const ValueKey("category_stream_sort")),
     );
     expect(
       requestedRequests.any(
@@ -1626,7 +1660,7 @@ class _StaticCookieExtractor implements TwitchCookieExtractor {
   Future<String?> extractTwitchAuthToken() async => null;
 }
 
-class _MemorySearchHistoryStore implements FlowPreferences {
+class _MemorySearchHistoryStore extends MemoryFlowPreferences {
   @override
   Future<bool> readAdProxyEnabled() async => false;
 

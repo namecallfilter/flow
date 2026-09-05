@@ -1,3 +1,4 @@
+import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flutter/material.dart";
 import "package:shared_preferences/shared_preferences.dart";
 
@@ -17,6 +18,8 @@ abstract interface class FlowPreferences {
   Future<void> clearBrowseSearchHistory();
   Future<bool> readLoginOfferDismissed();
   Future<void> saveLoginOfferDismissed({required bool dismissed});
+  Future<StreamSort> readStreamSort(String section);
+  Future<void> saveStreamSort(String section, StreamSort sort);
 }
 
 abstract interface class FlowPreferencesStore {
@@ -73,6 +76,17 @@ class SharedPreferencesFlowPreferences implements FlowPreferences {
   static const loginOfferDismissedKey = "login_offer_dismissed";
 
   final FlowPreferencesStore _store;
+
+  @override
+  Future<StreamSort> readStreamSort(String section) async {
+    final value = await _store.getString("stream_sort_$section");
+    return StreamSort.values.where((sort) => sort.name == value).firstOrNull ??
+        StreamSort.viewersHighToLow;
+  }
+
+  @override
+  Future<void> saveStreamSort(String section, StreamSort sort) =>
+      _store.setString("stream_sort_$section", sort.name);
 
   @override
   Future<bool> readAdProxyEnabled() async => await _store.getString(adProxyEnabledKey) == "true";

@@ -1,5 +1,5 @@
-query FlowTopStreams($first: Int, $after: Cursor) {
-  streams(first: $first, after: $after) {
+query FlowTopStreams($first: Int, $after: Cursor, $options: StreamOptions) {
+  streams(first: $first, after: $after, options: $options) {
     edges {
       cursor
       node {

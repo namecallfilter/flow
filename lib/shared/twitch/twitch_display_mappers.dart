@@ -82,9 +82,10 @@ StreamChannel streamChannelFromStream(
     title: stream.title.isEmpty ? "Live now" : stream.title,
     category: stream.gameName.isEmpty ? "Live" : stream.gameName,
     viewers: formatCompactCount(stream.viewerCount),
+    viewerCount: stream.viewerCount,
     avatarColors: colorsForText(stream.userId),
     thumbnailColors: colorsForText(stream.id, count: 3),
-    avatarImageUrl: avatarImageUrl,
+    avatarImageUrl: avatarImageUrl ?? stream.profileImageUrl,
     thumbnailUrl: twitchThumbnailUrl(stream.thumbnailUrl),
     startedAt: stream.startedAt,
   );

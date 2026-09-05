@@ -4,10 +4,93 @@ import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/features/browse/browse_store.dart";
 import "package:flow/features/browse/category_streams_store.dart";
+import "package:flow/shared/preferences/preferences.dart";
+import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  test("changing browse order ignores old pages and starts with a fresh cursor", () async {
+    final cache = _DelayedLiveChannelsCache();
+    final store = BrowseStore(apiCache: cache);
+    final oldLoad = store.loadLiveChannels(reset: true);
+    final newLoad = store.selectStreamSort(StreamSort.viewersLowToHigh);
+    expect(cache.requests.last.sort, StreamSort.viewersLowToHigh);
+    expect(cache.requests.last.cursor, isNull);
+    cache.requests.last.response.complete(
+      const TwitchPage(data: [_thirdStream], cursor: "ascending-page-2"),
+    );
+    await newLoad;
+    cache.requests.first.response.complete(
+      const TwitchPage(data: [_firstStream], cursor: "descending-page-2"),
+    );
+    await oldLoad;
+    expect(store.liveChannels.single.id, "creator-3");
+    expect(store.liveChannelsCursor, "ascending-page-2");
+    expect(store.isLoadingLiveChannels, isFalse);
+  });
+
+  test("category order changes discard the previous in-flight request", () async {
+    final cache = _DelayedLiveChannelsCache();
+    final store = CategoryStreamsStore(
+      apiCache: cache,
+      category: browseCategoryFromApi(_firstCategory),
+    );
+    final oldLoad = store.loadStreams(reset: true);
+    final newLoad = store.selectStreamSort(StreamSort.recommended);
+    expect(cache.requests.last.sort, StreamSort.recommended);
+    cache.requests.first.response.completeError(TwitchApiException("Old request failed"));
+    await oldLoad;
+    expect(store.isLoading, isTrue);
+    expect(store.errorMessage, isNull);
+    cache.requests.last.response.complete(
+      const TwitchPage(data: [_thirdStream], cursor: null),
+    );
+    await newLoad;
+    expect(store.channels.single.id, "creator-3");
+  });
+
+  test("category refresh supersedes pending pagination without losing existing content", () async {
+    final cache = _DelayedLiveChannelsCache();
+    final store = CategoryStreamsStore(
+      apiCache: cache,
+      category: browseCategoryFromApi(_firstCategory),
+    );
+    final initial = store.loadStreams(reset: true);
+    cache.requests.single.response.complete(
+      const TwitchPage(data: [_firstStream], cursor: "old-page-2"),
+    );
+    await initial;
+    final pagination = store.loadStreams();
+    final refresh = store.loadStreams(reset: true, refresh: true);
+    expect(cache.requests.last.cursor, isNull);
+    expect(store.channels.single.id, "creator-1");
+    cache.requests.last.response.complete(
+      const TwitchPage(data: [_thirdStream], cursor: "fresh-page-2"),
+    );
+    await refresh;
+    cache.requests[1].response.complete(
+      const TwitchPage(data: [_secondStream], cursor: null),
+    );
+    await pagination;
+    expect(store.channels.single.id, "creator-3");
+    expect(store.cursor, "fresh-page-2");
+  });
+
+  test("live prefetch restores the saved order before its first request", () async {
+    final preferences = MemoryFlowPreferences();
+    await preferences.saveStreamSort("browse", StreamSort.recommended);
+    final cache = _DelayedLiveChannelsCache();
+    final store = BrowseStore(apiCache: cache, preferences: preferences);
+    final prefetch = store.loadLiveChannels(reset: true);
+    final duplicate = store.loadLiveChannels(reset: true);
+    await Future<void>.delayed(Duration.zero);
+    expect(cache.requests.single.sort, StreamSort.recommended);
+    cache.requests.single.response.complete(const TwitchPage(data: [], cursor: null));
+    await Future.wait([prefetch, duplicate]);
+    expect(store.liveChannelsLoaded, isTrue);
+  });
+
   test("failed category refresh preserves results and the next page", () async {
     final cache = _DelayedCategoriesCache();
     final store = BrowseStore(apiCache: cache);
@@ -373,6 +456,7 @@ class _OverlappingLiveChannelsCache extends TwitchApiCache {
     List<String> userLogins = const <String>[],
     String? cursor,
     bool refresh = false,
+    StreamSort sort = StreamSort.viewersHighToLow,
   }) async {
     if (refresh) {
       refreshRequests++;
@@ -436,6 +520,7 @@ class _DelayedLiveChannelsCache extends TwitchApiCache {
           String? cursor,
           bool refresh,
           Completer<TwitchPage<TwitchFollowedStream>> response,
+          StreamSort sort,
         })
       >[];
   final userRefreshes = <bool>[];
@@ -447,9 +532,10 @@ class _DelayedLiveChannelsCache extends TwitchApiCache {
     List<String> userLogins = const <String>[],
     String? cursor,
     bool refresh = false,
+    StreamSort sort = StreamSort.viewersHighToLow,
   }) {
     final response = Completer<TwitchPage<TwitchFollowedStream>>();
-    requests.add((cursor: cursor, refresh: refresh, response: response));
+    requests.add((cursor: cursor, refresh: refresh, response: response, sort: sort));
     return response.future;
   }
 

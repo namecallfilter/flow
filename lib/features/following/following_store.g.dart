@@ -150,6 +150,36 @@ mixin _$FollowingStore on FollowingStoreBase, Store {
     );
   }
 
+  late final _$streamSortAtom = Atom(
+    name: 'FollowingStoreBase.streamSort',
+    context: context,
+  );
+
+  @override
+  StreamSort get streamSort {
+    _$streamSortAtom.reportRead();
+    return super.streamSort;
+  }
+
+  @override
+  set streamSort(StreamSort value) {
+    _$streamSortAtom.reportWrite(value, super.streamSort, () {
+      super.streamSort = value;
+    });
+  }
+
+  late final _$selectStreamSortAsyncAction = AsyncAction(
+    'FollowingStoreBase.selectStreamSort',
+    context: context,
+  );
+
+  @override
+  Future<void> selectStreamSort(StreamSort sort) {
+    return _$selectStreamSortAsyncAction.run(
+      () => super.selectStreamSort(sort),
+    );
+  }
+
   late final _$loadSavedConnectionAsyncAction = AsyncAction(
     'FollowingStoreBase.loadSavedConnection',
     context: context,
@@ -209,6 +239,7 @@ sessionStatus: ${sessionStatus},
 isLoadingFollowing: ${isLoadingFollowing},
 followingError: ${followingError},
 offlineExpandedOverride: ${offlineExpandedOverride},
+streamSort: ${streamSort},
 liveChannels: ${liveChannels},
 offlineChannels: ${offlineChannels},
 profileUser: ${profileUser},

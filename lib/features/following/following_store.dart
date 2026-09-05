@@ -3,6 +3,8 @@ import "dart:async";
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
+import "package:flow/shared/preferences/preferences.dart";
+import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:mobx/mobx.dart";
@@ -23,10 +25,14 @@ abstract class FollowingStoreBase with Store {
   FollowingStoreBase({
     required this.authController,
     this.apiCache,
+    this.preferences,
   });
 
   final TwitchAuthController authController;
   final TwitchApiCache? apiCache;
+  final FlowPreferences? preferences;
+  Future<void>? _sortRestore;
+  int _sortRevision = 0;
   bool _hasAttemptedSavedConnection = false;
   Future<void>? _savedConnectionLoad;
   Future<void>? _savedConnectionRefresh;
@@ -47,12 +53,50 @@ abstract class FollowingStoreBase with Store {
   @observable
   bool? offlineExpandedOverride;
 
+  @observable
+  StreamSort streamSort = StreamSort.viewersHighToLow;
+
+  Future<void> restoreStreamSort() => _sortRestore ??= _restoreStreamSort();
+
+  Future<void> _restoreStreamSort() async {
+    final revision = _sortRevision;
+    try {
+      final saved = await preferences?.readStreamSort("following");
+      if (saved != null && revision == _sortRevision) {
+        runInAction(() => streamSort = saved);
+      }
+    } on Object {
+      // An unavailable preference store must not block following.
+    }
+  }
+
+  @action
+  Future<void> selectStreamSort(StreamSort sort) async {
+    _sortRevision++;
+    _sortRestore = Future<void>.value();
+    streamSort = sort;
+    try {
+      await preferences?.saveStreamSort("following", sort);
+    } on Object {
+      // Keep the selected order for this session if saving fails.
+    }
+  }
+
   @computed
   List<StreamChannel> get liveChannels {
     final currentConnection = connection;
-    return currentConnection == null
+    final channels = currentConnection == null
         ? const <StreamChannel>[]
         : liveChannelsFromConnection(currentConnection);
+    if (streamSort != StreamSort.recommended && channels.isNotEmpty) {
+      channels.sort((left, right) {
+        final viewers = streamSort == StreamSort.viewersLowToHigh
+            ? left.viewerCount.compareTo(right.viewerCount)
+            : right.viewerCount.compareTo(left.viewerCount);
+        return viewers != 0 ? viewers : left.login.compareTo(right.login);
+      });
+    }
+    return channels;
   }
 
   @computed
@@ -83,6 +127,9 @@ abstract class FollowingStoreBase with Store {
 
   @action
   Future<void> loadSavedConnection({bool refresh = false}) async {
+    if (preferences != null) {
+      await restoreStreamSort();
+    }
     final activeLoad = _savedConnectionLoad;
     if (activeLoad != null) {
       if (!refresh) {

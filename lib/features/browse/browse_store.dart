@@ -1,6 +1,9 @@
 import "dart:async";
 
+import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
+import "package:flow/shared/preferences/preferences.dart";
+import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:mobx/mobx.dart";
@@ -12,9 +15,12 @@ enum BrowseSection { categories, liveChannels }
 class BrowseStore = BrowseStoreBase with _$BrowseStore;
 
 abstract class BrowseStoreBase with Store {
-  BrowseStoreBase({required this.apiCache});
+  BrowseStoreBase({required this.apiCache, this.preferences});
 
   final TwitchApiCache apiCache;
+  final FlowPreferences? preferences;
+  Future<void>? _sortRestore;
+  int _liveChannelsRevision = 0;
   int _categoriesFirstPageLength = 0;
   int _liveChannelsFirstPageLength = 0;
   Future<void>? _categoriesLoad;
@@ -32,6 +38,48 @@ abstract class BrowseStoreBase with Store {
 
   @observable
   BrowseSection selectedSection = BrowseSection.categories;
+
+  @observable
+  StreamSort streamSort = StreamSort.viewersHighToLow;
+
+  Future<void> restoreStreamSort() => _sortRestore ??= _restoreStreamSort();
+
+  Future<void> _restoreStreamSort() async {
+    final revision = _liveChannelsRevision;
+    try {
+      final saved = await preferences?.readStreamSort("browse");
+      if (saved != null && revision == _liveChannelsRevision) {
+        runInAction(() => streamSort = saved);
+      }
+    } on Object {
+      // An unavailable preference store must not block browsing.
+    }
+  }
+
+  @action
+  Future<void> selectStreamSort(StreamSort sort) async {
+    if (sort == streamSort) {
+      return;
+    }
+    _liveChannelsRevision++;
+    _sortRestore = Future<void>.value();
+    streamSort = sort;
+    _liveChannelsLoad = null;
+    _liveChannelsRefreshQueued = false;
+    isLoadingLiveChannels = false;
+    liveChannelsLoaded = false;
+    liveChannels = const [];
+    liveChannelsCursor = null;
+    liveChannelsScrollOffset = 0;
+    _liveChannelsFirstPageLength = 0;
+    final load = loadLiveChannels(reset: true);
+    try {
+      await preferences?.saveStreamSort("browse", sort);
+    } on Object {
+      // Keep the selected order for this session if saving fails.
+    }
+    await load;
+  }
 
   @observable
   bool categoriesLoaded = false;
@@ -207,6 +255,9 @@ abstract class BrowseStoreBase with Store {
     bool refresh = false,
     bool preserveTail = false,
   }) async {
+    if (preferences != null) {
+      await restoreStreamSort();
+    }
     final activeLoad = _liveChannelsLoad;
     if (activeLoad != null) {
       if (refresh) {
@@ -222,6 +273,7 @@ abstract class BrowseStoreBase with Store {
     final operation = Completer<void>();
     final operationFuture = operation.future;
     _liveChannelsLoad = operationFuture;
+    final revision = _liveChannelsRevision;
     var nextReset = reset;
     var nextRefresh = refresh;
     var nextPreserveTail = preserveTail;
@@ -233,7 +285,7 @@ abstract class BrowseStoreBase with Store {
           refresh: nextRefresh,
           preserveTail: nextPreserveTail,
         );
-        if (!_liveChannelsRefreshQueued) {
+        if (revision != _liveChannelsRevision || !_liveChannelsRefreshQueued) {
           break;
         }
 
@@ -256,6 +308,7 @@ abstract class BrowseStoreBase with Store {
     required bool refresh,
     required bool preserveTail,
   }) async {
+    final revision = _liveChannelsRevision;
     isLoadingLiveChannels = true;
     liveChannelsError = null;
     final preservedCursor = liveChannelsCursor;
@@ -267,19 +320,26 @@ abstract class BrowseStoreBase with Store {
         : const <StreamChannel>[];
     try {
       final page = await apiCache.fetchLiveStreamsPage(
+        sort: streamSort,
         cursor: reset ? null : liveChannelsCursor,
         refresh: refresh,
       );
-      final usersById = await apiCache.fetchUsersByIds([
-        for (final stream in page.data) stream.userId,
-      ], refresh: refresh);
+      final missingAvatars = [
+        for (final stream in page.data)
+          if (stream.profileImageUrl == null) stream.userId,
+      ];
+      final usersById = missingAvatars.isEmpty
+          ? const <String, TwitchUser>{}
+          : await apiCache.fetchUsersByIds(missingAvatars, refresh: refresh);
+      if (revision != _liveChannelsRevision) {
+        return;
+      }
       final nextChannels = [
         for (final stream in page.data)
-          if (usersById.containsKey(stream.userId))
-            streamChannelFromStream(
-              stream,
-              avatarImageUrl: usersById[stream.userId]?.profileImageUrl,
-            ),
+          streamChannelFromStream(
+            stream,
+            avatarImageUrl: usersById[stream.userId]?.profileImageUrl,
+          ),
       ];
       var hasPreservedTail = false;
 
@@ -299,9 +359,13 @@ abstract class BrowseStoreBase with Store {
       liveChannelsCursor = hasPreservedTail ? preservedCursor : page.cursor;
       liveChannelsLoaded = true;
     } on Object catch (error) {
-      liveChannelsError = browseErrorMessage(error);
+      if (revision == _liveChannelsRevision) {
+        liveChannelsError = browseErrorMessage(error);
+      }
     } finally {
-      isLoadingLiveChannels = false;
+      if (revision == _liveChannelsRevision) {
+        isLoadingLiveChannels = false;
+      }
     }
   }
 

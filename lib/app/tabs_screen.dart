@@ -144,12 +144,14 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
       ..add(FlowRoutes.following)
       ..add(FlowRoutes.browse)
       ..add(_tabsStore.currentRoute);
-    _browseStore = widget.browseStore ?? BrowseStore(apiCache: _apiCache);
+    _browseStore =
+        widget.browseStore ?? BrowseStore(apiCache: _apiCache, preferences: _preferences);
     _followingStore =
         widget.followingStore ??
         FollowingStore(
           authController: _authController,
           apiCache: _apiCache,
+          preferences: _preferences,
         );
     if (widget.showLoginOnLaunch) {
       _initialSessionRestore = _restoreInitialSession();

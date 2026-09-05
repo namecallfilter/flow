@@ -2,6 +2,7 @@ import "dart:async";
 import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
+import "package:flow/shared/twitch/stream_sort.dart";
 
 typedef TwitchApiClientLoader = Future<TwitchApiClient> Function();
 
@@ -39,18 +40,21 @@ class TwitchApiCache {
     List<String> userLogins = const <String>[],
     String? cursor,
     bool refresh = false,
+    StreamSort sort = StreamSort.viewersHighToLow,
   }) => _cached(
     _cacheKey("liveStreams", {
       "first": first,
       "gameIds": gameIds,
       "userLogins": _normalizedValues(userLogins),
       "cursor": cursor,
+      "sort": sort.name,
     }),
     (client) => client.fetchLiveStreamsPage(
       first: first,
       gameIds: gameIds,
       userLogins: userLogins,
       cursor: cursor,
+      sort: sort,
     ),
     refresh: refresh,
   );

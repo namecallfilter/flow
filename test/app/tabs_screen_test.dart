@@ -14,6 +14,7 @@ import "package:flow/features/browse/browse_screen.dart";
 import "package:flow/features/browse/browse_store.dart";
 import "package:flow/features/following/following_store.dart";
 import "package:flow/shared/preferences/preferences.dart";
+import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flutter/cupertino.dart";
 import "package:flutter/material.dart";
@@ -681,7 +682,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey("browse_segment_live_channels")));
     await tester.pumpAndSettle();
     expect(topLiveStreamsRequests, 1);
-    await tester.drag(find.byType(CustomScrollView), const Offset(0, -1200));
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -1600));
     await tester.pumpAndSettle();
 
     final browseStore = tester.widget<BrowseScreen>(find.byType(BrowseScreen)).browseStore!;
@@ -1623,6 +1624,7 @@ class _DelayedTopLevelBrowseCache extends TwitchApiCache {
     int first = 20,
     List<String> gameIds = const <String>[],
     List<String> userLogins = const <String>[],
+    StreamSort sort = StreamSort.viewersHighToLow,
     String? cursor,
     bool refresh = false,
   }) {

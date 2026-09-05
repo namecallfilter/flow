@@ -35,6 +35,21 @@ scalar ReactionsContentKey
 scalar ReactionsContentType
 scalar ReadNotificationsInput
 scalar RecommendationsContext
+
+# Verified against Twitch GraphQL stream and game directory queries.
+enum StreamSort {
+  RELEVANCE
+  VIEWER_COUNT
+  VIEWER_COUNT_ASC
+}
+
+input StreamOptions {
+  sort: StreamSort
+}
+
+input GameStreamOptions {
+  sort: StreamSort
+}
 scalar RecordAdEventInput
 scalar RegenerateVerificationCodeInput
 scalar RemoveReactionByContentKeyInput
@@ -683,7 +698,7 @@ type Query {
   userByAttribute(input: UserByAttribute!): User
   userNotificationCampaigns(input: UserNotificationCampaignInput!): [NotificationCampaign]
   userResultByLogin(login: String!): UserResultByLogin
-  streams(after: Cursor, first: Int): FlowStreamConnection
+  streams(after: Cursor, first: Int, options: StreamOptions): FlowStreamConnection
   users(ids: [ID!], logins: [String!]): [User]
   verificationRequest(opaqueID: ID!): VerificationRequest
   video(id: ID, options: Query_Video_Options_Input): Video
@@ -2329,7 +2344,7 @@ type Game implements OnsiteNotificationContent & ShelfContentEdge_Node & TitleTo
   name: String
   originalReleaseDate: String
   slug: String
-  streams(after: Cursor, first: Int): FlowStreamConnection
+  streams(after: Cursor, first: Int, options: GameStreamOptions): FlowStreamConnection
   tags(limit: Int, tagType: Game_Tags_TagType_Enum): [Tag]
   viewersCount: Int
 }
@@ -4266,7 +4281,7 @@ type User implements Curator & OnsiteNotificationContent & ShelfContentEdge_Node
   email: String
   extensionID: ID
   followedGames(first: Int): [FollowedGame]
-  followedLiveUsers(after: Cursor, first: Int): FlowUserConnection
+  followedLiveUsers(after: Cursor, first: Int, sort: StreamSort): FlowUserConnection
   follows(after: Cursor, first: Int, order: SortOrder): FlowUserConnection
   followers: Follower
   hasPresto: Boolean

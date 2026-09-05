@@ -175,6 +175,10 @@ const documentNodeQueryFlowFollowedLiveUsers = DocumentNode(
                       name: NameNode(value: 'after'),
                       value: VariableNode(name: NameNode(value: 'after')),
                     ),
+                    ArgumentNode(
+                      name: NameNode(value: 'sort'),
+                      value: EnumValueNode(name: NameNode(value: 'RELEVANCE')),
+                    ),
                   ],
                   directives: [],
                   selectionSet: SelectionSetNode(

@@ -3,16 +3,19 @@
 import 'dart:async';
 import 'package:gql/ast.dart';
 import 'package:graphql/client.dart' as graphql;
+import 'schema.graphqls.dart';
 
 class Variables$Query$FlowGameStreams {
   factory Variables$Query$FlowGameStreams({
     String? id,
     int? first,
     String? after,
+    Input$GameStreamOptions? options,
   }) => Variables$Query$FlowGameStreams._({
     if (id != null) r'id': id,
     if (first != null) r'first': first,
     if (after != null) r'after': after,
+    if (options != null) r'options': options,
   });
 
   Variables$Query$FlowGameStreams._(this._$data);
@@ -31,6 +34,14 @@ class Variables$Query$FlowGameStreams {
       final l$after = data['after'];
       result$data['after'] = (l$after as String?);
     }
+    if (data.containsKey('options')) {
+      final l$options = data['options'];
+      result$data['options'] = l$options == null
+          ? null
+          : Input$GameStreamOptions.fromJson(
+              (l$options as Map<String, dynamic>),
+            );
+    }
     return Variables$Query$FlowGameStreams._(result$data);
   }
 
@@ -42,6 +53,9 @@ class Variables$Query$FlowGameStreams {
 
   String? get after => (_$data['after'] as String?);
 
+  Input$GameStreamOptions? get options =>
+      (_$data['options'] as Input$GameStreamOptions?);
+
   Map<String, dynamic> toJson() {
     final result$data = <String, dynamic>{};
     final l$id = _$data.containsKey('id') ? id : null;
@@ -50,6 +64,8 @@ class Variables$Query$FlowGameStreams {
     result$data['first'] = l$first;
     final l$after = _$data.containsKey('after') ? after : null;
     result$data['after'] = l$after;
+    final l$options = _$data.containsKey('options') ? options : null;
+    result$data['options'] = l$options?.toJson();
     return result$data;
   }
 
@@ -86,6 +102,14 @@ class Variables$Query$FlowGameStreams {
     if (l$after != lOther$after) {
       return false;
     }
+    final l$options = options;
+    final lOther$options = other.options;
+    if (_$data.containsKey('options') != other._$data.containsKey('options')) {
+      return false;
+    }
+    if (l$options != lOther$options) {
+      return false;
+    }
     return true;
   }
 
@@ -94,10 +118,12 @@ class Variables$Query$FlowGameStreams {
     final l$id = id;
     final l$first = first;
     final l$after = after;
+    final l$options = options;
     return Object.hashAll([
       _$data.containsKey('id') ? l$id : const {},
       _$data.containsKey('first') ? l$first : const {},
       _$data.containsKey('after') ? l$after : const {},
+      _$data.containsKey('options') ? l$options : const {},
     ]);
   }
 }
@@ -175,6 +201,15 @@ const documentNodeQueryFlowGameStreams = DocumentNode(
           defaultValue: DefaultValueNode(value: null),
           directives: [],
         ),
+        VariableDefinitionNode(
+          variable: VariableNode(name: NameNode(value: 'options')),
+          type: NamedTypeNode(
+            name: NameNode(value: 'GameStreamOptions'),
+            isNonNull: false,
+          ),
+          defaultValue: DefaultValueNode(value: null),
+          directives: [],
+        ),
       ],
       directives: [],
       selectionSet: SelectionSetNode(
@@ -202,6 +237,10 @@ const documentNodeQueryFlowGameStreams = DocumentNode(
                     ArgumentNode(
                       name: NameNode(value: 'after'),
                       value: VariableNode(name: NameNode(value: 'after')),
+                    ),
+                    ArgumentNode(
+                      name: NameNode(value: 'options'),
+                      value: VariableNode(name: NameNode(value: 'options')),
                     ),
                   ],
                   directives: [],

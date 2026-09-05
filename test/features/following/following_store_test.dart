@@ -5,6 +5,7 @@ import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
 import "package:flow/features/following/following_store.dart";
+import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:http/http.dart" as http;
 import "package:http/testing.dart";
@@ -12,6 +13,32 @@ import "package:http/testing.dart";
 typedef _RequestObserver = void Function(http.Request request);
 
 void main() {
+  test("following sorts exact viewer counts and preserves recommendation order", () async {
+    final store = FollowingStore(authController: _authController());
+    store.applyConnection(
+      TwitchAuthConnection(
+        user: const TwitchUser(id: "viewer", login: "viewer", displayName: "Viewer"),
+        followedChannels: const [],
+        followedStreams: [
+          for (final viewers in [999, 1001, 1000])
+            TwitchFollowedStream(
+              id: "$viewers",
+              userId: "$viewers",
+              userLogin: "$viewers",
+              userName: "$viewers",
+              gameName: "",
+              title: "",
+              viewerCount: viewers,
+            ),
+        ],
+      ),
+    );
+    expect(store.liveChannels.map((channel) => channel.viewerCount), [1001, 1000, 999]);
+    await store.selectStreamSort(StreamSort.viewersLowToHigh);
+    expect(store.liveChannels.map((channel) => channel.viewerCount), [999, 1000, 1001]);
+    await store.selectStreamSort(StreamSort.recommended);
+    expect(store.liveChannels.map((channel) => channel.viewerCount), [999, 1001, 1000]);
+  });
   test("keeps saved following data in memory until refresh", () async {
     var followedRequests = 0;
     final store = FollowingStore(

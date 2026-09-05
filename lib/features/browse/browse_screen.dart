@@ -4,6 +4,7 @@ import "dart:math" as math;
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
+import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/radius.dart";
 import "package:flow/app/routes.dart";
 import "package:flow/app/spacing.dart";
@@ -14,15 +15,18 @@ import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/following/following_screen.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/preferences/preferences.dart";
+import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flow/shared/widgets/app_bottom_nav.dart";
 import "package:flow/shared/widgets/avatar_ring.dart";
+import "package:flow/shared/widgets/flow_network_image.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flow/shared/widgets/page_header_title.dart";
 import "package:flow/shared/widgets/pull_to_refresh.dart";
 import "package:flow/shared/widgets/scroll_reactive_chrome.dart";
 import "package:flow/shared/widgets/skeleton.dart";
+import "package:flow/shared/widgets/stream_sort_button.dart";
 import "package:flutter/cupertino.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
@@ -80,11 +84,11 @@ class _BrowseScreenState extends State<BrowseScreen> {
     super.initState();
     _authController = widget.authController ?? _buildDefaultAuthController();
     _apiCache = widget.apiCache ?? TwitchApiCache(clientLoader: _loadApiClient);
-    _store = widget.browseStore ?? BrowseStore(apiCache: _apiCache);
+    _preferences = widget.preferences ?? MemoryFlowPreferences();
+    _store = widget.browseStore ?? BrowseStore(apiCache: _apiCache, preferences: _preferences);
     if (!widget.showLiveChannelsSection) {
       _store.selectSection(BrowseSection.categories);
     }
-    _preferences = widget.preferences ?? MemoryFlowPreferences();
     _searchStore = BrowseSearchStore(
       apiCache: _apiCache,
       preferences: _preferences,
@@ -96,9 +100,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
     if (!_store.categoriesLoaded) {
       unawaited(_store.loadCategories(reset: true));
     }
-    if (widget.showLiveChannelsSection &&
-        _store.selectedSection == BrowseSection.liveChannels &&
-        !_store.liveChannelsLoaded) {
+    if (widget.showLiveChannelsSection && !_store.liveChannelsLoaded) {
       unawaited(_store.loadLiveChannels(reset: true));
     }
   }
@@ -142,6 +144,13 @@ class _BrowseScreenState extends State<BrowseScreen> {
     if (section == BrowseSection.liveChannels && !_store.liveChannelsLoaded) {
       unawaited(_store.loadLiveChannels(reset: true));
     }
+  }
+
+  void _selectStreamSort(StreamSort sort) {
+    if (_scrollController.hasClients) {
+      _scrollController.jumpTo(0);
+    }
+    unawaited(_store.selectStreamSort(sort));
   }
 
   void _persistScrollOffset() {
@@ -216,6 +225,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
       () => CategoryStreamsStore(
         apiCache: _apiCache,
         category: category,
+        preferences: _preferences,
       ),
     );
     unawaited(
@@ -226,6 +236,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
             apiCache: _apiCache,
             category: category,
             categoryStreamsStore: store,
+            preferences: _preferences,
           ),
         ),
       ),
@@ -320,6 +331,14 @@ class _BrowseScreenState extends State<BrowseScreen> {
                           ),
                           const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.md)),
                         ],
+                        if (selectedSection == BrowseSection.liveChannels)
+                          SliverToBoxAdapter(
+                            child: StreamSortButton(
+                              key: const ValueKey("browse_stream_sort"),
+                              sort: _store.streamSort,
+                              onSelected: _selectStreamSort,
+                            ),
+                          ),
                         SliverOffstage(
                           key: const ValueKey("browse_categories_section"),
                           offstage: selectedSection != BrowseSection.categories,
@@ -523,6 +542,7 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
             authController: widget.authController,
             apiCache: widget.apiCache,
             category: category,
+            preferences: widget.preferences,
           ),
         ),
       ),
@@ -1276,12 +1296,14 @@ class CategoryStreamsScreen extends StatefulWidget {
     super.key,
     this.authController,
     this.categoryStreamsStore,
+    this.preferences,
   });
 
   final TwitchAuthController? authController;
   final TwitchApiCache apiCache;
   final BrowseCategory category;
   final CategoryStreamsStore? categoryStreamsStore;
+  final FlowPreferences? preferences;
 
   @override
   State<CategoryStreamsScreen> createState() => _CategoryStreamsScreenState();
@@ -1292,6 +1314,7 @@ class CategoryStreamsScreen extends StatefulWidget {
     properties.add(DiagnosticsProperty<TwitchAuthController?>("authController", authController));
     properties.add(DiagnosticsProperty<TwitchApiCache>("apiCache", apiCache));
     properties.add(DiagnosticsProperty<BrowseCategory>("category", category));
+    properties.add(DiagnosticsProperty<FlowPreferences?>("preferences", preferences));
     properties.add(
       DiagnosticsProperty<CategoryStreamsStore?>(
         "categoryStreamsStore",
@@ -1313,6 +1336,7 @@ class _CategoryStreamsScreenState extends State<CategoryStreamsScreen> {
         CategoryStreamsStore(
           apiCache: widget.apiCache,
           category: widget.category,
+          preferences: widget.preferences ?? AppSettingsScope.maybeOf(context)?.preferences,
         );
     _scrollController.addListener(_loadMoreWhenNearBottom);
     if (!_store.loaded) {
@@ -1383,27 +1407,43 @@ class _CategoryStreamsScreenState extends State<CategoryStreamsScreen> {
                     top: PageHeaderLayout.backButtonContentTopPadding + topSafeAreaInset,
                     bottom: bottomScrollPadding,
                   ),
-                  sliver: _RetainedBrowseSection(
-                    isLoading: _store.isLoading,
-                    hasItems: _store.channels.isNotEmpty,
-                    errorMessage: _store.errorMessage,
-                    loadingSkeleton: const _StreamListSkeleton(
-                      key: ValueKey("category_streams_skeleton"),
-                      semanticLabel: "Loading category streams",
-                      showCategories: false,
-                    ),
-                    child: _store.channels.isEmpty
-                        ? SliverToBoxAdapter(
-                            child: _StatusMessage(
-                              message: "No live channels streaming ${widget.category.name}.",
-                            ),
-                          )
-                        : _LiveChannelsList(
-                            channels: _store.channels,
-                            onChannelSelected: _openLiveChannel,
-                            onStreamSelected: _openPlayer,
-                            showCategories: false,
-                          ),
+                  sliver: SliverMainAxisGroup(
+                    slivers: [
+                      SliverToBoxAdapter(
+                        child: StreamSortButton(
+                          key: const ValueKey("category_stream_sort"),
+                          sort: _store.streamSort,
+                          onSelected: (sort) {
+                            if (_scrollController.hasClients) {
+                              _scrollController.jumpTo(0);
+                            }
+                            unawaited(_store.selectStreamSort(sort));
+                          },
+                        ),
+                      ),
+                      _RetainedBrowseSection(
+                        isLoading: _store.isLoading,
+                        hasItems: _store.channels.isNotEmpty,
+                        errorMessage: _store.errorMessage,
+                        loadingSkeleton: const _StreamListSkeleton(
+                          key: ValueKey("category_streams_skeleton"),
+                          semanticLabel: "Loading category streams",
+                          showCategories: false,
+                        ),
+                        child: _store.channels.isEmpty
+                            ? SliverToBoxAdapter(
+                                child: _StatusMessage(
+                                  message: "No live channels streaming ${widget.category.name}.",
+                                ),
+                              )
+                            : _LiveChannelsList(
+                                channels: _store.channels,
+                                onChannelSelected: _openLiveChannel,
+                                onStreamSelected: _openPlayer,
+                                showCategories: false,
+                              ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -1970,12 +2010,10 @@ class _CategoryThumbnail extends StatelessWidget {
       return fallback;
     }
 
-    return Image.network(
-      imageUrl,
-      fit: BoxFit.cover,
-      filterQuality: FilterQuality.high,
-      gaplessPlayback: true,
-      errorBuilder: (_, _, _) => fallback,
+    return FlowNetworkImage(
+      imageUrl: imageUrl,
+      kind: FlowImageKind.boxArt,
+      fallback: fallback,
     );
   }
 

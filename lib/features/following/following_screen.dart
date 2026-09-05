@@ -18,12 +18,14 @@ import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flow/shared/widgets/app_bottom_nav.dart";
 import "package:flow/shared/widgets/avatar_ring.dart";
+import "package:flow/shared/widgets/flow_network_image.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flow/shared/widgets/page_header_title.dart";
 import "package:flow/shared/widgets/pull_to_refresh.dart";
 import "package:flow/shared/widgets/scroll_reactive_chrome.dart";
 import "package:flow/shared/widgets/section_header.dart";
 import "package:flow/shared/widgets/skeleton.dart";
+import "package:flow/shared/widgets/stream_sort_button.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:flutter_mobx/flutter_mobx.dart";
@@ -78,6 +80,7 @@ class _FollowingScreenState extends State<FollowingScreen> {
   late final FollowingStore _store;
   late final BrowseStore? _browseStore;
   late final ReactionDisposer _sessionReaction;
+  late final ReactionDisposer _avatarReaction;
   final ScrollController _scrollController = ScrollController();
 
   @override
@@ -106,6 +109,18 @@ class _FollowingScreenState extends State<FollowingScreen> {
           unawaited(_loadAnonymousChannels());
         }
       },
+      fireImmediately: true,
+    );
+    _avatarReaction = reaction<List<String?>>(
+      (_) => _store.offlineChannels.map((channel) => channel.avatarImageUrl).toList(),
+      (urls) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            unawaited(precacheFlowAvatars(context, urls));
+          }
+        });
+      },
+      equals: listEquals,
       fireImmediately: true,
     );
     unawaited(_store.loadSavedConnection());
@@ -252,6 +267,7 @@ class _FollowingScreenState extends State<FollowingScreen> {
   @override
   void dispose() {
     _sessionReaction();
+    _avatarReaction();
     _scrollController.dispose();
     super.dispose();
   }
@@ -315,6 +331,17 @@ class _FollowingScreenState extends State<FollowingScreen> {
                   bottom: bottomScrollPadding,
                 ),
                 children: [
+                  StreamSortButton(
+                    key: const ValueKey("following_stream_sort"),
+                    sort: showsAnonymousChannels ? browseStore!.streamSort : _store.streamSort,
+                    onSelected: (sort) {
+                      if (showsAnonymousChannels) {
+                        unawaited(browseStore!.selectStreamSort(sort));
+                      } else {
+                        unawaited(_store.selectStreamSort(sort));
+                      }
+                    },
+                  ),
                   if (isLoadingInitialChannels)
                     _FollowingSkeleton(
                       viewportHeight: constraints.maxHeight - topSafeAreaInset,
@@ -1019,11 +1046,10 @@ class _ThumbnailBackground extends StatelessWidget {
       return fallback;
     }
 
-    return Image.network(
-      url,
-      fit: BoxFit.cover,
-      gaplessPlayback: true,
-      errorBuilder: (_, _, _) => fallback,
+    return FlowNetworkImage(
+      imageUrl: url,
+      kind: FlowImageKind.thumbnail,
+      fallback: fallback,
     );
   }
 

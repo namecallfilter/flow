@@ -1,6 +1,6 @@
-query FlowGameStreams($id: ID, $first: Int, $after: Cursor) {
+query FlowGameStreams($id: ID, $first: Int, $after: Cursor, $options: GameStreamOptions) {
   game(id: $id) {
-    streams(first: $first, after: $after) {
+    streams(first: $first, after: $after, options: $options) {
       edges {
         cursor
         node {

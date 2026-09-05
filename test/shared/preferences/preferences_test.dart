@@ -1,8 +1,17 @@
 import "package:flow/shared/preferences/preferences.dart";
+import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  test("stream orders persist independently for each section", () async {
+    final preferences = MemoryFlowPreferences();
+    await preferences.saveStreamSort("browse", StreamSort.recommended);
+    await preferences.saveStreamSort("following", StreamSort.viewersLowToHigh);
+    expect(await preferences.readStreamSort("browse"), StreamSort.recommended);
+    expect(await preferences.readStreamSort("following"), StreamSort.viewersLowToHigh);
+    expect(await preferences.readStreamSort("category"), StreamSort.viewersHighToLow);
+  });
   test("memory preferences use the same normalization and keep independent snapshots", () async {
     final preferences = MemoryFlowPreferences(themeMode: ThemeMode.dark);
     final channels = [" Creator ", "CREATOR"];

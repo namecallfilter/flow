@@ -1,6 +1,6 @@
 query FlowFollowedLiveUsers($first: Int, $after: Cursor) {
   currentUser {
-    followedLiveUsers(first: $first, after: $after) {
+    followedLiveUsers(first: $first, after: $after, sort: RELEVANCE) {
       edges {
         cursor
         node {

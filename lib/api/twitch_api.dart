@@ -12,6 +12,8 @@ import "package:flow/graphql/FlowSearchChannels.graphql.dart";
 import "package:flow/graphql/FlowTopGames.graphql.dart";
 import "package:flow/graphql/FlowTopStreams.graphql.dart";
 import "package:flow/graphql/FlowUsers.graphql.dart";
+import "package:flow/graphql/schema.graphqls.dart";
+import "package:flow/shared/twitch/stream_sort.dart";
 import "package:graphql/client.dart" as graphql;
 import "package:http/http.dart" as http;
 
@@ -48,6 +50,7 @@ class TwitchFollowedStream {
     required this.title,
     required this.viewerCount,
     this.thumbnailUrl,
+    this.profileImageUrl,
     this.startedAt,
     this.tags = const [],
   });
@@ -60,6 +63,7 @@ class TwitchFollowedStream {
   final String title;
   final int viewerCount;
   final String? thumbnailUrl;
+  final String? profileImageUrl;
   final DateTime? startedAt;
   final List<String> tags;
 }
@@ -478,11 +482,13 @@ class TwitchApiClient {
     int first = 20,
     List<String> gameIds = const [],
     List<String> userLogins = const [],
+    StreamSort sort = StreamSort.viewersHighToLow,
   }) async {
     final page = await fetchLiveStreamsPage(
       first: first,
       gameIds: gameIds,
       userLogins: userLogins,
+      sort: sort,
     );
     return page.data;
   }
@@ -492,6 +498,7 @@ class TwitchApiClient {
     List<String> gameIds = const [],
     List<String> userLogins = const [],
     String? cursor,
+    StreamSort sort = StreamSort.viewersHighToLow,
   }) async {
     final normalizedGameIds = _nonEmptyValues(gameIds);
     final normalizedUserLogins = _nonEmptyValues(userLogins);
@@ -502,19 +509,21 @@ class TwitchApiClient {
         first: first,
         cursor: cursor,
         userLogins: normalizedUserLogins,
+        sort: sort,
       );
     }
 
     if (normalizedUserLogins.isNotEmpty) {
-      return _fetchUserStreamsPage(normalizedUserLogins);
+      return _fetchUserStreamsPage(normalizedUserLogins, sort: sort);
     }
 
     final data = await _query(
-      () => _graphQlClient.query$FlowTopStreams(
+      () => _directoryGraphQlClient.query$FlowTopStreams(
         Options$Query$FlowTopStreams(
           variables: Variables$Query$FlowTopStreams(
             first: _boundedFirst(first, max: _maxTopStreamsPageSize),
             after: _nonEmptyValue(cursor),
+            options: Input$StreamOptions(sort: _graphQlStreamSort(sort)),
           ),
           fetchPolicy: graphql.FetchPolicy.noCache,
         ),
@@ -677,14 +686,16 @@ class TwitchApiClient {
     required int first,
     required String? cursor,
     required List<String> userLogins,
+    required StreamSort sort,
   }) async {
     final data = await _query(
-      () => _graphQlClient.query$FlowGameStreams(
+      () => _directoryGraphQlClient.query$FlowGameStreams(
         Options$Query$FlowGameStreams(
           variables: Variables$Query$FlowGameStreams(
             id: gameId,
             first: _boundedFirst(first),
             after: _nonEmptyValue(cursor),
+            options: Input$GameStreamOptions(sort: _graphQlStreamSort(sort)),
           ),
           fetchPolicy: graphql.FetchPolicy.noCache,
         ),
@@ -708,8 +719,9 @@ class TwitchApiClient {
   }
 
   Future<TwitchPage<TwitchFollowedStream>> _fetchUserStreamsPage(
-    List<String> userLogins,
-  ) async {
+    List<String> userLogins, {
+    required StreamSort sort,
+  }) async {
     final streams = <TwitchFollowedStream>[];
     for (final batch in _batches(userLogins)) {
       final data = await _query(
@@ -729,6 +741,13 @@ class TwitchApiClient {
       }
     }
 
+    if (sort != StreamSort.recommended) {
+      streams.sort(
+        (left, right) => sort == StreamSort.viewersLowToHigh
+            ? left.viewerCount.compareTo(right.viewerCount)
+            : right.viewerCount.compareTo(left.viewerCount),
+      );
+    }
     return TwitchPage<TwitchFollowedStream>(data: streams, cursor: null);
   }
 
@@ -770,6 +789,15 @@ class TwitchApiClient {
     }
     return _tokenGraphQlClient;
   }
+
+  graphql.GraphQLClient get _directoryGraphQlClient =>
+      _nonEmptyValue(gqlAccessToken) == null ? _graphQlClient : _tokenGraphQlClient;
+
+  static Enum$StreamSort _graphQlStreamSort(StreamSort sort) => switch (sort) {
+    StreamSort.recommended => Enum$StreamSort.RELEVANCE,
+    StreamSort.viewersHighToLow => Enum$StreamSort.VIEWER_COUNT,
+    StreamSort.viewersLowToHigh => Enum$StreamSort.VIEWER_COUNT_ASC,
+  };
 
   Future<Query$FlowPlaybackAccessToken> _fetchPlaybackAccessToken(String login) async {
     final options = Options$Query$FlowPlaybackAccessToken(
@@ -893,6 +921,7 @@ class TwitchApiClient {
       title: _stringValue(broadcastSettings?["title"]),
       viewerCount: _intValue(stream["viewersCount"]),
       thumbnailUrl: stream["previewImageURL"] as String?,
+      profileImageUrl: broadcaster["profileImageURL"] as String?,
       startedAt: _dateTimeValue(stream["createdAt"]),
       tags: tags,
     );

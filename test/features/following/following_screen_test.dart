@@ -599,7 +599,11 @@ void main() {
         .getTopLeft(find.byKey(const ValueKey("stream_card_content_padding_LiveOne")))
         .dy;
 
-    expect(firstCardTop - headerBottom, closeTo(PageHeaderLayout.headerContentGap, 0.1));
+    final sortHeight = tester.getSize(find.byKey(const ValueKey("following_stream_sort"))).height;
+    expect(
+      firstCardTop - headerBottom - sortHeight,
+      closeTo(PageHeaderLayout.headerContentGap, 0.1),
+    );
     expect(
       find.descendant(
         of: find.byKey(const ValueKey("frosted_top_bar")),
