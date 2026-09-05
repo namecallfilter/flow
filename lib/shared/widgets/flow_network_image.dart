@@ -9,6 +9,29 @@ enum FlowImageKind { avatar, thumbnail, boxArt }
 class FlowImagePolicy {
   static final FlowImagePolicy instance = FlowImagePolicy();
   double? _bytesPerSecond;
+  final _sizes = <(String, FlowImageKind, double, double), ({int width, int height})>{};
+
+  ({int width, int height}) _sizeFor(
+    String url,
+    FlowImageKind kind,
+    double logicalWidth,
+    double density,
+  ) {
+    final key = (url, kind, logicalWidth, density);
+    // Reuse prefetched image dimensions even if speed changes before display.
+    final size =
+        _sizes.remove(key) ??
+        flowImageSize(
+          kind: kind,
+          logicalWidth: logicalWidth,
+          devicePixelRatio: density,
+          pixelRatioLimit: pixelRatioLimit,
+        );
+    if (_sizes.length >= 128) {
+      _sizes.remove(_sizes.keys.first);
+    }
+    return _sizes[key] = size;
+  }
 
   double get pixelRatioLimit {
     final rate = _bytesPerSecond;
@@ -84,11 +107,11 @@ ImageProvider<Object> flowImageProvider(
   required double logicalWidth,
   required double devicePixelRatio,
 }) {
-  final size = flowImageSize(
-    kind: kind,
-    logicalWidth: logicalWidth,
-    devicePixelRatio: devicePixelRatio,
-    pixelRatioLimit: FlowImagePolicy.instance.pixelRatioLimit,
+  final size = FlowImagePolicy.instance._sizeFor(
+    url,
+    kind,
+    logicalWidth,
+    devicePixelRatio,
   );
   return ResizeImage.resizeIfNeeded(
     size.width,
@@ -130,21 +153,40 @@ class _ImageDownloadSample {
 
 /// Warm a small batch in Flutter's bounded image cache, using the row's key.
 Future<void> precacheFlowAvatars(BuildContext context, Iterable<String?> urls) async {
-  final density = MediaQuery.devicePixelRatioOf(context);
   final limit = FlowImagePolicy.instance.pixelRatioLimit <= 1.5 ? 8 : 24;
   final uniqueUrls = urls.whereType<String>().where((url) => url.isNotEmpty).toSet();
   for (final url in uniqueUrls.take(limit)) {
     if (!context.mounted) {
       return;
     }
-    final provider = flowImageProvider(
+    await precacheFlowImage(
+      context,
       url,
       kind: FlowImageKind.avatar,
       logicalWidth: 54,
-      devicePixelRatio: density,
     );
-    final sample = _ImageDownloadSample(provider, context);
+  }
+}
+
+Future<void> precacheFlowImage(
+  BuildContext context,
+  String? url, {
+  required FlowImageKind kind,
+  required double logicalWidth,
+}) async {
+  if (!context.mounted || url == null || url.isEmpty) {
+    return;
+  }
+  final provider = flowImageProvider(
+    url,
+    kind: kind,
+    logicalWidth: logicalWidth,
+    devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
+  );
+  final sample = _ImageDownloadSample(provider, context);
+  try {
     await precacheImage(provider, context, onError: (_, _) {});
+  } finally {
     sample.dispose();
   }
 }

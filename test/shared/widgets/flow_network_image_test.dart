@@ -1,4 +1,5 @@
 import "package:flow/shared/widgets/flow_network_image.dart";
+import "package:flutter/painting.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
@@ -57,5 +58,30 @@ void main() {
       flowImageSize(kind: FlowImageKind.boxArt, logicalWidth: 20, devicePixelRatio: 1),
       (width: 150, height: 200),
     );
+  });
+
+  test("prefetched image keys survive speed changes until their size hint is evicted", () {
+    ResizeImage provider(String id) =>
+        flowImageProvider(
+              "https://static-cdn.jtvnw.net/live_user_$id-320x180.jpg",
+              kind: FlowImageKind.thumbnail,
+              logicalWidth: 124,
+              devicePixelRatio: 3,
+            )
+            as ResizeImage;
+    final policy = FlowImagePolicy.instance
+      ..recordDownload(bytes: 8 * 1024 * 1024, elapsed: const Duration(seconds: 1));
+    final prefetched = provider("prefetched");
+    expect(prefetched.width, 384);
+    for (var index = 0; index < 20; index++) {
+      policy.recordDownload(bytes: 32 * 1024, elapsed: const Duration(seconds: 1));
+    }
+    expect(provider("prefetched"), prefetched);
+    expect(provider("new").width, 256);
+
+    for (var index = 0; index < 128; index++) {
+      provider("later$index");
+    }
+    expect(provider("prefetched").width, 256);
   });
 }

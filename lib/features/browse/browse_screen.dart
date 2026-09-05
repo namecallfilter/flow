@@ -31,6 +31,7 @@ import "package:flutter/cupertino.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:flutter_mobx/flutter_mobx.dart";
+import "package:mobx/mobx.dart";
 
 class BrowseScreen extends StatefulWidget {
   const BrowseScreen({
@@ -76,8 +77,10 @@ class _BrowseScreenState extends State<BrowseScreen> {
   late final BrowseStore _store;
   late final BrowseSearchStore _searchStore;
   late final FlowPreferences _preferences;
+  late final ReactionDisposer _liveImageReaction;
   final _categoryStores = <String, CategoryStreamsStore>{};
   bool _isRestoringScrollOffset = false;
+  int _imagePrefetchGeneration = 0;
 
   @override
   void initState() {
@@ -97,6 +100,19 @@ class _BrowseScreenState extends State<BrowseScreen> {
       initialScrollOffset: _store.scrollOffsetFor(_visibleSection),
     );
     _scrollController.addListener(_loadMoreWhenNearBottom);
+    _liveImageReaction = reaction<List<(String?, String?)>>(
+      (_) => _store.liveChannels.take(6).map((c) => (c.thumbnailUrl, c.avatarImageUrl)).toList(),
+      (images) {
+        final generation = ++_imagePrefetchGeneration;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && widget.showLiveChannelsSection) {
+            unawaited(_prefetchLiveImages(images, generation));
+          }
+        });
+      },
+      equals: listEquals,
+      fireImmediately: true,
+    );
     if (!_store.categoriesLoaded) {
       unawaited(_store.loadCategories(reset: true));
     }
@@ -124,9 +140,30 @@ class _BrowseScreenState extends State<BrowseScreen> {
 
   @override
   void dispose() {
+    _liveImageReaction();
     _persistScrollOffset();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  Future<void> _prefetchLiveImages(List<(String?, String?)> images, int generation) async {
+    final availableWidth = MediaQuery.sizeOf(context).width - AppSpacing.lg * 2 - 16;
+    final thumbnailWidth = availableWidth < 350 ? 116.0 : 124.0;
+    for (final (thumbnail, avatar) in images) {
+      if (!mounted || generation != _imagePrefetchGeneration) {
+        return;
+      }
+      await precacheFlowImage(
+        context,
+        thumbnail,
+        kind: FlowImageKind.thumbnail,
+        logicalWidth: thumbnailWidth,
+      );
+      if (!mounted || generation != _imagePrefetchGeneration) {
+        return;
+      }
+      await precacheFlowImage(context, avatar, kind: FlowImageKind.avatar, logicalWidth: 28);
+    }
   }
 
   Future<TwitchApiClient> _loadApiClient() => _loadBrowseApiClient(_authController);
