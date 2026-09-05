@@ -8,6 +8,15 @@ import org.junit.Test
 
 class InitialLiveLatencyCorrectionTest {
     @Test
+    fun longPauseOrLargeLatencyReloadsInsteadOfChasingSixSecondsOfOldBuffer() {
+        assertTrue(shouldReloadLivePlayback(pausedForMs = 60_000L))
+        assertTrue(shouldReloadLivePlayback(pausedForMs = 10_000L))
+        assertTrue(shouldReloadLivePlayback(measuredLatencyMs = 30_000L))
+        assertFalse(shouldReloadLivePlayback(pausedForMs = 1_000L, measuredLatencyMs = 2_000L))
+        assertFalse(shouldReloadLivePlayback())
+    }
+
+    @Test
     fun plannerSeeksToExactTranscRTargetWithoutUsingPartialBufferedEdge() {
         val plan = plan(
             measuredLatencyMs = 5_000L,

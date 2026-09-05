@@ -5,6 +5,14 @@ import org.junit.Test
 
 class TwitchPlayerQualityTest {
     @Test
+    fun qualityPreferenceUsesResolutionAndRoundedFrameRateInsteadOfTrackIndexes() {
+        assertEquals("video:1080:60", stableQualityId(1080, 59.94f))
+        assertEquals(stableQualityId(1080, 60f), stableQualityId(1080, 59.94f))
+        assertEquals("video:720:30", stableQualityId(720, 29.97f))
+        assertEquals("video:720:0", stableQualityId(720, -1f))
+    }
+
+    @Test
     fun selectedDuplicateRemainsVisible() {
         val visible = deduplicateQualities(
             qualities = listOf(

@@ -13,11 +13,13 @@ class Media3PlayerView extends StatelessWidget {
     required this.onControllerCreated,
     super.key,
     this.proxyUrls = const [],
+    this.initialQualityId = "auto",
   });
 
   final Uri uri;
   final Future<Uri> Function() playbackUriRefresher;
   final List<String> proxyUrls;
+  final String initialQualityId;
   final ValueChanged<TwitchPlayerController> onControllerCreated;
 
   static const unsupportedMessage = "Playback is available on Android.";
@@ -42,7 +44,11 @@ class Media3PlayerView extends StatelessWidget {
       viewType: "flow/twitch_player",
       layoutDirection: TextDirection.ltr,
       hitTestBehavior: PlatformViewHitTestBehavior.transparent,
-      creationParams: {"url": uri.toString(), "proxyUrls": proxyUrls},
+      creationParams: {
+        "url": uri.toString(),
+        "proxyUrls": proxyUrls,
+        "qualityId": initialQualityId,
+      },
       creationParamsCodec: const StandardMessageCodec(),
       onPlatformViewCreated: (viewId) {
         final controller = MethodChannelTwitchPlayerController(
@@ -66,6 +72,7 @@ class Media3PlayerView extends StatelessWidget {
       ),
     );
     properties.add(IntProperty("proxyUrlCount", proxyUrls.length));
+    properties.add(StringProperty("initialQualityId", initialQualityId));
     properties.add(
       ObjectFlagProperty<ValueChanged<TwitchPlayerController>>.has(
         "onControllerCreated",

@@ -5,6 +5,7 @@ import "package:flow/app/radius.dart";
 import "package:flow/app/routes.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 
 class AppBottomNav extends StatelessWidget {
   const AppBottomNav({
@@ -95,6 +96,7 @@ class AppBottomNav extends StatelessWidget {
       return;
     }
 
+    unawaited(HapticFeedback.selectionClick());
     final routeSelected = onRouteSelected;
     if (routeSelected != null) {
       routeSelected(routeName);

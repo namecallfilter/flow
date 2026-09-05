@@ -17,6 +17,136 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  testWidgets("Auto shows the current renderer quality and updates while the sheet is open", (
+    tester,
+  ) async {
+    final player = _FakePlayerController();
+    await tester.pumpWidget(_playerApp(player: player));
+    await tester.pump();
+    player.emit(
+      const TwitchQualitiesEvent(
+        qualities: [TwitchQualityOption(id: "video:1080:60", label: "1080p60")],
+        selectedId: "auto",
+        currentLabel: "1080p60",
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey("player_settings_button")));
+    await _pumpNavigation(tester);
+    expect(find.text("Auto · 1080p60"), findsOneWidget);
+    player.emit(
+      const TwitchQualitiesEvent(
+        qualities: [TwitchQualityOption(id: "video:1080:60", label: "1080p60")],
+        selectedId: "auto",
+        currentLabel: "720p60",
+      ),
+    );
+    await tester.pump();
+    expect(find.text("Auto · 720p60"), findsOneWidget);
+    expect(find.text("Auto · 1080p60"), findsNothing);
+  });
+
+  testWidgets("refresh retains the selected quality while replacing the surface", (tester) async {
+    final player = _FakePlayerController();
+    final refresh = Completer<Uri>();
+    var loads = 0;
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        playbackUriLoader: (_) async =>
+            ++loads == 1 ? Uri.parse("https://example.com/live.m3u8") : refresh.future,
+      ),
+    );
+    await tester.pump();
+    player.emit(
+      const TwitchQualitiesEvent(
+        qualities: [TwitchQualityOption(id: "video:1080:60", label: "1080p60")],
+        selectedId: "video:1080:60",
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey("player_refresh_button")));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey("player_settings_button")));
+    await _pumpNavigation(tester);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey("player_quality_auto")),
+        matching: find.byIcon(Icons.check_rounded),
+      ),
+      findsNothing,
+    );
+    refresh.complete(Uri.parse("https://example.com/refreshed.m3u8"));
+    await tester.pump();
+    expect(loads, 2);
+  });
+
+  testWidgets("native recovery refreshes once and preserves a pause made while loading", (
+    tester,
+  ) async {
+    final player = _FakePlayerController();
+    final refresh = Completer<Uri>();
+    var loads = 0;
+    var surfaces = 0;
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        onSurfaceCreated: () => surfaces++,
+        playbackUriLoader: (_) async =>
+            ++loads == 1 ? Uri.parse("https://example.com/live.m3u8") : refresh.future,
+      ),
+    );
+    await tester.pump();
+    player.emit(const TwitchPlaybackReloadEvent());
+    player.emit(const TwitchPlaybackReloadEvent());
+    await tester.pump();
+    expect(loads, 2);
+    player.emit(
+      const TwitchPlaybackStateEvent(
+        isPlaying: false,
+        isBuffering: false,
+        playWhenReady: false,
+      ),
+    );
+    await tester.pump();
+    refresh.complete(Uri.parse("https://example.com/refreshed.m3u8"));
+    await tester.pump();
+    expect(surfaces, 2);
+    expect(player._pauseCount, 1);
+    expect(player._playCount, 0);
+  });
+
+  testWidgets("only category text navigates and metadata can be held for a preview", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final player = _FakePlayerController();
+    await tester.pumpWidget(_playerApp(player: player, apiCache: _navigationApiCache()));
+    await tester.pump();
+    final category = tester.getRect(find.byKey(const ValueKey("player_category_button")));
+    await tester.tapAt(Offset(category.right + 12, category.center.dy));
+    await _pumpNavigation(tester);
+    expect(find.byKey(const ValueKey("category_streams_page_Just Chatting")), findsNothing);
+    expect(player._pauseCount, 0);
+    await tester.tap(find.byKey(const ValueKey("player_surface_tap_target")));
+    await tester.pump(const Duration(milliseconds: 200));
+    for (final entry in {
+      "player_name_and_title": "A precise stream title",
+      "player_live_duration": "Live for 1:02:03",
+      "player_viewers": "12.3K viewers",
+      "player_latency": "Live latency unavailable",
+    }.entries) {
+      await tester.longPress(find.byKey(ValueKey(entry.key)));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.text(entry.value), findsOneWidget);
+      Tooltip.dismissAllToolTips();
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+  });
+
   test("subscription sync preserves manual whitelist entries", () async {
     final preferences = SharedPreferencesFlowPreferences(store: _MemoryPreferencesStore());
     await preferences.saveAdProxyWhitelistedChannels(["manual"]);

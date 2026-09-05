@@ -27,6 +27,8 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DecoderReuseEvaluation
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
@@ -48,6 +50,7 @@ internal class TwitchPlayerView(
     messenger: BinaryMessenger,
     viewId: Int,
     private val initialUrl: String?,
+    initialQualityId: String,
     private val proxyUrls: List<String>,
 ) : PlatformView {
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -71,7 +74,8 @@ internal class TwitchPlayerView(
     private var lastPrimaryLatencyRealtimeMs: Long? = null
     private var latestError: String? = null
     private var latestQualities: List<Map<String, Any?>> = emptyList()
-    private var selectedQualityId = AUTO_QUALITY_ID
+    private var selectedQualityId = initialQualityId
+    private var currentQualityLabel: String? = null
     private val qualityOverrides = mutableMapOf<String, TrackSelectionOverride>()
     private val adCues = mutableMapOf<String, TwitchAdCue>()
     private val stitchedAdLatencyFallback = StitchedAdLatencyFallback()
@@ -82,12 +86,23 @@ internal class TwitchPlayerView(
     private var lastCorrectionWaitReason: String? = null
     private var initialized = false
     private var disposed = false
+    private var pausedAtRealtimeMs: Long? = null
+    private var correctionRequestedAtRealtimeMs: Long? = null
+    private var recoveryRequested = false
     private val adProgressTicker = object : Runnable {
         override fun run() {
             if (disposed) {
                 return
             }
             updateAdProgress()
+            val correctionStartedAt = correctionRequestedAtRealtimeMs
+            if (
+                player.playWhenReady &&
+                correctionStartedAt != null &&
+                SystemClock.elapsedRealtime() - correctionStartedAt >= CORRECTION_TIMEOUT_MS
+            ) {
+                requestPlaybackReload("live correction timed out")
+            }
             mainHandler.postDelayed(this, AD_PROGRESS_INTERVAL_MS)
         }
     }
@@ -117,6 +132,11 @@ internal class TwitchPlayerView(
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             if (!playWhenReady) {
                 latestCorrectionMeasurement = null
+                pausedAtRealtimeMs = SystemClock.elapsedRealtime()
+                correctionRequestedAtRealtimeMs = null
+                latencyCorrection.reset()
+            } else {
+                pausedAtRealtimeMs = null
             }
             maybeApplyPendingLatencyCorrection()
             emitState()
@@ -172,6 +192,19 @@ internal class TwitchPlayerView(
         player.setHandleAudioBecomingNoisy(true)
         player.playWhenReady = true
         player.addListener(playbackListener)
+        player.addAnalyticsListener(object : AnalyticsListener {
+            override fun onVideoInputFormatChanged(
+                eventTime: AnalyticsListener.EventTime,
+                format: Format,
+                decoderReuseEvaluation: DecoderReuseEvaluation?,
+            ) {
+                val label = qualityLabel(format)
+                if (currentQualityLabel != label) {
+                    currentQualityLabel = label
+                    emitQualities()
+                }
+            }
+        })
         playerView.player = player
         playerView.setShutterBackgroundColor(Color.BLACK)
         Log.d(
@@ -268,7 +301,7 @@ internal class TwitchPlayerView(
         adCues.clear()
         stitchedAdLatencyFallback.reset()
         qualityOverrides.clear()
-        selectedQualityId = AUTO_QUALITY_ID
+        currentQualityLabel = null
         clearVideoTrackOverride()
         hasRenderedFirstFrame = false
         latestCorrectionMeasurement = null
@@ -453,7 +486,20 @@ internal class TwitchPlayerView(
     }
 
     private fun requestLatencyCorrection(reason: LiveLatencyCorrectionReason) {
+        // A new deliberate action may retry a URI refresh that previously failed.
+        recoveryRequested = false
         val nowRealtimeMs = SystemClock.elapsedRealtime()
+        val pausedForMs = pausedAtRealtimeMs?.let { nowRealtimeMs - it }
+        val reload = shouldReloadLivePlayback(
+            pausedForMs = pausedForMs,
+            measuredLatencyMs = latestCorrectionMeasurement?.latencyMs,
+        ) || player.playerError != null
+        player.play()
+        if (reload) {
+            requestPlaybackReload("stale live playback on ${reason.name.lowercase()}")
+            return
+        }
+        correctionRequestedAtRealtimeMs = nowRealtimeMs
         val useImmediateMeasurement = shouldUseImmediateLatencyCorrection(
             reason = reason,
             isPlaying = player.isPlaying,
@@ -478,8 +524,18 @@ internal class TwitchPlayerView(
             )
         }
         logLatencyCorrectionArmed(reason, measurementBarrier, useImmediateMeasurement)
-        player.play()
         maybeApplyPendingLatencyCorrection()
+    }
+
+    private fun requestPlaybackReload(reason: String) {
+        if (recoveryRequested || disposed || !player.playWhenReady) {
+            return
+        }
+        recoveryRequested = true
+        correctionRequestedAtRealtimeMs = null
+        latencyCorrection.reset()
+        Log.d(LOG_TAG, "reloading playback: $reason")
+        emit(mapOf("type" to "reload"))
     }
 
     private fun maybeApplyPendingLatencyCorrection(): Boolean {
@@ -498,6 +554,13 @@ internal class TwitchPlayerView(
         val measurement = latestCorrectionMeasurement
         if (measurement == null) {
             logLatencyCorrectionWait("post-action latency measurement")
+            return false
+        }
+        if (
+            correctionRequestedAtRealtimeMs != null &&
+            shouldReloadLivePlayback(measuredLatencyMs = measurement.latencyMs)
+        ) {
+            requestPlaybackReload("measured live latency exceeds correction window")
             return false
         }
         val measurementAgeMs = SystemClock.elapsedRealtime() - measurement.measuredRealtimeMs
@@ -554,6 +617,7 @@ internal class TwitchPlayerView(
                 return true
             }
             LiveLatencyCorrectionOutcome.COMPLETE -> {
+                correctionRequestedAtRealtimeMs = null
                 lastCorrectionWaitReason = null
                 Log.d(
                     LOG_TAG,
@@ -582,6 +646,9 @@ internal class TwitchPlayerView(
                     "latency correction retry limit reason=${decision.reason} " +
                         "latency=${measurement.latencyMs}ms; continuing bounded speed catch-up",
                 )
+                if (correctionRequestedAtRealtimeMs != null) {
+                    requestPlaybackReload("bounded correction did not reach live edge")
+                }
             }
             LiveLatencyCorrectionOutcome.INVALID_INPUT -> {
                 latestCorrectionMeasurement = null
@@ -679,9 +746,9 @@ internal class TwitchPlayerView(
     private fun updateQualities(tracks: Tracks) {
         qualityOverrides.clear()
         val qualities = mutableListOf<Map<String, Any?>>()
-        tracks.groups.forEachIndexed { groupIndex, group ->
+        tracks.groups.forEach { group ->
             if (group.type != C.TRACK_TYPE_VIDEO) {
-                return@forEachIndexed
+                return@forEach
             }
             for (trackIndex in 0 until group.length) {
                 if (!group.isTrackSupported(trackIndex)) {
@@ -691,7 +758,10 @@ internal class TwitchPlayerView(
                 if (format.height <= 0) {
                     continue
                 }
-                val id = "$groupIndex:$trackIndex"
+                val id = stableQualityId(format.height, format.frameRate)
+                if (id in qualityOverrides) {
+                    continue
+                }
                 qualityOverrides[id] = TrackSelectionOverride(
                     group.mediaTrackGroup,
                     trackIndex,
@@ -708,9 +778,18 @@ internal class TwitchPlayerView(
         }
         val visibleQualities = deduplicateQualities(qualities, selectedQualityId)
         val selectedQualityIsVisible = visibleQualities.any { it["id"] == selectedQualityId }
-        if (selectedQualityId != AUTO_QUALITY_ID && !selectedQualityIsVisible) {
-            clearVideoTrackOverride()
-            selectedQualityId = AUTO_QUALITY_ID
+        if (selectedQualityId != AUTO_QUALITY_ID && visibleQualities.isNotEmpty()) {
+            val override = qualityOverrides[selectedQualityId]
+            if (override != null) {
+                player.trackSelectionParameters = player.trackSelectionParameters
+                    .buildUpon()
+                    .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+                    .setOverrideForType(override)
+                    .build()
+            } else if (!selectedQualityIsVisible) {
+                clearVideoTrackOverride()
+                selectedQualityId = AUTO_QUALITY_ID
+            }
         }
         latestQualities = visibleQualities.map { quality ->
             mapOf(
@@ -798,6 +877,7 @@ internal class TwitchPlayerView(
                 "type" to "qualities",
                 "qualities" to latestQualities,
                 "selectedId" to selectedQualityId,
+                "currentLabel" to currentQualityLabel,
             ),
         )
     }
@@ -868,8 +948,14 @@ internal class TwitchPlayerView(
         const val CORRECTION_TARGET_TOLERANCE_MS = 100L
         const val CORRECTION_MEASUREMENT_MAX_AGE_MS = 2500L
         const val MAX_CORRECTION_SEEK_ATTEMPTS = 3
+        const val CORRECTION_TIMEOUT_MS = 8_000L
     }
 }
+
+// A manifest's group/track indexes and bitrates can change on refresh. Resolution
+// and frame rate express the viewer's choice across those regenerated manifests.
+internal fun stableQualityId(height: Int, frameRate: Float): String =
+    "video:$height:${if (frameRate > 0) frameRate.roundToInt() else 0}"
 
 internal fun deduplicateQualities(
     qualities: List<Map<String, Any?>>,

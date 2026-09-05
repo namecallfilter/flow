@@ -251,3 +251,10 @@ internal fun shouldUseImmediateLatencyCorrection(
     val ageMs = nowRealtimeMs - measurement.measuredRealtimeMs
     return ageMs in 0..maximumAgeMs
 }
+
+// The player buffers at most six seconds. Several buffered-only seeks cannot
+// catch a long pause; reload a fresh live playlist instead of chasing old media.
+internal fun shouldReloadLivePlayback(
+    pausedForMs: Long? = null,
+    measuredLatencyMs: Long? = null,
+): Boolean = (pausedForMs ?: 0L) >= 10_000L || (measuredLatencyMs ?: 0L) >= 10_000L

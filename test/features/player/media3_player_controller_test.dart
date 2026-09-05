@@ -7,6 +7,40 @@ import "package:flutter_test/flutter_test.dart";
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test("decodes rendered quality and playback recovery events", () async {
+    const viewId = 47;
+    const eventChannel = MethodChannel("flow/twitch_player/$viewId/events");
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(eventChannel, (_) async => null);
+    addTearDown(() => messenger.setMockMethodCallHandler(eventChannel, null));
+    final controller = MethodChannelTwitchPlayerController(
+      viewId,
+      playbackUriRefresher: () async => Uri.parse("https://example.com/live.m3u8"),
+    );
+    final events = <TwitchPlayerEvent>[];
+    final subscription = controller.events.listen(events.add);
+    await Future<void>.delayed(Duration.zero);
+    for (final event in [
+      {
+        "type": "qualities",
+        "qualities": <Object?>[],
+        "selectedId": "auto",
+        "currentLabel": "1080p60",
+      },
+      {"type": "reload"},
+    ]) {
+      await messenger.handlePlatformMessage(
+        eventChannel.name,
+        eventChannel.codec.encodeSuccessEnvelope(event),
+        (_) {},
+      );
+    }
+    expect((events.first as TwitchQualitiesEvent).currentLabel, "1080p60");
+    expect(events.last, isA<TwitchPlaybackReloadEvent>());
+    await subscription.cancel();
+    controller.dispose();
+  });
+
   test("events uses one broadcast platform subscription", () async {
     const viewId = 41;
     const eventMethodChannel = MethodChannel("flow/twitch_player/$viewId/events");

@@ -2,6 +2,7 @@ import "dart:async";
 
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 
 class FlowPullToRefresh extends StatefulWidget {
   const FlowPullToRefresh({
@@ -203,6 +204,7 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> with WidgetsBindi
       _pullExtent = widget.triggerDistance;
     });
 
+    unawaited(HapticFeedback.mediumImpact());
     try {
       await widget.onRefresh();
     } finally {

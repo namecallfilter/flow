@@ -14,6 +14,7 @@ import "package:flow/shared/widgets/scroll_reactive_chrome.dart";
 import "package:flutter/cupertino.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:flutter_mobx/flutter_mobx.dart";
 
 class SettingsScreen extends StatefulWidget {
@@ -123,6 +124,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
     setState(() => _isSaving = true);
+    unawaited(HapticFeedback.selectionClick());
     try {
       await change();
     } on Object catch (error) {

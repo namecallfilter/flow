@@ -50,10 +50,16 @@ class TwitchQualitiesEvent extends TwitchPlayerEvent {
   const TwitchQualitiesEvent({
     required this.qualities,
     required this.selectedId,
+    this.currentLabel,
   });
 
   final List<TwitchQualityOption> qualities;
   final String selectedId;
+  final String? currentLabel;
+}
+
+class TwitchPlaybackReloadEvent extends TwitchPlayerEvent {
+  const TwitchPlaybackReloadEvent();
 }
 
 class TwitchPlayerErrorEvent extends TwitchPlayerEvent {
@@ -180,7 +186,10 @@ TwitchPlayerEvent? _decodeEvent(Object? rawEvent) {
       return TwitchQualitiesEvent(
         qualities: qualities,
         selectedId: rawEvent["selectedId"]?.toString() ?? "auto",
+        currentLabel: rawEvent["currentLabel"] as String?,
       );
+    case "reload":
+      return const TwitchPlaybackReloadEvent();
     case "error":
       final message = rawEvent["message"]?.toString().trim() ?? "";
       return TwitchPlayerErrorEvent(

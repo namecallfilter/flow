@@ -134,6 +134,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   bool _appIsResumed = true;
   bool _openingDestination = false;
   bool _playerForcedLandscape = false;
+  bool _playbackReloadInFlight = false;
   int _loadGeneration = 0;
   int _playbackSessionGeneration = 0;
   Future<void> _displayModeTail = Future<void>.value();
@@ -217,9 +218,9 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     }
     final generation = ++_loadGeneration;
     if (refresh) {
-      _qualitySettings.value = const _QualitySettingsState(
+      _qualitySettings.value = _QualitySettingsState(
         qualities: [],
-        selectedId: "auto",
+        selectedId: _qualitySettings.value.selectedId,
       );
     }
     setState(() {
@@ -386,7 +387,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         }
       },
     );
-    if (_openingDestination || !_appIsResumed) {
+    if (_openingDestination || !_appIsResumed || !_playWhenReady) {
       unawaited(controller.pause());
     }
   }
@@ -434,11 +435,19 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
           _activeAd = null;
           _errorMessage = message;
         });
-      case TwitchQualitiesEvent(:final qualities, :final selectedId):
+      case TwitchQualitiesEvent(:final qualities, :final selectedId, :final currentLabel):
         _qualitySettings.value = _QualitySettingsState(
           qualities: List.unmodifiable(qualities),
           selectedId: selectedId,
+          currentLabel: currentLabel,
         );
+      case TwitchPlaybackReloadEvent():
+        if (!_playbackReloadInFlight && _appIsResumed && !_openingDestination) {
+          _playbackReloadInFlight = true;
+          unawaited(
+            _loadPlaybackUri(refresh: true).whenComplete(() => _playbackReloadInFlight = false),
+          );
+        }
     }
   }
 
@@ -461,6 +470,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   }
 
   Future<void> _togglePlayback() async {
+    unawaited(HapticFeedback.selectionClick());
     setState(() => _controlsVisible = true);
     await _playerController?.togglePlayback();
   }
@@ -584,6 +594,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
             builder: (_) => CategoryStreamsScreen(
               apiCache: widget.apiCache,
               category: destination,
+              preferences: widget.preferences ?? AppSettingsScope.maybeOf(context)?.preferences,
             ),
           ),
         );
@@ -646,6 +657,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       channel: widget.channel,
       playbackUri: _playbackUri,
       proxyUrls: _proxyUrls,
+      initialQualityId: _qualitySettings.value.selectedId,
       playbackSessionGeneration: playbackSessionGeneration,
       playbackSupported: _playbackSupported,
       playerSurfaceBuilder: widget.playerSurfaceBuilder,
@@ -743,6 +755,7 @@ class _PlayerViewport extends StatelessWidget {
     required this.channel,
     required this.playbackUri,
     required this.proxyUrls,
+    required this.initialQualityId,
     required this.playbackSessionGeneration,
     required this.playbackSupported,
     required this.playerSurfaceBuilder,
@@ -771,6 +784,7 @@ class _PlayerViewport extends StatelessWidget {
   final StreamChannel channel;
   final Uri? playbackUri;
   final List<String> proxyUrls;
+  final String initialQualityId;
   final int playbackSessionGeneration;
   final bool playbackSupported;
   final PlayerSurfaceBuilder? playerSurfaceBuilder;
@@ -829,6 +843,7 @@ class _PlayerViewport extends StatelessWidget {
                       uri: uri,
                       playbackUriRefresher: playbackUriRefresher,
                       proxyUrls: proxyUrls,
+                      initialQualityId: initialQualityId,
                       onControllerCreated: onControllerCreated,
                     )
                   : playerSurfaceBuilder!(context, uri, onControllerCreated),
@@ -932,6 +947,7 @@ class _PlayerViewport extends StatelessWidget {
     properties.add(DiagnosticsProperty<StreamChannel>("channel", channel));
     properties.add(DiagnosticsProperty<Uri?>("playbackUri", playbackUri));
     properties.add(IntProperty("proxyUrlCount", proxyUrls.length));
+    properties.add(StringProperty("initialQualityId", initialQualityId));
     properties.add(IntProperty("playbackSessionGeneration", playbackSessionGeneration));
     properties.add(
       FlagProperty(
@@ -1111,49 +1127,55 @@ class _PlayerHeader extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text.rich(
-              TextSpan(
-                children: [
-                  TextSpan(
-                    text: channel.name,
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                  if (channel.title.isNotEmpty)
+            Tooltip(
+              message: channel.title.isEmpty ? channel.name : channel.title,
+              showDuration: const Duration(seconds: 5),
+              enableFeedback: true,
+              child: Text.rich(
+                TextSpan(
+                  children: [
                     TextSpan(
-                      text: "  ${channel.title}",
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.82),
-                        fontWeight: FontWeight.w600,
-                      ),
+                      text: channel.name,
+                      style: const TextStyle(fontWeight: FontWeight.w800),
                     ),
-                ],
-              ),
-              key: const ValueKey("player_name_and_title"),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 15,
+                    if (channel.title.isNotEmpty)
+                      TextSpan(
+                        text: "  ${channel.title}",
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.82),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                  ],
+                ),
+                key: const ValueKey("player_name_and_title"),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                ),
               ),
             ),
             const SizedBox(height: 2),
-            Semantics(
-              button: true,
-              label: "Open ${channel.category} category",
-              child: GestureDetector(
-                key: const ValueKey("player_category_button"),
-                behavior: HitTestBehavior.opaque,
-                onTap: onCategoryTap,
-                child: Row(
-                  key: const ValueKey("player_category_row"),
-                  children: [
-                    Icon(
-                      Icons.category_rounded,
-                      color: Colors.white.withValues(alpha: 0.78),
-                      size: 14,
-                    ),
-                    const SizedBox(width: 4),
-                    Flexible(
+            Row(
+              key: const ValueKey("player_category_row"),
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.category_rounded,
+                  color: Colors.white.withValues(alpha: 0.78),
+                  size: 14,
+                ),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Semantics(
+                    button: true,
+                    label: "Open ${channel.category} category",
+                    child: GestureDetector(
+                      key: const ValueKey("player_category_button"),
+                      behavior: HitTestBehavior.opaque,
+                      onTap: onCategoryTap,
                       child: Text(
                         channel.category,
                         maxLines: 1,
@@ -1165,9 +1187,9 @@ class _PlayerHeader extends StatelessWidget {
                         ),
                       ),
                     ),
-                  ],
+                  ),
                 ),
-              ),
+              ],
             ),
           ],
         ),
@@ -1238,17 +1260,27 @@ class _PlayerFooter extends StatelessWidget {
                 _OverlayMetric(
                   key: const ValueKey("player_live_duration"),
                   text: _formatLiveDuration(liveDuration),
+                  tooltip: liveDuration == null
+                      ? "Broadcast duration unavailable"
+                      : "Live for ${_formatLiveDuration(liveDuration)}",
                 ),
                 const SizedBox(width: AppSpacing.md),
                 const Icon(Icons.visibility_rounded, color: Colors.white, size: 19),
                 const SizedBox(width: 5),
-                _OverlayMetric(text: viewers),
+                _OverlayMetric(
+                  key: const ValueKey("player_viewers"),
+                  text: viewers,
+                  tooltip: "$viewers viewers",
+                ),
                 const SizedBox(width: AppSpacing.md),
                 const Icon(Icons.speed_rounded, color: Colors.white, size: 19),
                 const SizedBox(width: 5),
                 _OverlayMetric(
                   key: const ValueKey("player_latency"),
                   text: _formatLatency(latencyMs),
+                  tooltip: latencyMs == null
+                      ? "Live latency unavailable"
+                      : "${_formatLatency(latencyMs)} behind live",
                 ),
               ],
             ),
@@ -1408,10 +1440,12 @@ class _QualitySettingsState {
   const _QualitySettingsState({
     required this.qualities,
     required this.selectedId,
+    this.currentLabel,
   });
 
   final List<TwitchQualityOption> qualities;
   final String selectedId;
+  final String? currentLabel;
 }
 
 class _QualitySettingsSheet extends StatelessWidget {
@@ -1471,7 +1505,9 @@ class _QualitySettingsSheet extends StatelessWidget {
                 children: [
                   _QualityOptionTile(
                     id: "auto",
-                    label: "Auto",
+                    label: state.selectedId == "auto" && state.currentLabel != null
+                        ? "Auto · ${state.currentLabel}"
+                        : "Auto",
                     selected: state.selectedId == "auto",
                     onSelected: onSelected,
                   ),
@@ -1537,7 +1573,12 @@ class _QualityOptionTile extends StatelessWidget {
       key: ValueKey("player_quality_$id"),
       title: Text(label),
       trailing: selected ? const Icon(Icons.check_rounded) : null,
-      onTap: () => onSelected(id),
+      onTap: () {
+        if (!selected) {
+          unawaited(HapticFeedback.selectionClick());
+        }
+        onSelected(id);
+      },
     ),
   );
 
@@ -1568,7 +1609,10 @@ class _OverlayIconButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) => IconButton(
     tooltip: tooltip,
-    onPressed: onPressed,
+    onPressed: () {
+      unawaited(HapticFeedback.selectionClick());
+      onPressed();
+    },
     padding: EdgeInsets.zero,
     constraints: const BoxConstraints.tightFor(width: 40, height: 40),
     style: IconButton.styleFrom(
@@ -1591,19 +1635,24 @@ class _OverlayIconButton extends StatelessWidget {
 }
 
 class _OverlayMetric extends StatelessWidget {
-  const _OverlayMetric({required this.text, super.key});
+  const _OverlayMetric({required this.text, required this.tooltip, super.key});
 
   final String text;
+  final String tooltip;
 
   @override
-  Widget build(BuildContext context) => Text(
-    text,
-    maxLines: 1,
-    style: const TextStyle(
-      color: Colors.white,
-      fontSize: 14,
-      fontWeight: FontWeight.w700,
-      fontFeatures: [FontFeature.tabularFigures()],
+  Widget build(BuildContext context) => Tooltip(
+    message: tooltip,
+    enableFeedback: true,
+    child: Text(
+      text,
+      maxLines: 1,
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 14,
+        fontWeight: FontWeight.w700,
+        fontFeatures: [FontFeature.tabularFigures()],
+      ),
     ),
   );
 
@@ -1611,6 +1660,7 @@ class _OverlayMetric extends StatelessWidget {
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(StringProperty("text", text));
+    properties.add(StringProperty("tooltip", tooltip));
   }
 }
 
