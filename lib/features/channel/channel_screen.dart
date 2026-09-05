@@ -10,6 +10,7 @@ import "package:flow/features/channel/channel_store.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
+import "package:flow/shared/widgets/flow_network_image.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flow/shared/widgets/pull_to_refresh.dart";
 import "package:flow/shared/widgets/scroll_reactive_chrome.dart";
@@ -201,6 +202,9 @@ class _ChannelScreenState extends State<ChannelScreen> {
                       for (var index = 0; index < channel.pastBroadcasts.length; index++)
                         _PastBroadcastCard(
                           broadcast: channel.pastBroadcasts[index],
+                          loadedAt: _store.loadedAt,
+                          now: _store.now,
+                          liveStartedAt: channel.liveStream?.startedAt,
                           isLive:
                               index == 0 &&
                               _isLivePastBroadcast(
@@ -734,10 +738,10 @@ class _PlainChannelAvatar extends StatelessWidget {
             child: ClipOval(
               child: url == null || url.isEmpty
                   ? fallback
-                  : Image.network(
-                      url,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, _, _) => fallback,
+                  : FlowNetworkImage(
+                      imageUrl: url,
+                      kind: FlowImageKind.avatar,
+                      fallback: fallback,
                     ),
             ),
           ),
@@ -800,11 +804,17 @@ class _LiveBadge extends StatelessWidget {
 class _PastBroadcastCard extends StatelessWidget {
   const _PastBroadcastCard({
     required this.broadcast,
+    required this.loadedAt,
+    required this.now,
+    required this.liveStartedAt,
     required this.isLive,
     required this.onCategoryTap,
   });
 
   final TwitchPastBroadcast broadcast;
+  final DateTime? loadedAt;
+  final DateTime Function() now;
+  final DateTime? liveStartedAt;
   final bool isLive;
   final VoidCallback? onCategoryTap;
 
@@ -814,6 +824,8 @@ class _PastBroadcastCard extends StatelessWidget {
     final mutedColor = theme.colorScheme.onSurface.withValues(alpha: 0.58);
     final ageText = _broadcastAgeText(broadcast);
     final category = broadcast.category.trim();
+    final snapshotStart = (loadedAt ?? now()).subtract(broadcast.duration);
+    final startedAt = liveStartedAt;
     final metadataStyle = theme.textTheme.bodyMedium?.copyWith(
       color: mutedColor,
       fontWeight: FontWeight.w600,
@@ -844,7 +856,12 @@ class _PastBroadcastCard extends StatelessWidget {
                     child: _DurationBadge(
                       key: ValueKey("past_broadcast_duration_${broadcast.id}"),
                       duration: broadcast.duration,
-                      isLive: isLive,
+                      startedAt: !isLive
+                          ? null
+                          : startedAt != null && startedAt.isBefore(snapshotStart)
+                          ? startedAt
+                          : snapshotStart,
+                      now: now,
                     ),
                   ),
                 ],
@@ -857,14 +874,20 @@ class _PastBroadcastCard extends StatelessWidget {
               key: ValueKey("past_broadcast_text_${broadcast.id}"),
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  broadcast.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    color: theme.colorScheme.onSurface,
-                    fontWeight: FontWeight.w900,
-                    height: 1.15,
+                Tooltip(
+                  key: ValueKey("past_broadcast_title_preview_${broadcast.id}"),
+                  message: broadcast.title,
+                  triggerMode: TooltipTriggerMode.longPress,
+                  enableFeedback: true,
+                  child: Text(
+                    broadcast.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      color: theme.colorScheme.onSurface,
+                      fontWeight: FontWeight.w900,
+                      height: 1.15,
+                    ),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.xs),
@@ -933,6 +956,9 @@ class _PastBroadcastCard extends StatelessWidget {
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<TwitchPastBroadcast>("broadcast", broadcast));
+    properties.add(DiagnosticsProperty<DateTime?>("loadedAt", loadedAt));
+    properties.add(DiagnosticsProperty<DateTime?>("liveStartedAt", liveStartedAt));
+    properties.add(ObjectFlagProperty<DateTime Function()>.has("now", now));
     properties.add(DiagnosticsProperty<bool>("isLive", isLive));
     properties.add(ObjectFlagProperty<VoidCallback?>.has("onCategoryTap", onCategoryTap));
   }
@@ -966,10 +992,10 @@ class _BroadcastThumbnail extends StatelessWidget {
       return fallback;
     }
 
-    return Image.network(
-      url,
-      fit: BoxFit.cover,
-      errorBuilder: (_, _, _) => fallback,
+    return FlowNetworkImage(
+      imageUrl: url,
+      kind: FlowImageKind.thumbnail,
+      fallback: fallback,
     );
   }
 
@@ -983,12 +1009,14 @@ class _BroadcastThumbnail extends StatelessWidget {
 class _DurationBadge extends StatefulWidget {
   const _DurationBadge({
     required this.duration,
-    required this.isLive,
+    required this.startedAt,
+    required this.now,
     super.key,
   });
 
   final Duration duration;
-  final bool isLive;
+  final DateTime? startedAt;
+  final DateTime Function() now;
 
   @override
   State<_DurationBadge> createState() => _DurationBadgeState();
@@ -997,32 +1025,24 @@ class _DurationBadge extends StatefulWidget {
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<Duration>("duration", duration));
-    properties.add(DiagnosticsProperty<bool>("isLive", isLive));
+    properties.add(DiagnosticsProperty<DateTime?>("startedAt", startedAt));
+    properties.add(ObjectFlagProperty<DateTime Function()>.has("now", now));
   }
 }
 
 class _DurationBadgeState extends State<_DurationBadge> {
   Timer? _timer;
-  late Duration _baselineDuration;
-  int _timerTick = 0;
-  int _baselineTimerTick = 0;
 
   @override
   void initState() {
     super.initState();
-    _baselineDuration = widget.duration;
     _updateTimer();
   }
 
   @override
   void didUpdateWidget(_DurationBadge oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final displayedDuration = _displayedDuration;
-    _baselineDuration = widget.isLive && oldWidget.isLive && displayedDuration > widget.duration
-        ? displayedDuration
-        : widget.duration;
-    _baselineTimerTick = _timerTick;
-    if (widget.isLive != oldWidget.isLive) {
+    if ((widget.startedAt == null) != (oldWidget.startedAt == null)) {
       _updateTimer();
     }
   }
@@ -1035,16 +1055,13 @@ class _DurationBadgeState extends State<_DurationBadge> {
 
   void _updateTimer() {
     _timer?.cancel();
-    _timerTick = 0;
-    _baselineTimerTick = 0;
-    if (!widget.isLive) {
+    if (widget.startedAt == null) {
       return;
     }
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) {
         return;
       }
-      _timerTick = timer.tick;
       final lifecycleState = WidgetsBinding.instance.lifecycleState;
       final route = ModalRoute.of(context);
       if ((lifecycleState != null && lifecycleState != AppLifecycleState.resumed) ||
@@ -1057,10 +1074,9 @@ class _DurationBadgeState extends State<_DurationBadge> {
   }
 
   Duration get _displayedDuration {
-    if (!widget.isLive) {
-      return _baselineDuration;
-    }
-    return _baselineDuration + Duration(seconds: _timerTick - _baselineTimerTick);
+    final startedAt = widget.startedAt;
+    final elapsed = startedAt == null ? widget.duration : widget.now().difference(startedAt);
+    return elapsed > widget.duration ? elapsed : widget.duration;
   }
 
   @override

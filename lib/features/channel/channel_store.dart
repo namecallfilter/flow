@@ -11,10 +11,13 @@ abstract class ChannelStoreBase with Store {
   ChannelStoreBase({
     required this.apiCache,
     required this.login,
-  });
+    DateTime Function()? now,
+  }) : now = now ?? DateTime.now;
 
   final TwitchApiCache apiCache;
   final String login;
+  final DateTime Function() now;
+  DateTime? loadedAt;
   int _generation = 0;
   final _loadedPastBroadcastCursors = <String>{};
 
@@ -56,6 +59,7 @@ abstract class ChannelStoreBase with Store {
       if (generation != _generation) {
         return;
       }
+      loadedAt = now();
       channel = nextChannel;
       errorMessage = null;
     } on Object catch (error) {

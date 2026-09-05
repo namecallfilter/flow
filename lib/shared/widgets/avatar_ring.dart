@@ -1,3 +1,4 @@
+import "package:flow/shared/widgets/flow_network_image.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 
@@ -111,13 +112,10 @@ class _AvatarContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final url = imageUrl;
     if (url != null && url.isNotEmpty) {
-      return Image.network(
-        url,
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-        gaplessPlayback: true,
-        errorBuilder: (_, _, _) => _InitialsBackground(
+      return FlowNetworkImage(
+        imageUrl: url,
+        kind: FlowImageKind.avatar,
+        fallback: _InitialsBackground(
           avatarColors: avatarColors,
           initials: initials,
           size: size,

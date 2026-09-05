@@ -7,6 +7,7 @@ import "package:flow/app/routes.dart";
 import "package:flow/app/spacing.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/channel/channel_screen.dart";
+import "package:flow/features/channel/channel_store.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/widgets/app_bottom_nav.dart";
 import "package:flow/shared/widgets/avatar_ring.dart";
@@ -89,26 +90,32 @@ void main() {
   testWidgets("updates the active broadcast duration locally every second", (
     tester,
   ) async {
-    final streamStartedAt = DateTime.parse("2026-07-04T01:00:00Z");
+    final streamStartedAt = tester.binding.clock.now().subtract(const Duration(hours: 5));
     var apiRequests = 0;
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+        httpClient: MockClient((_) async {
+          apiRequests++;
+          return _channelDetailsResponse(
+            videoTitles: const ["Live archive", "Earlier stream"],
+            streamStartedAt: streamStartedAt,
+            firstVideoCreatedAt: streamStartedAt,
+          );
+        }),
+      ),
+    );
 
     await tester.pumpWidget(
       MaterialApp(
         theme: buildFlowTheme(Brightness.dark),
         home: ChannelScreen(
-          apiCache: TwitchApiCache(
-            clientLoader: () async => TwitchApiClient(
-              clientId: "client-123",
-              accessToken: "token-123",
-              httpClient: MockClient((_) async {
-                apiRequests++;
-                return _channelDetailsResponse(
-                  videoTitles: const ["Live archive", "Earlier stream"],
-                  streamStartedAt: streamStartedAt,
-                  firstVideoCreatedAt: streamStartedAt,
-                );
-              }),
-            ),
+          apiCache: apiCache,
+          channelStore: ChannelStore(
+            apiCache: apiCache,
+            login: "jason",
+            now: tester.binding.clock.now,
           ),
           initialChannel: const ChannelPreview(
             login: "jason",
@@ -121,18 +128,19 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text("4:59:59"), findsNWidgets(2));
+    expect(find.text("5:00:00"), findsOneWidget);
+    expect(find.text("4:59:59"), findsOneWidget);
     expect(apiRequests, 1);
 
     await tester.pump(const Duration(seconds: 1));
 
-    expect(find.text("5:00:00"), findsOneWidget);
+    expect(find.text("5:00:01"), findsOneWidget);
     expect(find.text("4:59:59"), findsOneWidget);
     expect(apiRequests, 1);
 
     await tester.pump(const Duration(seconds: 2));
 
-    expect(find.text("5:00:02"), findsOneWidget);
+    expect(find.text("5:00:03"), findsOneWidget);
     expect(find.text("4:59:59"), findsOneWidget);
     expect(apiRequests, 1);
   });
@@ -140,7 +148,7 @@ void main() {
   testWidgets("refetches the channel and keeps live duration current when reopened", (
     tester,
   ) async {
-    final streamStartedAt = DateTime.now();
+    final streamStartedAt = tester.binding.clock.now();
     final reopenedResponse = Completer<http.Response>();
     var apiRequests = 0;
     final apiCache = TwitchApiCache(
@@ -173,6 +181,11 @@ void main() {
       theme: buildFlowTheme(Brightness.dark),
       home: ChannelScreen(
         apiCache: apiCache,
+        channelStore: ChannelStore(
+          apiCache: apiCache,
+          login: "jason",
+          now: tester.binding.clock.now,
+        ),
         initialChannel: const ChannelPreview(
           login: "jason",
           displayName: "Jason",
@@ -204,6 +217,83 @@ void main() {
 
     expect(find.text("0:55"), findsOneWidget);
     expect(apiRequests, 2);
+  });
+
+  testWidgets("keeps live duration when its row is disposed by scrolling", (tester) async {
+    final streamStartedAt = tester.binding.clock.now().subtract(const Duration(hours: 1));
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+        httpClient: MockClient(
+          (_) async => _channelDetailsResponse(
+            videoTitles: List.generate(30, (index) => "Broadcast $index"),
+            streamStartedAt: streamStartedAt,
+            firstVideoCreatedAt: streamStartedAt,
+            videoLengthSeconds: 3599,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: ChannelScreen(
+          apiCache: apiCache,
+          channelStore: ChannelStore(
+            apiCache: apiCache,
+            login: "jason",
+            now: tester.binding.clock.now,
+          ),
+          initialChannel: const ChannelPreview(login: "jason", displayName: "Jason"),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final badge = find.byKey(const ValueKey("past_broadcast_duration_vod-1"));
+    final element = tester.element(badge);
+    final controller = tester.widget<ListView>(find.byType(ListView)).controller!;
+    controller.jumpTo(1800);
+    await tester.pump();
+    expect(element.mounted, isFalse);
+    await tester.pump(const Duration(seconds: 8));
+    controller.jumpTo(0);
+    await tester.pump();
+
+    expect(find.descendant(of: badge, matching: find.text("1:00:08")), findsOneWidget);
+    expect(find.byType(StreamPlayerScreen), findsNothing);
+  });
+
+  testWidgets("shows the complete past broadcast title on long press", (tester) async {
+    const title =
+        "A long broadcast title that is truncated in the channel list but can be read "
+        "in full by holding the title while browsing past broadcasts";
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: ChannelScreen(
+          apiCache: TwitchApiCache(
+            clientLoader: () async => TwitchApiClient(
+              clientId: "client-123",
+              accessToken: "token-123",
+              httpClient: MockClient((_) async => _channelDetailsResponse(videoTitle: title)),
+            ),
+          ),
+          initialChannel: const ChannelPreview(login: "jason", displayName: "Jason"),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.longPress(find.byKey(const ValueKey("past_broadcast_title_preview_vod-1")));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is RichText && widget.text.toPlainText() == title && widget.maxLines == null,
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets("wraps a long live category without ellipsizing", (tester) async {
