@@ -10,6 +10,74 @@ import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  for (final sort in StreamSort.values) {
+    final expectedIds = switch (sort) {
+      StreamSort.viewersHighToLow => ["creator-1", "creator-2", "creator-3"],
+      StreamSort.viewersLowToHigh => ["creator-3", "creator-2", "creator-1"],
+      StreamSort.recommended => ["creator-3", "creator-1", "creator-2"],
+    };
+    test("Browse normalizes live counts across pages for ${sort.name}", () async {
+      final cache = _DelayedLiveChannelsCache();
+      final store = BrowseStore(apiCache: cache)..streamSort = sort;
+      final initial = store.loadLiveChannels(reset: true);
+      cache.requests.single.response.complete(
+        const TwitchPage(data: [_thirdStream, _firstStream], cursor: "server-page-2"),
+      );
+      await initial;
+      final pagination = store.loadLiveChannels();
+      expect(cache.requests.last.cursor, "server-page-2");
+      expect(cache.requests.last.sort, sort);
+      cache.requests.last.response.complete(
+        const TwitchPage(data: [_secondStream], cursor: null),
+      );
+      await pagination;
+      expect(store.liveChannels.map((channel) => channel.id), expectedIds);
+    });
+
+    test("category normalizes live counts across pages for ${sort.name}", () async {
+      final cache = _DelayedLiveChannelsCache();
+      final store = CategoryStreamsStore(
+        apiCache: cache,
+        category: browseCategoryFromApi(_firstCategory),
+      )..streamSort = sort;
+      final initial = store.loadStreams(reset: true);
+      cache.requests.single.response.complete(
+        const TwitchPage(data: [_thirdStream, _firstStream], cursor: "server-page-2"),
+      );
+      await initial;
+      final pagination = store.loadStreams();
+      expect(cache.requests.last.cursor, "server-page-2");
+      expect(cache.requests.last.sort, sort);
+      cache.requests.last.response.complete(
+        const TwitchPage(data: [_secondStream], cursor: null),
+      );
+      await pagination;
+      expect(store.channels.map((channel) => channel.id), expectedIds);
+    });
+  }
+
+  test("periodic live refresh preserves paginated channels moved by viewer sorting", () async {
+    final cache = _DelayedLiveChannelsCache();
+    final store = BrowseStore(apiCache: cache);
+    final initial = store.loadLiveChannels(reset: true);
+    cache.requests.single.response.complete(
+      const TwitchPage(data: [_thirdStream, _secondStream], cursor: "page-2"),
+    );
+    await initial;
+    final pagination = store.loadLiveChannels();
+    cache.requests.last.response.complete(
+      const TwitchPage(data: [_firstStream], cursor: null),
+    );
+    await pagination;
+    final refresh = store.refreshLiveChannelsFirstPage();
+    cache.requests.last.response.complete(
+      const TwitchPage(data: [_thirdStream], cursor: "fresh-page-2"),
+    );
+    await refresh;
+    expect(store.liveChannels.map((channel) => channel.id), ["creator-1", "creator-3"]);
+    expect(store.liveChannelsCursor, isNull);
+  });
+
   test("changing browse order ignores old pages and starts with a fresh cursor", () async {
     final cache = _DelayedLiveChannelsCache();
     final store = BrowseStore(apiCache: cache);
@@ -277,7 +345,7 @@ void main() {
 
     expect(
       store.liveChannels.map((channel) => channel.id),
-      ["creator-3", "creator-1"],
+      ["creator-1", "creator-3"],
     );
     expect(store.liveChannelsCursor, "fresh-page-2");
   });

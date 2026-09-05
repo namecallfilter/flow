@@ -120,11 +120,14 @@ abstract class CategoryStreamsStoreBase with Store {
           ),
       ];
 
-      channels = {
-        if (!reset)
-          for (final channel in channels) channel.id: channel,
-        for (final channel in nextChannels) channel.id: channel,
-      }.values.toList();
+      channels = sortedStreamChannels(
+        {
+          if (!reset)
+            for (final channel in channels) channel.id: channel,
+          for (final channel in nextChannels) channel.id: channel,
+        }.values,
+        streamSort,
+      );
       cursor = page.cursor;
       loaded = true;
     } on Object catch (error) {

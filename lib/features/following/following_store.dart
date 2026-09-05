@@ -88,15 +88,7 @@ abstract class FollowingStoreBase with Store {
     final channels = currentConnection == null
         ? const <StreamChannel>[]
         : liveChannelsFromConnection(currentConnection);
-    if (streamSort != StreamSort.recommended && channels.isNotEmpty) {
-      channels.sort((left, right) {
-        final viewers = streamSort == StreamSort.viewersLowToHigh
-            ? left.viewerCount.compareTo(right.viewerCount)
-            : right.viewerCount.compareTo(left.viewerCount);
-        return viewers != 0 ? viewers : left.login.compareTo(right.login);
-      });
-    }
-    return channels;
+    return sortedStreamChannels(channels, streamSort);
   }
 
   @computed

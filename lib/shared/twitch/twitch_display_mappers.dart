@@ -1,7 +1,21 @@
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_auth.dart";
+import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flutter/material.dart";
+
+List<StreamChannel> sortedStreamChannels(Iterable<StreamChannel> channels, StreamSort sort) {
+  final sorted = channels.toList();
+  if (sort != StreamSort.recommended) {
+    sorted.sort((left, right) {
+      final viewers = sort == StreamSort.viewersLowToHigh
+          ? left.viewerCount.compareTo(right.viewerCount)
+          : right.viewerCount.compareTo(left.viewerCount);
+      return viewers != 0 ? viewers : left.login.compareTo(right.login);
+    });
+  }
+  return sorted;
+}
 
 List<StreamChannel> liveChannelsFromConnection(
   TwitchAuthConnection connection,

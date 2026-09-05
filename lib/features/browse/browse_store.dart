@@ -22,7 +22,7 @@ abstract class BrowseStoreBase with Store {
   Future<void>? _sortRestore;
   int _liveChannelsRevision = 0;
   int _categoriesFirstPageLength = 0;
-  int _liveChannelsFirstPageLength = 0;
+  Set<String> _liveChannelsFirstPageIds = {};
   Future<void>? _categoriesLoad;
   bool _categoriesRefreshQueued = false;
   bool _categoriesQueuedPreserveTail = true;
@@ -71,7 +71,7 @@ abstract class BrowseStoreBase with Store {
     liveChannels = const [];
     liveChannelsCursor = null;
     liveChannelsScrollOffset = 0;
-    _liveChannelsFirstPageLength = 0;
+    _liveChannelsFirstPageIds = {};
     final load = loadLiveChannels(reset: true);
     try {
       await preferences?.saveStreamSort("browse", sort);
@@ -312,11 +312,12 @@ abstract class BrowseStoreBase with Store {
     isLoadingLiveChannels = true;
     liveChannelsError = null;
     final preservedCursor = liveChannelsCursor;
-    final tailStart = _liveChannelsFirstPageLength > liveChannels.length
-        ? liveChannels.length
-        : _liveChannelsFirstPageLength;
     final preservedTail = preserveTail
-        ? liveChannels.skip(tailStart).toList(growable: false)
+        ? liveChannels
+              .where(
+                (channel) => !_liveChannelsFirstPageIds.contains(_liveChannelIdentity(channel)),
+              )
+              .toList(growable: false)
         : const <StreamChannel>[];
     try {
       final page = await apiCache.fetchLiveStreamsPage(
@@ -352,10 +353,12 @@ abstract class BrowseStoreBase with Store {
             ? _prependUniqueLiveChannels(firstPageChannels, preservedTail)
             : firstPageChannels;
         hasPreservedTail = liveChannels.length > firstPageChannels.length;
-        _liveChannelsFirstPageLength = firstPageChannels.length;
+        _liveChannelsFirstPageIds = firstPageChannels.map(_liveChannelIdentity).toSet();
       } else {
         liveChannels = _mergeLiveChannels(liveChannels, nextChannels);
       }
+      // Twitch's ranking can lag behind the viewer counts returned with each row.
+      liveChannels = sortedStreamChannels(liveChannels, streamSort);
       liveChannelsCursor = hasPreservedTail ? preservedCursor : page.cursor;
       liveChannelsLoaded = true;
     } on Object catch (error) {
