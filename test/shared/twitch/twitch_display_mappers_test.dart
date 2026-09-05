@@ -4,6 +4,12 @@ import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  test("initials preserve emoji and combined Unicode characters", () {
+    expect(initialsForName("👩🏽‍💻 creator"), "👩🏽‍💻C");
+    expect(initialsForName("e\u0301clair"), "E\u0301");
+    expect(initialsForName("  "), "CH");
+  });
+
   group("offlineChannelsFromConnection", () {
     test("sorts offline channels by most recent follow first", () {
       final channels = offlineChannelsFromConnection(

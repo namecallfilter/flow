@@ -147,7 +147,11 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     WidgetsBinding.instance.addObserver(this);
     _viewerText = widget.channel.viewers;
     _uptimeTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted && widget.channel.startedAt != null) {
+      if (mounted &&
+          _appIsResumed &&
+          !_openingDestination &&
+          _controlsVisible &&
+          widget.channel.startedAt != null) {
         setState(() {});
       }
     });
@@ -394,7 +398,14 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     switch (event) {
       case TwitchLatencyEvent(:final latencyMs):
         if (_playWhenReady) {
-          setState(() => _latencyMs = latencyMs);
+          if (_controlsVisible &&
+              _appIsResumed &&
+              !_openingDestination &&
+              _latencyMs != latencyMs) {
+            setState(() => _latencyMs = latencyMs);
+          } else {
+            _latencyMs = latencyMs;
+          }
         }
       case TwitchAdEvent(:final active):
         setState(() => _activeAd = active ? event : null);

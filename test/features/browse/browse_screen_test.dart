@@ -25,6 +25,140 @@ import "package:http/testing.dart";
 typedef _RequestObserver = void Function(http.Request request);
 
 void main() {
+  testWidgets("keeps loaded category streams visible after refresh errors", (tester) async {
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => throw StateError("Unexpected request"),
+    );
+    const category = BrowseCategory(
+      id: "category",
+      name: "Just Chatting",
+      viewerCount: 1,
+      viewers: "1",
+      imageUrl: null,
+      colors: [Colors.purple, Colors.pink],
+    );
+    final store = CategoryStreamsStore(apiCache: apiCache, category: category)
+      ..loaded = true
+      ..errorMessage = "Connection lost. Try again."
+      ..channels = List.generate(
+        300,
+        (index) => StreamChannel(
+          login: "streamer$index",
+          name: "Streamer $index",
+          initials: "S",
+          title: "Live now",
+          category: category.name,
+          viewers: "1",
+          avatarColors: const [Colors.purple, Colors.pink],
+          thumbnailColors: const [Colors.black, Colors.grey],
+        ),
+      );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: CategoryStreamsScreen(
+          apiCache: apiCache,
+          category: category,
+          categoryStreamsStore: store,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text("Connection lost. Try again."), findsOneWidget);
+    expect(find.byKey(const ValueKey("stream_thumbnail_Streamer 0")), findsOneWidget);
+    expect(find.byType(StreamCard).evaluate().length, lessThan(20));
+  });
+
+  testWidgets("only builds visible browse categories and streams", (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 800);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => throw StateError("Unexpected request"),
+    );
+    final store = BrowseStore(apiCache: apiCache)
+      ..categoriesLoaded = true
+      ..liveChannelsLoaded = true
+      ..liveChannels = List.generate(
+        300,
+        (index) => StreamChannel(
+          login: "streamer$index",
+          name: "Streamer $index",
+          initials: "S",
+          title: "Live now",
+          category: "Just Chatting",
+          viewers: "1",
+          avatarColors: const [Colors.purple, Colors.pink],
+          thumbnailColors: const [Colors.black, Colors.grey],
+        ),
+      )
+      ..categories = List.generate(
+        300,
+        (index) => BrowseCategory(
+          id: "category-$index",
+          name: "Category $index",
+          viewerCount: 1,
+          viewers: "1",
+          imageUrl: null,
+          colors: const [Colors.purple, Colors.pink],
+        ),
+      );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: BrowseScreen(apiCache: apiCache, browseStore: store, periodicRefreshInterval: null),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey("browse_category_card_Category 0")), findsOneWidget);
+    expect(find.byKey(const ValueKey("browse_category_card_Category 299")), findsNothing);
+    expect(find.byType(InkWell).evaluate().length, lessThan(50));
+
+    await tester.tap(find.byKey(const ValueKey("browse_segment_live_channels")));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("stream_thumbnail_Streamer 0")), findsOneWidget);
+    expect(find.byKey(const ValueKey("stream_thumbnail_Streamer 299")), findsNothing);
+    expect(find.byType(StreamCard).evaluate().length, lessThan(20));
+  });
+
+  testWidgets("browse categories and navigation fit larger system text", (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 800);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => throw StateError("Unexpected request"),
+    );
+    final store = BrowseStore(apiCache: apiCache)
+      ..categoriesLoaded = true
+      ..categories = const [
+        BrowseCategory(
+          id: "category",
+          name: "Just Chatting",
+          viewerCount: 1,
+          viewers: "1",
+          imageUrl: null,
+          colors: [Colors.purple, Colors.pink],
+        ),
+      ];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: BrowseScreen(apiCache: apiCache, browseStore: store, periodicRefreshInterval: null),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const ValueKey("browse_category_card_Just Chatting")), findsOneWidget);
+  });
+
   testWidgets("shows category skeleton until initial Browse content loads", (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(390, 1200);
@@ -144,8 +278,7 @@ void main() {
     await tester.pumpAndSettle();
 
     final liveGap =
-        tester.getTopLeft(find.byKey(const ValueKey("browse_live_channels"))).dy -
-        tester.getBottomLeft(selector).dy;
+        tester.getTopLeft(find.byType(StreamCard).first).dy - tester.getBottomLeft(selector).dy;
     expect(categoryGap, closeTo(AppSpacing.md, 0.1));
     expect(liveGap, closeTo(categoryGap, 0.1));
   });
@@ -495,7 +628,7 @@ void main() {
         of: find.byKey(const ValueKey("category_streams_title_Just Chatting")),
         matching: find.byKey(const ValueKey("scroll_reactive_header_clip")),
       ),
-      content: find.byKey(const ValueKey("browse_live_channels")),
+      content: find.byType(StreamCard).first,
     );
     expect(
       requestedRequests.any(
@@ -694,9 +827,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.drag(find.byType(ListView), const Offset(0, -800));
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -800));
     await tester.pumpAndSettle();
-    await tester.drag(find.byType(ListView), const Offset(0, 800));
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, 800));
     await tester.pumpAndSettle();
 
     final categoryImage = find.descendant(

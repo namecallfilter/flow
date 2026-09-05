@@ -10,6 +10,7 @@ import "package:flow/app/spacing.dart";
 import "package:flow/app/tabs_screen.dart";
 import "package:flow/app/tabs_store.dart";
 import "package:flow/app/theme.dart";
+import "package:flow/features/browse/browse_screen.dart";
 import "package:flow/features/browse/browse_store.dart";
 import "package:flow/features/following/following_store.dart";
 import "package:flow/shared/preferences/preferences.dart";
@@ -680,14 +681,17 @@ void main() {
     await tester.tap(find.byKey(const ValueKey("browse_segment_live_channels")));
     await tester.pumpAndSettle();
     expect(topLiveStreamsRequests, 1);
-    await tester.drag(find.byType(ListView), const Offset(0, -1200));
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -1200));
     await tester.pumpAndSettle();
 
+    final browseStore = tester.widget<BrowseScreen>(find.byType(BrowseScreen)).browseStore!;
     expect(find.byKey(const ValueKey("browse_live_channels")), findsOneWidget);
-    expect(find.text("NextStreamer"), findsOneWidget);
-    await tester.drag(find.byType(ListView), const Offset(0, 120));
+    expect(browseStore.liveChannels.any((channel) => channel.name == "NextStreamer"), isTrue);
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, 120));
     await tester.pumpAndSettle();
-    final scrollController = tester.widget<ListView>(find.byType(ListView)).controller!;
+    final scrollController = tester
+        .widget<CustomScrollView>(find.byType(CustomScrollView))
+        .controller!;
     final savedLiveOffset = scrollController.offset;
     final footer = find.byKey(const ValueKey("app_bottom_nav_bar"));
     final visibleFooterTop = tester.getTopLeft(footer).dy;
@@ -706,7 +710,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey("browse_live_channels")), findsOneWidget);
-    expect(find.text("NextStreamer"), findsOneWidget);
+    expect(browseStore.liveChannels.any((channel) => channel.name == "NextStreamer"), isTrue);
     expect(topCategoriesRequests, 1);
     expect(topLiveStreamsRequests, 1);
     expect(followedLiveRequests, 1);
@@ -742,9 +746,9 @@ void main() {
 
     final listView = find.ancestor(
       of: find.byKey(const ValueKey("browse_live_channels_content")),
-      matching: find.byType(ListView),
+      matching: find.byType(CustomScrollView),
     );
-    final scrollController = tester.widget<ListView>(listView).controller!;
+    final scrollController = tester.widget<CustomScrollView>(listView).controller!;
     final header = find.ancestor(
       of: find.byKey(const ValueKey("browse_title")),
       matching: find.byKey(const ValueKey("scroll_reactive_header")),

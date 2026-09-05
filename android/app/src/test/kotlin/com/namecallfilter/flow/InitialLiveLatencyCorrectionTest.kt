@@ -248,6 +248,25 @@ class InitialLiveLatencyCorrectionTest {
         )
     }
 
+    @Test
+    fun correctionNeverSeeksBackwardEvenWithNoMinimumAdvance() {
+        for (bufferedPositionMs in listOf(0L, 10_000L, 12_000L)) {
+            val plan = planLiveLatencyCorrection(
+                measuredLatencyMs = 5_000L,
+                targetLatencyMs = 1_650L,
+                currentPositionMs = 10_000L,
+                bufferedPositionMs = bufferedPositionMs,
+                windowDurationMs = null,
+                bufferedSafetyMs = 2_000L,
+                minimumAdvanceMs = 0L,
+                targetToleranceMs = 100L,
+            )
+
+            assertEquals(LiveLatencyCorrectionPlanOutcome.WAIT_FOR_BUFFER, plan.outcome)
+            assertNull(plan.seekPositionMs)
+        }
+    }
+
     private fun plan(
         measuredLatencyMs: Long,
         currentPositionMs: Long,
@@ -260,7 +279,6 @@ class InitialLiveLatencyCorrectionTest {
         bufferedPositionMs = bufferedPositionMs,
         windowDurationMs = windowDurationMs,
         bufferedSafetyMs = 2_000L,
-        partialBufferedSafetyMs = 2_000L,
         minimumAdvanceMs = 100L,
         targetToleranceMs = 100L,
     )
@@ -274,7 +292,6 @@ class InitialLiveLatencyCorrectionTest {
         bufferedPositionMs = 16_000L,
         windowDurationMs = 16_000L,
         bufferedSafetyMs = 2_000L,
-        partialBufferedSafetyMs = 2_000L,
         minimumAdvanceMs = 100L,
         targetToleranceMs = 100L,
     )

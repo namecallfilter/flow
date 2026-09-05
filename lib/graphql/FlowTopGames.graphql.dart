@@ -41,9 +41,6 @@ class Variables$Query$FlowTopGames {
     return result$data;
   }
 
-  CopyWith$Variables$Query$FlowTopGames<Variables$Query$FlowTopGames>
-  get copyWith => CopyWith$Variables$Query$FlowTopGames(this, (i) => i);
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -81,46 +78,6 @@ class Variables$Query$FlowTopGames {
       _$data.containsKey('after') ? l$after : const {},
     ]);
   }
-}
-
-abstract class CopyWith$Variables$Query$FlowTopGames<TRes> {
-  factory CopyWith$Variables$Query$FlowTopGames(
-    Variables$Query$FlowTopGames instance,
-    TRes Function(Variables$Query$FlowTopGames) then,
-  ) = _CopyWithImpl$Variables$Query$FlowTopGames;
-
-  factory CopyWith$Variables$Query$FlowTopGames.stub(TRes res) =
-      _CopyWithStubImpl$Variables$Query$FlowTopGames;
-
-  TRes call({int? first, String? after});
-}
-
-class _CopyWithImpl$Variables$Query$FlowTopGames<TRes>
-    implements CopyWith$Variables$Query$FlowTopGames<TRes> {
-  _CopyWithImpl$Variables$Query$FlowTopGames(this._instance, this._then);
-
-  final Variables$Query$FlowTopGames _instance;
-
-  final TRes Function(Variables$Query$FlowTopGames) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({Object? first = _undefined, Object? after = _undefined}) => _then(
-    Variables$Query$FlowTopGames._({
-      ..._instance._$data,
-      if (first != _undefined) 'first': (first as int?),
-      if (after != _undefined) 'after': (after as String?),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Variables$Query$FlowTopGames<TRes>
-    implements CopyWith$Variables$Query$FlowTopGames<TRes> {
-  _CopyWithStubImpl$Variables$Query$FlowTopGames(this._res);
-
-  TRes _res;
-
-  call({int? first, String? after}) => _res;
 }
 
 class Query$FlowTopGames {
@@ -167,62 +124,6 @@ class Query$FlowTopGames {
     }
     return true;
   }
-}
-
-extension UtilityExtension$Query$FlowTopGames on Query$FlowTopGames {
-  CopyWith$Query$FlowTopGames<Query$FlowTopGames> get copyWith =>
-      CopyWith$Query$FlowTopGames(this, (i) => i);
-}
-
-abstract class CopyWith$Query$FlowTopGames<TRes> {
-  factory CopyWith$Query$FlowTopGames(
-    Query$FlowTopGames instance,
-    TRes Function(Query$FlowTopGames) then,
-  ) = _CopyWithImpl$Query$FlowTopGames;
-
-  factory CopyWith$Query$FlowTopGames.stub(TRes res) =
-      _CopyWithStubImpl$Query$FlowTopGames;
-
-  TRes call({Query$FlowTopGames$games? games});
-  CopyWith$Query$FlowTopGames$games<TRes> get games;
-}
-
-class _CopyWithImpl$Query$FlowTopGames<TRes>
-    implements CopyWith$Query$FlowTopGames<TRes> {
-  _CopyWithImpl$Query$FlowTopGames(this._instance, this._then);
-
-  final Query$FlowTopGames _instance;
-
-  final TRes Function(Query$FlowTopGames) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({Object? games = _undefined}) => _then(
-    Query$FlowTopGames(
-      games: games == _undefined
-          ? _instance.games
-          : (games as Query$FlowTopGames$games?),
-    ),
-  );
-
-  CopyWith$Query$FlowTopGames$games<TRes> get games {
-    final local$games = _instance.games;
-    return local$games == null
-        ? CopyWith$Query$FlowTopGames$games.stub(_then(_instance))
-        : CopyWith$Query$FlowTopGames$games(local$games, (e) => call(games: e));
-  }
-}
-
-class _CopyWithStubImpl$Query$FlowTopGames<TRes>
-    implements CopyWith$Query$FlowTopGames<TRes> {
-  _CopyWithStubImpl$Query$FlowTopGames(this._res);
-
-  TRes _res;
-
-  call({Query$FlowTopGames$games? games}) => _res;
-
-  CopyWith$Query$FlowTopGames$games<TRes> get games =>
-      CopyWith$Query$FlowTopGames$games.stub(_res);
 }
 
 const documentNodeQueryFlowTopGames = DocumentNode(
@@ -558,103 +459,6 @@ class Query$FlowTopGames$games {
   }
 }
 
-extension UtilityExtension$Query$FlowTopGames$games
-    on Query$FlowTopGames$games {
-  CopyWith$Query$FlowTopGames$games<Query$FlowTopGames$games> get copyWith =>
-      CopyWith$Query$FlowTopGames$games(this, (i) => i);
-}
-
-abstract class CopyWith$Query$FlowTopGames$games<TRes> {
-  factory CopyWith$Query$FlowTopGames$games(
-    Query$FlowTopGames$games instance,
-    TRes Function(Query$FlowTopGames$games) then,
-  ) = _CopyWithImpl$Query$FlowTopGames$games;
-
-  factory CopyWith$Query$FlowTopGames$games.stub(TRes res) =
-      _CopyWithStubImpl$Query$FlowTopGames$games;
-
-  TRes call({
-    List<Query$FlowTopGames$games$edges?>? edges,
-    Query$FlowTopGames$games$pageInfo? pageInfo,
-  });
-  TRes edges(
-    Iterable<Query$FlowTopGames$games$edges?>? Function(
-      Iterable<
-        CopyWith$Query$FlowTopGames$games$edges<Query$FlowTopGames$games$edges>?
-      >?,
-    )
-    _fn,
-  );
-  CopyWith$Query$FlowTopGames$games$pageInfo<TRes> get pageInfo;
-}
-
-class _CopyWithImpl$Query$FlowTopGames$games<TRes>
-    implements CopyWith$Query$FlowTopGames$games<TRes> {
-  _CopyWithImpl$Query$FlowTopGames$games(this._instance, this._then);
-
-  final Query$FlowTopGames$games _instance;
-
-  final TRes Function(Query$FlowTopGames$games) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({Object? edges = _undefined, Object? pageInfo = _undefined}) =>
-      _then(
-        Query$FlowTopGames$games(
-          edges: edges == _undefined
-              ? _instance.edges
-              : (edges as List<Query$FlowTopGames$games$edges?>?),
-          pageInfo: pageInfo == _undefined
-              ? _instance.pageInfo
-              : (pageInfo as Query$FlowTopGames$games$pageInfo?),
-        ),
-      );
-
-  TRes edges(
-    Iterable<Query$FlowTopGames$games$edges?>? Function(
-      Iterable<
-        CopyWith$Query$FlowTopGames$games$edges<Query$FlowTopGames$games$edges>?
-      >?,
-    )
-    _fn,
-  ) => call(
-    edges: _fn(
-      _instance.edges?.map(
-        (e) => e == null
-            ? null
-            : CopyWith$Query$FlowTopGames$games$edges(e, (i) => i),
-      ),
-    )?.toList(),
-  );
-
-  CopyWith$Query$FlowTopGames$games$pageInfo<TRes> get pageInfo {
-    final local$pageInfo = _instance.pageInfo;
-    return local$pageInfo == null
-        ? CopyWith$Query$FlowTopGames$games$pageInfo.stub(_then(_instance))
-        : CopyWith$Query$FlowTopGames$games$pageInfo(
-            local$pageInfo,
-            (e) => call(pageInfo: e),
-          );
-  }
-}
-
-class _CopyWithStubImpl$Query$FlowTopGames$games<TRes>
-    implements CopyWith$Query$FlowTopGames$games<TRes> {
-  _CopyWithStubImpl$Query$FlowTopGames$games(this._res);
-
-  TRes _res;
-
-  call({
-    List<Query$FlowTopGames$games$edges?>? edges,
-    Query$FlowTopGames$games$pageInfo? pageInfo,
-  }) => _res;
-
-  edges(_fn) => _res;
-
-  CopyWith$Query$FlowTopGames$games$pageInfo<TRes> get pageInfo =>
-      CopyWith$Query$FlowTopGames$games$pageInfo.stub(_res);
-}
-
 class Query$FlowTopGames$games$edges {
   Query$FlowTopGames$games$edges({this.cursor, this.node});
 
@@ -712,67 +516,6 @@ class Query$FlowTopGames$games$edges {
     }
     return true;
   }
-}
-
-extension UtilityExtension$Query$FlowTopGames$games$edges
-    on Query$FlowTopGames$games$edges {
-  CopyWith$Query$FlowTopGames$games$edges<Query$FlowTopGames$games$edges>
-  get copyWith => CopyWith$Query$FlowTopGames$games$edges(this, (i) => i);
-}
-
-abstract class CopyWith$Query$FlowTopGames$games$edges<TRes> {
-  factory CopyWith$Query$FlowTopGames$games$edges(
-    Query$FlowTopGames$games$edges instance,
-    TRes Function(Query$FlowTopGames$games$edges) then,
-  ) = _CopyWithImpl$Query$FlowTopGames$games$edges;
-
-  factory CopyWith$Query$FlowTopGames$games$edges.stub(TRes res) =
-      _CopyWithStubImpl$Query$FlowTopGames$games$edges;
-
-  TRes call({String? cursor, Query$FlowTopGames$games$edges$node? node});
-  CopyWith$Query$FlowTopGames$games$edges$node<TRes> get node;
-}
-
-class _CopyWithImpl$Query$FlowTopGames$games$edges<TRes>
-    implements CopyWith$Query$FlowTopGames$games$edges<TRes> {
-  _CopyWithImpl$Query$FlowTopGames$games$edges(this._instance, this._then);
-
-  final Query$FlowTopGames$games$edges _instance;
-
-  final TRes Function(Query$FlowTopGames$games$edges) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({Object? cursor = _undefined, Object? node = _undefined}) => _then(
-    Query$FlowTopGames$games$edges(
-      cursor: cursor == _undefined ? _instance.cursor : (cursor as String?),
-      node: node == _undefined
-          ? _instance.node
-          : (node as Query$FlowTopGames$games$edges$node?),
-    ),
-  );
-
-  CopyWith$Query$FlowTopGames$games$edges$node<TRes> get node {
-    final local$node = _instance.node;
-    return local$node == null
-        ? CopyWith$Query$FlowTopGames$games$edges$node.stub(_then(_instance))
-        : CopyWith$Query$FlowTopGames$games$edges$node(
-            local$node,
-            (e) => call(node: e),
-          );
-  }
-}
-
-class _CopyWithStubImpl$Query$FlowTopGames$games$edges<TRes>
-    implements CopyWith$Query$FlowTopGames$games$edges<TRes> {
-  _CopyWithStubImpl$Query$FlowTopGames$games$edges(this._res);
-
-  TRes _res;
-
-  call({String? cursor, Query$FlowTopGames$games$edges$node? node}) => _res;
-
-  CopyWith$Query$FlowTopGames$games$edges$node<TRes> get node =>
-      CopyWith$Query$FlowTopGames$games$edges$node.stub(_res);
 }
 
 class Query$FlowTopGames$games$edges$node {
@@ -867,76 +610,6 @@ class Query$FlowTopGames$games$edges$node {
   }
 }
 
-extension UtilityExtension$Query$FlowTopGames$games$edges$node
-    on Query$FlowTopGames$games$edges$node {
-  CopyWith$Query$FlowTopGames$games$edges$node<
-    Query$FlowTopGames$games$edges$node
-  >
-  get copyWith => CopyWith$Query$FlowTopGames$games$edges$node(this, (i) => i);
-}
-
-abstract class CopyWith$Query$FlowTopGames$games$edges$node<TRes> {
-  factory CopyWith$Query$FlowTopGames$games$edges$node(
-    Query$FlowTopGames$games$edges$node instance,
-    TRes Function(Query$FlowTopGames$games$edges$node) then,
-  ) = _CopyWithImpl$Query$FlowTopGames$games$edges$node;
-
-  factory CopyWith$Query$FlowTopGames$games$edges$node.stub(TRes res) =
-      _CopyWithStubImpl$Query$FlowTopGames$games$edges$node;
-
-  TRes call({
-    String? id,
-    String? displayName,
-    String? boxArtURL,
-    int? viewersCount,
-  });
-}
-
-class _CopyWithImpl$Query$FlowTopGames$games$edges$node<TRes>
-    implements CopyWith$Query$FlowTopGames$games$edges$node<TRes> {
-  _CopyWithImpl$Query$FlowTopGames$games$edges$node(this._instance, this._then);
-
-  final Query$FlowTopGames$games$edges$node _instance;
-
-  final TRes Function(Query$FlowTopGames$games$edges$node) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({
-    Object? id = _undefined,
-    Object? displayName = _undefined,
-    Object? boxArtURL = _undefined,
-    Object? viewersCount = _undefined,
-  }) => _then(
-    Query$FlowTopGames$games$edges$node(
-      id: id == _undefined ? _instance.id : (id as String?),
-      displayName: displayName == _undefined
-          ? _instance.displayName
-          : (displayName as String?),
-      boxArtURL: boxArtURL == _undefined
-          ? _instance.boxArtURL
-          : (boxArtURL as String?),
-      viewersCount: viewersCount == _undefined
-          ? _instance.viewersCount
-          : (viewersCount as int?),
-    ),
-  );
-}
-
-class _CopyWithStubImpl$Query$FlowTopGames$games$edges$node<TRes>
-    implements CopyWith$Query$FlowTopGames$games$edges$node<TRes> {
-  _CopyWithStubImpl$Query$FlowTopGames$games$edges$node(this._res);
-
-  TRes _res;
-
-  call({
-    String? id,
-    String? displayName,
-    String? boxArtURL,
-    int? viewersCount,
-  }) => _res;
-}
-
 class Query$FlowTopGames$games$pageInfo {
   Query$FlowTopGames$games$pageInfo({this.hasNextPage});
 
@@ -982,50 +655,4 @@ class Query$FlowTopGames$games$pageInfo {
     }
     return true;
   }
-}
-
-extension UtilityExtension$Query$FlowTopGames$games$pageInfo
-    on Query$FlowTopGames$games$pageInfo {
-  CopyWith$Query$FlowTopGames$games$pageInfo<Query$FlowTopGames$games$pageInfo>
-  get copyWith => CopyWith$Query$FlowTopGames$games$pageInfo(this, (i) => i);
-}
-
-abstract class CopyWith$Query$FlowTopGames$games$pageInfo<TRes> {
-  factory CopyWith$Query$FlowTopGames$games$pageInfo(
-    Query$FlowTopGames$games$pageInfo instance,
-    TRes Function(Query$FlowTopGames$games$pageInfo) then,
-  ) = _CopyWithImpl$Query$FlowTopGames$games$pageInfo;
-
-  factory CopyWith$Query$FlowTopGames$games$pageInfo.stub(TRes res) =
-      _CopyWithStubImpl$Query$FlowTopGames$games$pageInfo;
-
-  TRes call({bool? hasNextPage});
-}
-
-class _CopyWithImpl$Query$FlowTopGames$games$pageInfo<TRes>
-    implements CopyWith$Query$FlowTopGames$games$pageInfo<TRes> {
-  _CopyWithImpl$Query$FlowTopGames$games$pageInfo(this._instance, this._then);
-
-  final Query$FlowTopGames$games$pageInfo _instance;
-
-  final TRes Function(Query$FlowTopGames$games$pageInfo) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({Object? hasNextPage = _undefined}) => _then(
-    Query$FlowTopGames$games$pageInfo(
-      hasNextPage: hasNextPage == _undefined
-          ? _instance.hasNextPage
-          : (hasNextPage as bool?),
-    ),
-  );
-}
-
-class _CopyWithStubImpl$Query$FlowTopGames$games$pageInfo<TRes>
-    implements CopyWith$Query$FlowTopGames$games$pageInfo<TRes> {
-  _CopyWithStubImpl$Query$FlowTopGames$games$pageInfo(this._res);
-
-  TRes _res;
-
-  call({bool? hasNextPage}) => _res;
 }

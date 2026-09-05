@@ -3,9 +3,80 @@ import "dart:async";
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/features/browse/browse_store.dart";
+import "package:flow/features/browse/category_streams_store.dart";
+import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  test("failed category refresh preserves results and the next page", () async {
+    final cache = _DelayedCategoriesCache();
+    final store = BrowseStore(apiCache: cache);
+    final initialLoad = store.loadCategories(reset: true);
+    cache.requests.single.response.complete(
+      const TwitchPage(data: [_firstCategory], cursor: "page-2"),
+    );
+    await initialLoad;
+
+    final refresh = store.loadCategories(reset: true, refresh: true);
+    cache.requests[1].response.completeError(TwitchApiException("Offline"));
+    await refresh;
+    expect(store.categories.single.id, "1");
+    expect(store.categoriesCursor, "page-2");
+
+    final nextPage = store.loadCategories();
+    expect(cache.requests.last.cursor, "page-2");
+    cache.requests.last.response.complete(
+      const TwitchPage(data: [_secondCategory], cursor: null),
+    );
+    await nextPage;
+    expect(store.categories.map((category) => category.id), ["1", "2"]);
+  });
+
+  test("failed live refresh preserves its pagination cursor", () async {
+    final cache = _DelayedLiveChannelsCache();
+    final store = BrowseStore(apiCache: cache);
+    final initialLoad = store.loadLiveChannels(reset: true);
+    cache.requests.single.response.complete(
+      const TwitchPage(data: [_firstStream], cursor: "page-2"),
+    );
+    await initialLoad;
+
+    final refresh = store.loadLiveChannels(reset: true, refresh: true);
+    cache.requests[1].response.completeError(TwitchApiException("Offline"));
+    await refresh;
+
+    expect(store.liveChannels.single.id, "creator-1");
+    expect(store.liveChannelsCursor, "page-2");
+  });
+
+  test("category streams retain pagination after failed refresh and merge overlaps", () async {
+    final cache = _DelayedLiveChannelsCache();
+    final store = CategoryStreamsStore(
+      apiCache: cache,
+      category: browseCategoryFromApi(_firstCategory),
+    );
+    final initialLoad = store.loadStreams(reset: true);
+    cache.requests.single.response.complete(
+      const TwitchPage(data: [_firstStream, _secondStream], cursor: "page-2"),
+    );
+    await initialLoad;
+
+    final refresh = store.loadStreams(reset: true, refresh: true);
+    cache.requests[1].response.completeError(TwitchApiException("Offline"));
+    await refresh;
+    expect(store.cursor, "page-2");
+
+    final nextPage = store.loadStreams();
+    expect(cache.requests.last.cursor, "page-2");
+    cache.requests.last.response.complete(
+      const TwitchPage(data: [_updatedSecondStream, _thirdStream], cursor: null),
+    );
+    await nextPage;
+
+    expect(store.channels.map((channel) => channel.id), ["creator-1", "creator-2", "creator-3"]);
+    expect(store.channels[1].title, "Updated second stream");
+  });
+
   test("merges overlapping live-channel pages by broadcaster", () async {
     final store = BrowseStore(apiCache: _OverlappingLiveChannelsCache());
 

@@ -1,3 +1,6 @@
+import "dart:async";
+import "dart:convert";
+
 import "package:flow/api/twitch_api.dart";
 
 typedef TwitchApiClientLoader = Future<TwitchApiClient> Function();
@@ -11,11 +14,8 @@ class TwitchApiCache {
   final TwitchApiClientLoader clientLoader;
   final int maxEntries;
   final _values = <String, Object?>{};
-  final _inFlight = <String, Object>{};
-  int _revision = 0;
-
+  final _inFlight = <String, Future<Object?>>{};
   void clear() {
-    _revision++;
     _values.clear();
     _inFlight.clear();
   }
@@ -42,7 +42,7 @@ class TwitchApiCache {
   }) => _cached(
     _cacheKey("liveStreams", {
       "first": first,
-      "gameIds": _normalizedValues(gameIds),
+      "gameIds": gameIds,
       "userLogins": _normalizedValues(userLogins),
       "cursor": cursor,
     }),
@@ -143,61 +143,39 @@ class TwitchApiCache {
 
     if (!refresh) {
       final pending = _inFlight[key];
-      if (pending is Future<Object?>) {
+      if (pending != null) {
         return (await pending) as T;
       }
     }
 
-    final revision = _revision;
     final future = _loadValue(load);
     _inFlight[key] = future;
 
     try {
       final value = await future;
-      if (revision == _revision) {
+      if (identical(_inFlight[key], future)) {
         _values.remove(key);
         _values[key] = value;
         while (_values.length > maxEntries) {
           _values.remove(_values.keys.first);
         }
       }
-      return value as T;
+      return value;
     } finally {
-      if (revision == _revision && identical(_inFlight[key], future)) {
-        _inFlight.remove(key);
+      if (identical(_inFlight[key], future)) {
+        unawaited(_inFlight.remove(key));
       }
     }
   }
 
-  Future<Object?> _loadValue<T>(
+  Future<T> _loadValue<T>(
     Future<T> Function(TwitchApiClient client) load,
-  ) async {
-    final client = await clientLoader();
-    final value = await load(client);
-    return value;
-  }
+  ) async => load(await clientLoader());
 }
 
-String _cacheKey(String namespace, Map<String, Object?> values) {
-  final entries = values.entries.toList()..sort((left, right) => left.key.compareTo(right.key));
-  final parts = [
-    namespace,
-    for (final entry in entries) "${entry.key}=${_cacheValue(entry.value)}",
-  ];
-  return parts.join("|");
-}
+String _cacheKey(String namespace, Map<String, Object?> values) => jsonEncode([namespace, values]);
 
-String _cacheValue(Object? value) {
-  if (value == null) {
-    return "";
-  }
-  if (value is Iterable<String>) {
-    return _normalizedValues(value).join(",");
-  }
-  return value.toString();
-}
-
-List<String> _normalizedValues(Iterable<String> values) => [
+List<String> _normalizedValues(Iterable<String> values) => {
   for (final value in values)
     if (value.trim().isNotEmpty) value.trim(),
-]..sort();
+}.toList()..sort();

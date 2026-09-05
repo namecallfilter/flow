@@ -175,7 +175,11 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> with WidgetsBindi
       return;
     }
 
-    final shouldRefresh = _isPulling && !_hasReversed && _pullExtent >= widget.triggerDistance;
+    final shouldRefresh =
+        event is PointerUpEvent &&
+        _isPulling &&
+        !_hasReversed &&
+        _pullExtent >= widget.triggerDistance;
     _isPulling = false;
     _hasReversed = false;
 
@@ -215,9 +219,6 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> with WidgetsBindi
 
   void _collapseIndicator() {
     if (_pullExtent == 0) {
-      setState(() {
-        _isSettling = false;
-      });
       return;
     }
 

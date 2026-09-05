@@ -76,7 +76,6 @@ internal class LiveLatencyCorrectionCoordinator(
         bufferedPositionMs: Long?,
         windowDurationMs: Long?,
         bufferedSafetyMs: Long,
-        partialBufferedSafetyMs: Long,
         minimumAdvanceMs: Long,
         targetToleranceMs: Long,
     ): LiveLatencyCorrectionDecision {
@@ -102,7 +101,6 @@ internal class LiveLatencyCorrectionCoordinator(
             bufferedPositionMs = bufferedPositionMs,
             windowDurationMs = windowDurationMs,
             bufferedSafetyMs = bufferedSafetyMs,
-            partialBufferedSafetyMs = partialBufferedSafetyMs,
             minimumAdvanceMs = minimumAdvanceMs,
             targetToleranceMs = targetToleranceMs,
         )
@@ -189,7 +187,6 @@ internal fun planLiveLatencyCorrection(
     bufferedPositionMs: Long?,
     windowDurationMs: Long?,
     bufferedSafetyMs: Long,
-    partialBufferedSafetyMs: Long,
     minimumAdvanceMs: Long,
     targetToleranceMs: Long,
 ): LiveLatencyCorrectionPlan {
@@ -198,7 +195,6 @@ internal fun planLiveLatencyCorrection(
         targetLatencyMs < 0 ||
         currentPositionMs < 0 ||
         bufferedSafetyMs < 0 ||
-        partialBufferedSafetyMs < bufferedSafetyMs ||
         minimumAdvanceMs < 0 ||
         targetToleranceMs < 0 ||
         bufferedPositionMs?.let { it < 0 } == true ||
@@ -207,11 +203,7 @@ internal fun planLiveLatencyCorrection(
         return LiveLatencyCorrectionPlan(LiveLatencyCorrectionPlanOutcome.INVALID_INPUT)
     }
 
-    val excessLatencyMs = runCatching {
-        Math.subtractExact(measuredLatencyMs, targetLatencyMs)
-    }.getOrNull() ?: return LiveLatencyCorrectionPlan(
-        LiveLatencyCorrectionPlanOutcome.INVALID_INPUT,
-    )
+    val excessLatencyMs = measuredLatencyMs - targetLatencyMs
     if (excessLatencyMs <= targetToleranceMs) {
         return LiveLatencyCorrectionPlan(LiveLatencyCorrectionPlanOutcome.AT_TARGET)
     }
@@ -221,60 +213,23 @@ internal fun planLiveLatencyCorrection(
     }.getOrNull() ?: return LiveLatencyCorrectionPlan(
         LiveLatencyCorrectionPlanOutcome.INVALID_INPUT,
     )
-    val advanceMs = runCatching {
-        Math.subtractExact(desiredPositionMs, currentPositionMs)
-    }.getOrNull() ?: return LiveLatencyCorrectionPlan(
-        LiveLatencyCorrectionPlanOutcome.INVALID_INPUT,
-    )
-    if (advanceMs < minimumAdvanceMs) {
-        return LiveLatencyCorrectionPlan(LiveLatencyCorrectionPlanOutcome.WAIT_FOR_BUFFER)
-    }
-
     val knownBufferedPositionMs = bufferedPositionMs
         ?: return LiveLatencyCorrectionPlan(LiveLatencyCorrectionPlanOutcome.WAIT_FOR_BUFFER)
-    val exactBufferedReachMs = runCatching {
-        Math.subtractExact(knownBufferedPositionMs, bufferedSafetyMs)
-    }.getOrNull() ?: return LiveLatencyCorrectionPlan(
-        LiveLatencyCorrectionPlanOutcome.WAIT_FOR_BUFFER,
-    )
-    val exactWindowReachMs = windowDurationMs?.let { windowDuration ->
-        runCatching { Math.subtractExact(windowDuration, bufferedSafetyMs) }.getOrNull()
-    }
-    val exactSafeReachMs = exactWindowReachMs?.let {
-        minOf(exactBufferedReachMs, it)
-    } ?: exactBufferedReachMs
-    if (desiredPositionMs <= exactSafeReachMs) {
-        return LiveLatencyCorrectionPlan(
-            outcome = LiveLatencyCorrectionPlanOutcome.SEEK,
-            seekPositionMs = desiredPositionMs,
-        )
-    }
-
-    val partialBufferedReachMs = runCatching {
-        Math.subtractExact(knownBufferedPositionMs, partialBufferedSafetyMs)
-    }.getOrNull() ?: return LiveLatencyCorrectionPlan(
-        LiveLatencyCorrectionPlanOutcome.WAIT_FOR_BUFFER,
-    )
-    val partialWindowReachMs = windowDurationMs?.let { windowDuration ->
-        runCatching {
-            Math.subtractExact(windowDuration, partialBufferedSafetyMs)
-        }.getOrNull()
-    }
-    val safeReachMs = partialWindowReachMs?.let {
-        minOf(partialBufferedReachMs, it)
-    } ?: partialBufferedReachMs
-    val safeAdvanceMs = runCatching {
-        Math.subtractExact(safeReachMs, currentPositionMs)
-    }.getOrNull() ?: return LiveLatencyCorrectionPlan(
-        LiveLatencyCorrectionPlanOutcome.INVALID_INPUT,
-    )
-    if (safeAdvanceMs < minimumAdvanceMs) {
+    val safeReachMs = minOf(
+        knownBufferedPositionMs,
+        windowDurationMs ?: knownBufferedPositionMs,
+    ) - bufferedSafetyMs
+    val seekPositionMs = minOf(desiredPositionMs, safeReachMs)
+    if (
+        seekPositionMs <= currentPositionMs ||
+        seekPositionMs - currentPositionMs < minimumAdvanceMs
+    ) {
         return LiveLatencyCorrectionPlan(LiveLatencyCorrectionPlanOutcome.WAIT_FOR_BUFFER)
     }
 
     return LiveLatencyCorrectionPlan(
         outcome = LiveLatencyCorrectionPlanOutcome.SEEK,
-        seekPositionMs = safeReachMs,
+        seekPositionMs = seekPositionMs,
     )
 }
 

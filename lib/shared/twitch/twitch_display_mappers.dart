@@ -134,7 +134,7 @@ String initialsForName(String name) {
   final words = name.trim().split(RegExp(r"\s+"));
   final initials = [
     for (final word in words)
-      if (word.isNotEmpty) word.substring(0, 1).toUpperCase(),
+      if (word.isNotEmpty) word.characters.first.toUpperCase(),
   ].take(2).join();
   return initials.isEmpty ? "CH" : initials;
 }

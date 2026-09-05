@@ -42,10 +42,6 @@ abstract class CategoryStreamsStoreBase with Store {
 
     isLoading = true;
     errorMessage = null;
-    if (reset) {
-      cursor = null;
-    }
-
     try {
       final page = await apiCache.fetchLiveStreamsPage(
         gameIds: [category.id],
@@ -64,7 +60,11 @@ abstract class CategoryStreamsStoreBase with Store {
             ),
       ];
 
-      channels = reset ? nextChannels : [...channels, ...nextChannels];
+      channels = {
+        if (!reset)
+          for (final channel in channels) channel.id: channel,
+        for (final channel in nextChannels) channel.id: channel,
+      }.values.toList();
       cursor = page.cursor;
       loaded = true;
     } on Object catch (error) {

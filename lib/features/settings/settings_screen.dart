@@ -76,6 +76,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final ScrollController _scrollController = ScrollController();
   late final AppSettingsStore _settingsStore;
   bool _settingsLoadFailed = false;
+  bool _isSaving = false;
 
   @override
   void initState() {
@@ -83,7 +84,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _settingsStore =
         widget.settingsStore ??
         AppSettingsStore(
-          preferences: _MemoryFlowPreferences(themeMode: widget.currentThemeMode),
+          preferences: MemoryFlowPreferences(themeMode: widget.currentThemeMode),
         );
     if (!_settingsStore.isLoaded) {
       unawaited(_loadSettings());
@@ -117,6 +118,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
     widget.onThemeModeChanged?.call(themeMode);
   }
 
+  Future<void> _saveSettings(AsyncCallback change) async {
+    if (_isSaving) {
+      return;
+    }
+    setState(() => _isSaving = true);
+    try {
+      await change();
+    } on Object catch (error) {
+      debugPrint("Couldn't save settings: $error");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't save settings. Please try again.")),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
+    }
+  }
+
   Future<String?> _promptForValue({
     required String title,
     required String hint,
@@ -131,6 +153,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           title: Text(title),
           content: TextField(
             autofocus: true,
+            autocorrect: false,
+            enableSuggestions: false,
             decoration: InputDecoration(hintText: hint, errorText: errorText),
             onChanged: (value) {
               inputValue = value;
@@ -229,7 +253,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       await opener(FlowLinks.repository);
     } on Object catch (error) {
-      messenger.showSnackBar(SnackBar(content: Text(error.toString())));
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(content: Text(error.toString())));
+      }
     }
   }
 
@@ -252,7 +278,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             children: [
               AbsorbPointer(
                 key: const ValueKey("settings_content_interaction_gate"),
-                absorbing: !_settingsStore.isLoaded,
+                absorbing: !_settingsStore.isLoaded || _isSaving,
                 child: ListView(
                   controller: _scrollController,
                   padding: PageHeaderLayout.scrollPadding(
@@ -300,7 +326,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         _ThemeModeRow(
                           currentThemeMode: _settingsStore.themeMode,
                           onThemeModeChanged: (themeMode) {
-                            unawaited(_changeThemeMode(themeMode));
+                            unawaited(_saveSettings(() => _changeThemeMode(themeMode)));
                           },
                         ),
                       ],
@@ -316,19 +342,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           manualChannels: _settingsStore.adProxyWhitelistedChannels,
                           subscriptionChannels: _settingsStore.adProxySubscriptionChannels,
                           onEnabledChanged: (enabled) {
-                            unawaited(_settingsStore.setAdProxyEnabled(enabled: enabled));
+                            unawaited(
+                              _saveSettings(
+                                () => _settingsStore.setAdProxyEnabled(enabled: enabled),
+                              ),
+                            );
                           },
-                          onAddProxy: () => unawaited(_addProxyUrl()),
+                          onAddProxy: () => unawaited(_saveSettings(_addProxyUrl)),
                           onRemoveProxy: (index) {
                             final urls = _settingsStore.adProxyUrls.toList()..removeAt(index);
-                            unawaited(_settingsStore.setAdProxyUrls(urls));
+                            unawaited(_saveSettings(() => _settingsStore.setAdProxyUrls(urls)));
                           },
-                          onMoveProxy: (index, offset) => unawaited(_moveProxy(index, offset)),
-                          onAddChannel: () => unawaited(_addWhitelistedChannel()),
+                          onMoveProxy: (index, offset) =>
+                              unawaited(_saveSettings(() => _moveProxy(index, offset))),
+                          onAddChannel: () => unawaited(_saveSettings(_addWhitelistedChannel)),
                           onRemoveChannel: (channel) {
                             final channels = _settingsStore.adProxyWhitelistedChannels.toList()
                               ..remove(channel);
-                            unawaited(_settingsStore.setAdProxyWhitelistedChannels(channels));
+                            unawaited(
+                              _saveSettings(
+                                () => _settingsStore.setAdProxyWhitelistedChannels(channels),
+                              ),
+                            );
                           },
                         ),
                       ],
@@ -408,7 +443,7 @@ class _AdProxySettings extends StatelessWidget {
         _SettingsRow(
           icon: Icons.shield_outlined,
           title: "Ad proxying",
-          subtitle: "Proxy only Twitch ad-assignment requests; stream media stays direct.",
+          subtitle: "Use proxies for ad requests. Stream video directly.",
           trailing: Switch(
             key: const ValueKey("settings_ad_proxy_toggle"),
             value: enabled,
@@ -846,67 +881,5 @@ class _SettingsIcon extends StatelessWidget {
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<IconData>("icon", icon));
-  }
-}
-
-class _MemoryFlowPreferences implements FlowPreferences {
-  _MemoryFlowPreferences({required this.themeMode});
-
-  ThemeMode themeMode;
-  List<String> searchHistory = const <String>[];
-  bool adProxyEnabled = false;
-  List<String> adProxyUrls = const [];
-  List<String> adProxyWhitelistedChannels = const [];
-
-  @override
-  Future<bool> readAdProxyEnabled() async => adProxyEnabled;
-
-  @override
-  Future<List<String>> readAdProxyUrls() async => adProxyUrls;
-
-  @override
-  Future<List<String>> readAdProxyWhitelistedChannels() async => adProxyWhitelistedChannels;
-
-  @override
-  Future<List<String>> readAdProxySubscriptionChannels() async => const [];
-
-  @override
-  Future<void> saveAdProxyEnabled({required bool enabled}) async => adProxyEnabled = enabled;
-
-  @override
-  Future<void> saveAdProxyUrls(List<String> urls) async => adProxyUrls = List.of(urls);
-
-  @override
-  Future<void> saveAdProxyWhitelistedChannels(List<String> channels) async =>
-      adProxyWhitelistedChannels = List.of(channels);
-
-  @override
-  Future<void> saveAdProxySubscriptionChannels(List<String> channels) async {}
-
-  @override
-  Future<void> clearBrowseSearchHistory() async {
-    searchHistory = const <String>[];
-  }
-
-  @override
-  Future<List<String>> readBrowseSearchHistory() async => searchHistory;
-
-  @override
-  Future<bool> readLoginOfferDismissed() async => false;
-
-  @override
-  Future<ThemeMode> readThemeMode() async => themeMode;
-
-  @override
-  Future<void> saveBrowseSearchHistory(List<String> history) async {
-    searchHistory = List<String>.of(history);
-  }
-
-  @override
-  Future<void> saveLoginOfferDismissed({required bool dismissed}) async {}
-
-  @override
-  Future<void> saveThemeMode(ThemeMode mode) async {
-    themeMode = mode;
   }
 }

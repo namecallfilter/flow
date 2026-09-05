@@ -162,10 +162,6 @@ abstract class BrowseStoreBase with Store {
     final preservedTail = preserveTail
         ? categories.skip(tailStart).toList(growable: false)
         : const <BrowseCategory>[];
-    if (reset && !preserveTail) {
-      categoriesCursor = null;
-    }
-
     try {
       final page = await apiCache.fetchTopCategoriesPage(
         cursor: reset ? null : categoriesCursor,
@@ -269,10 +265,6 @@ abstract class BrowseStoreBase with Store {
     final preservedTail = preserveTail
         ? liveChannels.skip(tailStart).toList(growable: false)
         : const <StreamChannel>[];
-    if (reset && !preserveTail) {
-      liveChannelsCursor = null;
-    }
-
     try {
       final page = await apiCache.fetchLiveStreamsPage(
         cursor: reset ? null : liveChannelsCursor,
@@ -348,22 +340,9 @@ List<BrowseCategory> _prependUniqueCategories(
 List<BrowseCategory> _mergeCategories(
   List<BrowseCategory> current,
   List<BrowseCategory> next,
-) {
-  final merged = <BrowseCategory>[];
-  final indicesById = <String, int>{};
-
-  for (final category in current.followedBy(next)) {
-    final existingIndex = indicesById[category.id];
-    if (existingIndex == null) {
-      indicesById[category.id] = merged.length;
-      merged.add(category);
-    } else {
-      merged[existingIndex] = category;
-    }
-  }
-
-  return merged;
-}
+) => {
+  for (final category in current.followedBy(next)) category.id: category,
+}.values.toList();
 
 List<StreamChannel> _prependUniqueLiveChannels(
   List<StreamChannel> firstPage,
@@ -379,23 +358,9 @@ List<StreamChannel> _prependUniqueLiveChannels(
 List<StreamChannel> _mergeLiveChannels(
   List<StreamChannel> current,
   List<StreamChannel> next,
-) {
-  final merged = <StreamChannel>[];
-  final indicesByIdentity = <String, int>{};
-
-  for (final channel in current.followedBy(next)) {
-    final identity = _liveChannelIdentity(channel);
-    final existingIndex = indicesByIdentity[identity];
-    if (existingIndex == null) {
-      indicesByIdentity[identity] = merged.length;
-      merged.add(channel);
-    } else {
-      merged[existingIndex] = channel;
-    }
-  }
-
-  return merged;
-}
+) => {
+  for (final channel in current.followedBy(next)) _liveChannelIdentity(channel): channel,
+}.values.toList();
 
 String _liveChannelIdentity(StreamChannel channel) {
   final id = channel.id.trim();

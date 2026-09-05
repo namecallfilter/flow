@@ -8,6 +8,55 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  test("a slow request cannot replace the result of a newer refresh", () async {
+    final responses = <Completer<http.Response>>[];
+    final cache = TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+        httpClient: MockClient((_) {
+          final response = Completer<http.Response>();
+          responses.add(response);
+          return response.future;
+        }),
+      ),
+    );
+    final oldRequest = cache.fetchTopCategoriesPage();
+    await Future<void>.delayed(Duration.zero);
+    final refresh = cache.fetchTopCategoriesPage(refresh: true);
+    await Future<void>.delayed(Duration.zero);
+
+    responses[1].complete(_topGamesResponse(id: "new", name: "New"));
+    await refresh;
+    responses[0].complete(_topGamesResponse(id: "old", name: "Old"));
+    await oldRequest;
+
+    expect((await cache.fetchTopCategoriesPage()).data.single.name, "New");
+    expect(responses, hasLength(2));
+  });
+
+  test("cache keys preserve list boundaries and category order", () async {
+    var requests = 0;
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      httpClient: MockClient((_) async {
+        requests++;
+        return _jsonResponse({
+          "data": {"users": <Object?>[], "game": null},
+        });
+      }),
+    );
+    final cache = TwitchApiCache(clientLoader: () async => client);
+
+    await cache.fetchUsersByIds(["1,2"]);
+    await cache.fetchUsersByIds(["1", "2"]);
+    await cache.fetchLiveStreamsPage(gameIds: ["1", "2"]);
+    await cache.fetchLiveStreamsPage(gameIds: ["2", "1"]);
+
+    expect(requests, 4);
+  });
+
   test("deduplicates in-flight requests and reuses session cache", () async {
     var requests = 0;
     final response = Completer<http.Response>();

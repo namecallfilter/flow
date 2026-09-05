@@ -69,12 +69,6 @@ class Input$AdProperty_TrackingPixels_Consent_Input {
     return result$data;
   }
 
-  CopyWith$Input$AdProperty_TrackingPixels_Consent_Input<
-    Input$AdProperty_TrackingPixels_Consent_Input
-  >
-  get copyWith =>
-      CopyWith$Input$AdProperty_TrackingPixels_Consent_Input(this, (i) => i);
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -138,68 +132,6 @@ class Input$AdProperty_TrackingPixels_Consent_Input {
   }
 }
 
-abstract class CopyWith$Input$AdProperty_TrackingPixels_Consent_Input<TRes> {
-  factory CopyWith$Input$AdProperty_TrackingPixels_Consent_Input(
-    Input$AdProperty_TrackingPixels_Consent_Input instance,
-    TRes Function(Input$AdProperty_TrackingPixels_Consent_Input) then,
-  ) = _CopyWithImpl$Input$AdProperty_TrackingPixels_Consent_Input;
-
-  factory CopyWith$Input$AdProperty_TrackingPixels_Consent_Input.stub(
-    TRes res,
-  ) = _CopyWithStubImpl$Input$AdProperty_TrackingPixels_Consent_Input;
-
-  TRes call({
-    bool? allowAmazon,
-    bool? allowComscore,
-    bool? allowGoogle,
-    bool? allowNielsen,
-  });
-}
-
-class _CopyWithImpl$Input$AdProperty_TrackingPixels_Consent_Input<TRes>
-    implements CopyWith$Input$AdProperty_TrackingPixels_Consent_Input<TRes> {
-  _CopyWithImpl$Input$AdProperty_TrackingPixels_Consent_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$AdProperty_TrackingPixels_Consent_Input _instance;
-
-  final TRes Function(Input$AdProperty_TrackingPixels_Consent_Input) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({
-    Object? allowAmazon = _undefined,
-    Object? allowComscore = _undefined,
-    Object? allowGoogle = _undefined,
-    Object? allowNielsen = _undefined,
-  }) => _then(
-    Input$AdProperty_TrackingPixels_Consent_Input._({
-      ..._instance._$data,
-      if (allowAmazon != _undefined) 'allowAmazon': (allowAmazon as bool?),
-      if (allowComscore != _undefined)
-        'allowComscore': (allowComscore as bool?),
-      if (allowGoogle != _undefined) 'allowGoogle': (allowGoogle as bool?),
-      if (allowNielsen != _undefined) 'allowNielsen': (allowNielsen as bool?),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$AdProperty_TrackingPixels_Consent_Input<TRes>
-    implements CopyWith$Input$AdProperty_TrackingPixels_Consent_Input<TRes> {
-  _CopyWithStubImpl$Input$AdProperty_TrackingPixels_Consent_Input(this._res);
-
-  TRes _res;
-
-  call({
-    bool? allowAmazon,
-    bool? allowComscore,
-    bool? allowGoogle,
-    bool? allowNielsen,
-  }) => _res;
-}
-
 class Input$ClipAsset_VideoQualities_Params_Input {
   factory Input$ClipAsset_VideoQualities_Params_Input({
     List<Enum$ClipAsset_VideoQualities_SupportedCodecs_Enum?>? supportedCodecs,
@@ -250,12 +182,6 @@ class Input$ClipAsset_VideoQualities_Params_Input {
     return result$data;
   }
 
-  CopyWith$Input$ClipAsset_VideoQualities_Params_Input<
-    Input$ClipAsset_VideoQualities_Params_Input
-  >
-  get copyWith =>
-      CopyWith$Input$ClipAsset_VideoQualities_Params_Input(this, (i) => i);
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -301,55 +227,6 @@ class Input$ClipAsset_VideoQualities_Params_Input {
   }
 }
 
-abstract class CopyWith$Input$ClipAsset_VideoQualities_Params_Input<TRes> {
-  factory CopyWith$Input$ClipAsset_VideoQualities_Params_Input(
-    Input$ClipAsset_VideoQualities_Params_Input instance,
-    TRes Function(Input$ClipAsset_VideoQualities_Params_Input) then,
-  ) = _CopyWithImpl$Input$ClipAsset_VideoQualities_Params_Input;
-
-  factory CopyWith$Input$ClipAsset_VideoQualities_Params_Input.stub(TRes res) =
-      _CopyWithStubImpl$Input$ClipAsset_VideoQualities_Params_Input;
-
-  TRes call({
-    List<Enum$ClipAsset_VideoQualities_SupportedCodecs_Enum?>? supportedCodecs,
-  });
-}
-
-class _CopyWithImpl$Input$ClipAsset_VideoQualities_Params_Input<TRes>
-    implements CopyWith$Input$ClipAsset_VideoQualities_Params_Input<TRes> {
-  _CopyWithImpl$Input$ClipAsset_VideoQualities_Params_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$ClipAsset_VideoQualities_Params_Input _instance;
-
-  final TRes Function(Input$ClipAsset_VideoQualities_Params_Input) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({Object? supportedCodecs = _undefined}) => _then(
-    Input$ClipAsset_VideoQualities_Params_Input._({
-      ..._instance._$data,
-      if (supportedCodecs != _undefined)
-        'supportedCodecs':
-            (supportedCodecs
-                as List<Enum$ClipAsset_VideoQualities_SupportedCodecs_Enum?>?),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$ClipAsset_VideoQualities_Params_Input<TRes>
-    implements CopyWith$Input$ClipAsset_VideoQualities_Params_Input<TRes> {
-  _CopyWithStubImpl$Input$ClipAsset_VideoQualities_Params_Input(this._res);
-
-  TRes _res;
-
-  call({
-    List<Enum$ClipAsset_VideoQualities_SupportedCodecs_Enum?>? supportedCodecs,
-  }) => _res;
-}
-
 class Input$Clip_PlaybackAccessToken_Params_Input {
   factory Input$Clip_PlaybackAccessToken_Params_Input({
     String? platform,
@@ -391,12 +268,6 @@ class Input$Clip_PlaybackAccessToken_Params_Input {
     return result$data;
   }
 
-  CopyWith$Input$Clip_PlaybackAccessToken_Params_Input<
-    Input$Clip_PlaybackAccessToken_Params_Input
-  >
-  get copyWith =>
-      CopyWith$Input$Clip_PlaybackAccessToken_Params_Input(this, (i) => i);
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -436,50 +307,6 @@ class Input$Clip_PlaybackAccessToken_Params_Input {
       _$data.containsKey('playerType') ? l$playerType : const {},
     ]);
   }
-}
-
-abstract class CopyWith$Input$Clip_PlaybackAccessToken_Params_Input<TRes> {
-  factory CopyWith$Input$Clip_PlaybackAccessToken_Params_Input(
-    Input$Clip_PlaybackAccessToken_Params_Input instance,
-    TRes Function(Input$Clip_PlaybackAccessToken_Params_Input) then,
-  ) = _CopyWithImpl$Input$Clip_PlaybackAccessToken_Params_Input;
-
-  factory CopyWith$Input$Clip_PlaybackAccessToken_Params_Input.stub(TRes res) =
-      _CopyWithStubImpl$Input$Clip_PlaybackAccessToken_Params_Input;
-
-  TRes call({String? platform, String? playerType});
-}
-
-class _CopyWithImpl$Input$Clip_PlaybackAccessToken_Params_Input<TRes>
-    implements CopyWith$Input$Clip_PlaybackAccessToken_Params_Input<TRes> {
-  _CopyWithImpl$Input$Clip_PlaybackAccessToken_Params_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$Clip_PlaybackAccessToken_Params_Input _instance;
-
-  final TRes Function(Input$Clip_PlaybackAccessToken_Params_Input) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({Object? platform = _undefined, Object? playerType = _undefined}) =>
-      _then(
-        Input$Clip_PlaybackAccessToken_Params_Input._({
-          ..._instance._$data,
-          if (platform != _undefined) 'platform': (platform as String?),
-          if (playerType != _undefined) 'playerType': (playerType as String?),
-        }),
-      );
-}
-
-class _CopyWithStubImpl$Input$Clip_PlaybackAccessToken_Params_Input<TRes>
-    implements CopyWith$Input$Clip_PlaybackAccessToken_Params_Input<TRes> {
-  _CopyWithStubImpl$Input$Clip_PlaybackAccessToken_Params_Input(this._res);
-
-  TRes _res;
-
-  call({String? platform, String? playerType}) => _res;
 }
 
 class Input$Extension_ChallengeConditionParticipants_Input_Input {
@@ -543,15 +370,6 @@ class Input$Extension_ChallengeConditionParticipants_Input_Input {
     return result$data;
   }
 
-  CopyWith$Input$Extension_ChallengeConditionParticipants_Input_Input<
-    Input$Extension_ChallengeConditionParticipants_Input_Input
-  >
-  get copyWith =>
-      CopyWith$Input$Extension_ChallengeConditionParticipants_Input_Input(
-        this,
-        (i) => i,
-      );
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -597,87 +415,6 @@ class Input$Extension_ChallengeConditionParticipants_Input_Input {
   }
 }
 
-abstract class CopyWith$Input$Extension_ChallengeConditionParticipants_Input_Input<
-  TRes
-> {
-  factory CopyWith$Input$Extension_ChallengeConditionParticipants_Input_Input(
-    Input$Extension_ChallengeConditionParticipants_Input_Input instance,
-    TRes Function(Input$Extension_ChallengeConditionParticipants_Input_Input)
-    then,
-  ) = _CopyWithImpl$Input$Extension_ChallengeConditionParticipants_Input_Input;
-
-  factory CopyWith$Input$Extension_ChallengeConditionParticipants_Input_Input.stub(
-    TRes res,
-  ) = _CopyWithStubImpl$Input$Extension_ChallengeConditionParticipants_Input_Input;
-
-  TRes call({
-    String? conditionOwnerID,
-    String? conditionParticipantOwnerID,
-    Enum$Extension_ChallengeConditionParticipants_EndState_Enum? endState,
-  });
-}
-
-class _CopyWithImpl$Input$Extension_ChallengeConditionParticipants_Input_Input<
-  TRes
->
-    implements
-        CopyWith$Input$Extension_ChallengeConditionParticipants_Input_Input<
-          TRes
-        > {
-  _CopyWithImpl$Input$Extension_ChallengeConditionParticipants_Input_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$Extension_ChallengeConditionParticipants_Input_Input _instance;
-
-  final TRes Function(
-    Input$Extension_ChallengeConditionParticipants_Input_Input,
-  )
-  _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({
-    Object? conditionOwnerID = _undefined,
-    Object? conditionParticipantOwnerID = _undefined,
-    Object? endState = _undefined,
-  }) => _then(
-    Input$Extension_ChallengeConditionParticipants_Input_Input._({
-      ..._instance._$data,
-      if (conditionOwnerID != _undefined && conditionOwnerID != null)
-        'conditionOwnerID': (conditionOwnerID as String),
-      if (conditionParticipantOwnerID != _undefined &&
-          conditionParticipantOwnerID != null)
-        'conditionParticipantOwnerID': (conditionParticipantOwnerID as String),
-      if (endState != _undefined)
-        'endState':
-            (endState
-                as Enum$Extension_ChallengeConditionParticipants_EndState_Enum?),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$Extension_ChallengeConditionParticipants_Input_Input<
-  TRes
->
-    implements
-        CopyWith$Input$Extension_ChallengeConditionParticipants_Input_Input<
-          TRes
-        > {
-  _CopyWithStubImpl$Input$Extension_ChallengeConditionParticipants_Input_Input(
-    this._res,
-  );
-
-  TRes _res;
-
-  call({
-    String? conditionOwnerID,
-    String? conditionParticipantOwnerID,
-    Enum$Extension_ChallengeConditionParticipants_EndState_Enum? endState,
-  }) => _res;
-}
-
 class Input$Extension_ChallengeCondition_Input_Input {
   factory Input$Extension_ChallengeCondition_Input_Input({
     required String conditionID,
@@ -715,12 +452,6 @@ class Input$Extension_ChallengeCondition_Input_Input {
     return result$data;
   }
 
-  CopyWith$Input$Extension_ChallengeCondition_Input_Input<
-    Input$Extension_ChallengeCondition_Input_Input
-  >
-  get copyWith =>
-      CopyWith$Input$Extension_ChallengeCondition_Input_Input(this, (i) => i);
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -749,55 +480,6 @@ class Input$Extension_ChallengeCondition_Input_Input {
     final l$conditionOwnerID = conditionOwnerID;
     return Object.hashAll([l$conditionID, l$conditionOwnerID]);
   }
-}
-
-abstract class CopyWith$Input$Extension_ChallengeCondition_Input_Input<TRes> {
-  factory CopyWith$Input$Extension_ChallengeCondition_Input_Input(
-    Input$Extension_ChallengeCondition_Input_Input instance,
-    TRes Function(Input$Extension_ChallengeCondition_Input_Input) then,
-  ) = _CopyWithImpl$Input$Extension_ChallengeCondition_Input_Input;
-
-  factory CopyWith$Input$Extension_ChallengeCondition_Input_Input.stub(
-    TRes res,
-  ) = _CopyWithStubImpl$Input$Extension_ChallengeCondition_Input_Input;
-
-  TRes call({String? conditionID, String? conditionOwnerID});
-}
-
-class _CopyWithImpl$Input$Extension_ChallengeCondition_Input_Input<TRes>
-    implements CopyWith$Input$Extension_ChallengeCondition_Input_Input<TRes> {
-  _CopyWithImpl$Input$Extension_ChallengeCondition_Input_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$Extension_ChallengeCondition_Input_Input _instance;
-
-  final TRes Function(Input$Extension_ChallengeCondition_Input_Input) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({
-    Object? conditionID = _undefined,
-    Object? conditionOwnerID = _undefined,
-  }) => _then(
-    Input$Extension_ChallengeCondition_Input_Input._({
-      ..._instance._$data,
-      if (conditionID != _undefined && conditionID != null)
-        'conditionID': (conditionID as String),
-      if (conditionOwnerID != _undefined && conditionOwnerID != null)
-        'conditionOwnerID': (conditionOwnerID as String),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$Extension_ChallengeCondition_Input_Input<TRes>
-    implements CopyWith$Input$Extension_ChallengeCondition_Input_Input<TRes> {
-  _CopyWithStubImpl$Input$Extension_ChallengeCondition_Input_Input(this._res);
-
-  TRes _res;
-
-  call({String? conditionID, String? conditionOwnerID}) => _res;
 }
 
 class Input$Extension_ChallengeConditions_Input_Input {
@@ -846,12 +528,6 @@ class Input$Extension_ChallengeConditions_Input_Input {
     return result$data;
   }
 
-  CopyWith$Input$Extension_ChallengeConditions_Input_Input<
-    Input$Extension_ChallengeConditions_Input_Input
-  >
-  get copyWith =>
-      CopyWith$Input$Extension_ChallengeConditions_Input_Input(this, (i) => i);
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -886,61 +562,6 @@ class Input$Extension_ChallengeConditions_Input_Input {
       _$data.containsKey('state') ? l$state : const {},
     ]);
   }
-}
-
-abstract class CopyWith$Input$Extension_ChallengeConditions_Input_Input<TRes> {
-  factory CopyWith$Input$Extension_ChallengeConditions_Input_Input(
-    Input$Extension_ChallengeConditions_Input_Input instance,
-    TRes Function(Input$Extension_ChallengeConditions_Input_Input) then,
-  ) = _CopyWithImpl$Input$Extension_ChallengeConditions_Input_Input;
-
-  factory CopyWith$Input$Extension_ChallengeConditions_Input_Input.stub(
-    TRes res,
-  ) = _CopyWithStubImpl$Input$Extension_ChallengeConditions_Input_Input;
-
-  TRes call({
-    String? conditionOwnerID,
-    Enum$Extension_ChallengeConditions_State_Enum? state,
-  });
-}
-
-class _CopyWithImpl$Input$Extension_ChallengeConditions_Input_Input<TRes>
-    implements CopyWith$Input$Extension_ChallengeConditions_Input_Input<TRes> {
-  _CopyWithImpl$Input$Extension_ChallengeConditions_Input_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$Extension_ChallengeConditions_Input_Input _instance;
-
-  final TRes Function(Input$Extension_ChallengeConditions_Input_Input) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({
-    Object? conditionOwnerID = _undefined,
-    Object? state = _undefined,
-  }) => _then(
-    Input$Extension_ChallengeConditions_Input_Input._({
-      ..._instance._$data,
-      if (conditionOwnerID != _undefined && conditionOwnerID != null)
-        'conditionOwnerID': (conditionOwnerID as String),
-      if (state != _undefined)
-        'state': (state as Enum$Extension_ChallengeConditions_State_Enum?),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$Extension_ChallengeConditions_Input_Input<TRes>
-    implements CopyWith$Input$Extension_ChallengeConditions_Input_Input<TRes> {
-  _CopyWithStubImpl$Input$Extension_ChallengeConditions_Input_Input(this._res);
-
-  TRes _res;
-
-  call({
-    String? conditionOwnerID,
-    Enum$Extension_ChallengeConditions_State_Enum? state,
-  }) => _res;
 }
 
 class Input$Mutation_BeginUseBitsInExtension_Input_Input {
@@ -988,14 +609,6 @@ class Input$Mutation_BeginUseBitsInExtension_Input_Input {
     return result$data;
   }
 
-  CopyWith$Input$Mutation_BeginUseBitsInExtension_Input_Input<
-    Input$Mutation_BeginUseBitsInExtension_Input_Input
-  >
-  get copyWith => CopyWith$Input$Mutation_BeginUseBitsInExtension_Input_Input(
-    this,
-    (i) => i,
-  );
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -1030,63 +643,6 @@ class Input$Mutation_BeginUseBitsInExtension_Input_Input {
     final l$sku = sku;
     return Object.hashAll([l$channelID, l$extensionClientID, l$sku]);
   }
-}
-
-abstract class CopyWith$Input$Mutation_BeginUseBitsInExtension_Input_Input<
-  TRes
-> {
-  factory CopyWith$Input$Mutation_BeginUseBitsInExtension_Input_Input(
-    Input$Mutation_BeginUseBitsInExtension_Input_Input instance,
-    TRes Function(Input$Mutation_BeginUseBitsInExtension_Input_Input) then,
-  ) = _CopyWithImpl$Input$Mutation_BeginUseBitsInExtension_Input_Input;
-
-  factory CopyWith$Input$Mutation_BeginUseBitsInExtension_Input_Input.stub(
-    TRes res,
-  ) = _CopyWithStubImpl$Input$Mutation_BeginUseBitsInExtension_Input_Input;
-
-  TRes call({String? channelID, String? extensionClientID, String? sku});
-}
-
-class _CopyWithImpl$Input$Mutation_BeginUseBitsInExtension_Input_Input<TRes>
-    implements
-        CopyWith$Input$Mutation_BeginUseBitsInExtension_Input_Input<TRes> {
-  _CopyWithImpl$Input$Mutation_BeginUseBitsInExtension_Input_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$Mutation_BeginUseBitsInExtension_Input_Input _instance;
-
-  final TRes Function(Input$Mutation_BeginUseBitsInExtension_Input_Input) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({
-    Object? channelID = _undefined,
-    Object? extensionClientID = _undefined,
-    Object? sku = _undefined,
-  }) => _then(
-    Input$Mutation_BeginUseBitsInExtension_Input_Input._({
-      ..._instance._$data,
-      if (channelID != _undefined && channelID != null)
-        'channelID': (channelID as String),
-      if (extensionClientID != _undefined && extensionClientID != null)
-        'extensionClientID': (extensionClientID as String),
-      if (sku != _undefined && sku != null) 'sku': (sku as String),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$Mutation_BeginUseBitsInExtension_Input_Input<TRes>
-    implements
-        CopyWith$Input$Mutation_BeginUseBitsInExtension_Input_Input<TRes> {
-  _CopyWithStubImpl$Input$Mutation_BeginUseBitsInExtension_Input_Input(
-    this._res,
-  );
-
-  TRes _res;
-
-  call({String? channelID, String? extensionClientID, String? sku}) => _res;
 }
 
 class Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input {
@@ -1150,15 +706,6 @@ class Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input {
     return result$data;
   }
 
-  CopyWith$Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input<
-    Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input
-  >
-  get copyWith =>
-      CopyWith$Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input(
-        this,
-        (i) => i,
-      );
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -1207,94 +754,6 @@ class Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input {
       l$name,
     ]);
   }
-}
-
-abstract class CopyWith$Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input<
-  TRes
-> {
-  factory CopyWith$Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input(
-    Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input
-    instance,
-    TRes Function(
-      Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input,
-    )
-    then,
-  ) = _CopyWithImpl$Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input;
-
-  factory CopyWith$Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input.stub(
-    TRes res,
-  ) = _CopyWithStubImpl$Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input;
-
-  TRes call({
-    bool? disableWhenSatisfied,
-    String? extensionID,
-    String? extensionInstallationChannelID,
-    String? name,
-  });
-}
-
-class _CopyWithImpl$Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input<
-  TRes
->
-    implements
-        CopyWith$Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input<
-          TRes
-        > {
-  _CopyWithImpl$Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input
-  _instance;
-
-  final TRes Function(
-    Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input,
-  )
-  _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({
-    Object? disableWhenSatisfied = _undefined,
-    Object? extensionID = _undefined,
-    Object? extensionInstallationChannelID = _undefined,
-    Object? name = _undefined,
-  }) => _then(
-    Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input._({
-      ..._instance._$data,
-      if (disableWhenSatisfied != _undefined && disableWhenSatisfied != null)
-        'disableWhenSatisfied': (disableWhenSatisfied as bool),
-      if (extensionID != _undefined && extensionID != null)
-        'extensionID': (extensionID as String),
-      if (extensionInstallationChannelID != _undefined &&
-          extensionInstallationChannelID != null)
-        'extensionInstallationChannelID':
-            (extensionInstallationChannelID as String),
-      if (name != _undefined && name != null) 'name': (name as String),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input<
-  TRes
->
-    implements
-        CopyWith$Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input<
-          TRes
-        > {
-  _CopyWithStubImpl$Input$Mutation_CreateBitsChallengeConditionForExtension_Input_Input(
-    this._res,
-  );
-
-  TRes _res;
-
-  call({
-    bool? disableWhenSatisfied,
-    String? extensionID,
-    String? extensionInstallationChannelID,
-    String? name,
-  }) => _res;
 }
 
 class Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_Input {
@@ -1365,15 +824,6 @@ class Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_I
     return result$data;
   }
 
-  CopyWith$Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_Input<
-    Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_Input
-  >
-  get copyWith =>
-      CopyWith$Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_Input(
-        this,
-        (i) => i,
-      );
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -1429,100 +879,6 @@ class Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_I
   }
 }
 
-abstract class CopyWith$Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_Input<
-  TRes
-> {
-  factory CopyWith$Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_Input(
-    Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_Input
-    instance,
-    TRes Function(
-      Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_Input,
-    )
-    then,
-  ) = _CopyWithImpl$Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_Input;
-
-  factory CopyWith$Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_Input.stub(
-    TRes res,
-  ) = _CopyWithStubImpl$Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_Input;
-
-  TRes call({
-    int? bitsAmount,
-    String? conditionID,
-    String? conditionOwnerID,
-    String? extensionID,
-    int? ttlSeconds,
-  });
-}
-
-class _CopyWithImpl$Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_Input<
-  TRes
->
-    implements
-        CopyWith$Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_Input<
-          TRes
-        > {
-  _CopyWithImpl$Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_Input
-  _instance;
-
-  final TRes Function(
-    Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_Input,
-  )
-  _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({
-    Object? bitsAmount = _undefined,
-    Object? conditionID = _undefined,
-    Object? conditionOwnerID = _undefined,
-    Object? extensionID = _undefined,
-    Object? ttlSeconds = _undefined,
-  }) => _then(
-    Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_Input._(
-      {
-        ..._instance._$data,
-        if (bitsAmount != _undefined && bitsAmount != null)
-          'bitsAmount': (bitsAmount as int),
-        if (conditionID != _undefined && conditionID != null)
-          'conditionID': (conditionID as String),
-        if (conditionOwnerID != _undefined && conditionOwnerID != null)
-          'conditionOwnerID': (conditionOwnerID as String),
-        if (extensionID != _undefined && extensionID != null)
-          'extensionID': (extensionID as String),
-        if (ttlSeconds != _undefined && ttlSeconds != null)
-          'ttlSeconds': (ttlSeconds as int),
-      },
-    ),
-  );
-}
-
-class _CopyWithStubImpl$Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_Input<
-  TRes
->
-    implements
-        CopyWith$Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_Input<
-          TRes
-        > {
-  _CopyWithStubImpl$Input$Mutation_CreateBitsChallengeConditionParticipantForExtension_Input_Input(
-    this._res,
-  );
-
-  TRes _res;
-
-  call({
-    int? bitsAmount,
-    String? conditionID,
-    String? conditionOwnerID,
-    String? extensionID,
-    int? ttlSeconds,
-  }) => _res;
-}
-
 class Input$Mutation_EndUseBitsInExtension_Input_Input {
   factory Input$Mutation_EndUseBitsInExtension_Input_Input({
     required String transactionID,
@@ -1552,12 +908,6 @@ class Input$Mutation_EndUseBitsInExtension_Input_Input {
     return result$data;
   }
 
-  CopyWith$Input$Mutation_EndUseBitsInExtension_Input_Input<
-    Input$Mutation_EndUseBitsInExtension_Input_Input
-  >
-  get copyWith =>
-      CopyWith$Input$Mutation_EndUseBitsInExtension_Input_Input(this, (i) => i);
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -1580,50 +930,6 @@ class Input$Mutation_EndUseBitsInExtension_Input_Input {
     final l$transactionID = transactionID;
     return Object.hashAll([l$transactionID]);
   }
-}
-
-abstract class CopyWith$Input$Mutation_EndUseBitsInExtension_Input_Input<TRes> {
-  factory CopyWith$Input$Mutation_EndUseBitsInExtension_Input_Input(
-    Input$Mutation_EndUseBitsInExtension_Input_Input instance,
-    TRes Function(Input$Mutation_EndUseBitsInExtension_Input_Input) then,
-  ) = _CopyWithImpl$Input$Mutation_EndUseBitsInExtension_Input_Input;
-
-  factory CopyWith$Input$Mutation_EndUseBitsInExtension_Input_Input.stub(
-    TRes res,
-  ) = _CopyWithStubImpl$Input$Mutation_EndUseBitsInExtension_Input_Input;
-
-  TRes call({String? transactionID});
-}
-
-class _CopyWithImpl$Input$Mutation_EndUseBitsInExtension_Input_Input<TRes>
-    implements CopyWith$Input$Mutation_EndUseBitsInExtension_Input_Input<TRes> {
-  _CopyWithImpl$Input$Mutation_EndUseBitsInExtension_Input_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$Mutation_EndUseBitsInExtension_Input_Input _instance;
-
-  final TRes Function(Input$Mutation_EndUseBitsInExtension_Input_Input) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({Object? transactionID = _undefined}) => _then(
-    Input$Mutation_EndUseBitsInExtension_Input_Input._({
-      ..._instance._$data,
-      if (transactionID != _undefined && transactionID != null)
-        'transactionID': (transactionID as String),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$Mutation_EndUseBitsInExtension_Input_Input<TRes>
-    implements CopyWith$Input$Mutation_EndUseBitsInExtension_Input_Input<TRes> {
-  _CopyWithStubImpl$Input$Mutation_EndUseBitsInExtension_Input_Input(this._res);
-
-  TRes _res;
-
-  call({String? transactionID}) => _res;
 }
 
 class Input$Mutation_ExchangeRelayCode_Input_Input {
@@ -1654,12 +960,6 @@ class Input$Mutation_ExchangeRelayCode_Input_Input {
     return result$data;
   }
 
-  CopyWith$Input$Mutation_ExchangeRelayCode_Input_Input<
-    Input$Mutation_ExchangeRelayCode_Input_Input
-  >
-  get copyWith =>
-      CopyWith$Input$Mutation_ExchangeRelayCode_Input_Input(this, (i) => i);
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -1682,49 +982,6 @@ class Input$Mutation_ExchangeRelayCode_Input_Input {
     final l$relayCode = relayCode;
     return Object.hashAll([l$relayCode]);
   }
-}
-
-abstract class CopyWith$Input$Mutation_ExchangeRelayCode_Input_Input<TRes> {
-  factory CopyWith$Input$Mutation_ExchangeRelayCode_Input_Input(
-    Input$Mutation_ExchangeRelayCode_Input_Input instance,
-    TRes Function(Input$Mutation_ExchangeRelayCode_Input_Input) then,
-  ) = _CopyWithImpl$Input$Mutation_ExchangeRelayCode_Input_Input;
-
-  factory CopyWith$Input$Mutation_ExchangeRelayCode_Input_Input.stub(TRes res) =
-      _CopyWithStubImpl$Input$Mutation_ExchangeRelayCode_Input_Input;
-
-  TRes call({String? relayCode});
-}
-
-class _CopyWithImpl$Input$Mutation_ExchangeRelayCode_Input_Input<TRes>
-    implements CopyWith$Input$Mutation_ExchangeRelayCode_Input_Input<TRes> {
-  _CopyWithImpl$Input$Mutation_ExchangeRelayCode_Input_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$Mutation_ExchangeRelayCode_Input_Input _instance;
-
-  final TRes Function(Input$Mutation_ExchangeRelayCode_Input_Input) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({Object? relayCode = _undefined}) => _then(
-    Input$Mutation_ExchangeRelayCode_Input_Input._({
-      ..._instance._$data,
-      if (relayCode != _undefined && relayCode != null)
-        'relayCode': (relayCode as String),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$Mutation_ExchangeRelayCode_Input_Input<TRes>
-    implements CopyWith$Input$Mutation_ExchangeRelayCode_Input_Input<TRes> {
-  _CopyWithStubImpl$Input$Mutation_ExchangeRelayCode_Input_Input(this._res);
-
-  TRes _res;
-
-  call({String? relayCode}) => _res;
 }
 
 class Input$Mutation_ExtensionLinkUser_Input_Input {
@@ -1780,12 +1037,6 @@ class Input$Mutation_ExtensionLinkUser_Input_Input {
     return result$data;
   }
 
-  CopyWith$Input$Mutation_ExtensionLinkUser_Input_Input<
-    Input$Mutation_ExtensionLinkUser_Input_Input
-  >
-  get copyWith =>
-      CopyWith$Input$Mutation_ExtensionLinkUser_Input_Input(this, (i) => i);
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -1828,65 +1079,6 @@ class Input$Mutation_ExtensionLinkUser_Input_Input {
   }
 }
 
-abstract class CopyWith$Input$Mutation_ExtensionLinkUser_Input_Input<TRes> {
-  factory CopyWith$Input$Mutation_ExtensionLinkUser_Input_Input(
-    Input$Mutation_ExtensionLinkUser_Input_Input instance,
-    TRes Function(Input$Mutation_ExtensionLinkUser_Input_Input) then,
-  ) = _CopyWithImpl$Input$Mutation_ExtensionLinkUser_Input_Input;
-
-  factory CopyWith$Input$Mutation_ExtensionLinkUser_Input_Input.stub(TRes res) =
-      _CopyWithStubImpl$Input$Mutation_ExtensionLinkUser_Input_Input;
-
-  TRes call({
-    String? channelID,
-    String? extensionID,
-    String? jwt,
-    bool? showUser,
-  });
-}
-
-class _CopyWithImpl$Input$Mutation_ExtensionLinkUser_Input_Input<TRes>
-    implements CopyWith$Input$Mutation_ExtensionLinkUser_Input_Input<TRes> {
-  _CopyWithImpl$Input$Mutation_ExtensionLinkUser_Input_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$Mutation_ExtensionLinkUser_Input_Input _instance;
-
-  final TRes Function(Input$Mutation_ExtensionLinkUser_Input_Input) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({
-    Object? channelID = _undefined,
-    Object? extensionID = _undefined,
-    Object? jwt = _undefined,
-    Object? showUser = _undefined,
-  }) => _then(
-    Input$Mutation_ExtensionLinkUser_Input_Input._({
-      ..._instance._$data,
-      if (channelID != _undefined && channelID != null)
-        'channelID': (channelID as String),
-      if (extensionID != _undefined && extensionID != null)
-        'extensionID': (extensionID as String),
-      if (jwt != _undefined && jwt != null) 'jwt': (jwt as String),
-      if (showUser != _undefined && showUser != null)
-        'showUser': (showUser as bool),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$Mutation_ExtensionLinkUser_Input_Input<TRes>
-    implements CopyWith$Input$Mutation_ExtensionLinkUser_Input_Input<TRes> {
-  _CopyWithStubImpl$Input$Mutation_ExtensionLinkUser_Input_Input(this._res);
-
-  TRes _res;
-
-  call({String? channelID, String? extensionID, String? jwt, bool? showUser}) =>
-      _res;
-}
-
 class Input$Mutation_FollowUser_Input_Input {
   factory Input$Mutation_FollowUser_Input_Input({
     required bool disableNotifications,
@@ -1924,12 +1116,6 @@ class Input$Mutation_FollowUser_Input_Input {
     return result$data;
   }
 
-  CopyWith$Input$Mutation_FollowUser_Input_Input<
-    Input$Mutation_FollowUser_Input_Input
-  >
-  get copyWith =>
-      CopyWith$Input$Mutation_FollowUser_Input_Input(this, (i) => i);
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -1958,54 +1144,6 @@ class Input$Mutation_FollowUser_Input_Input {
     final l$targetID = targetID;
     return Object.hashAll([l$disableNotifications, l$targetID]);
   }
-}
-
-abstract class CopyWith$Input$Mutation_FollowUser_Input_Input<TRes> {
-  factory CopyWith$Input$Mutation_FollowUser_Input_Input(
-    Input$Mutation_FollowUser_Input_Input instance,
-    TRes Function(Input$Mutation_FollowUser_Input_Input) then,
-  ) = _CopyWithImpl$Input$Mutation_FollowUser_Input_Input;
-
-  factory CopyWith$Input$Mutation_FollowUser_Input_Input.stub(TRes res) =
-      _CopyWithStubImpl$Input$Mutation_FollowUser_Input_Input;
-
-  TRes call({bool? disableNotifications, String? targetID});
-}
-
-class _CopyWithImpl$Input$Mutation_FollowUser_Input_Input<TRes>
-    implements CopyWith$Input$Mutation_FollowUser_Input_Input<TRes> {
-  _CopyWithImpl$Input$Mutation_FollowUser_Input_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$Mutation_FollowUser_Input_Input _instance;
-
-  final TRes Function(Input$Mutation_FollowUser_Input_Input) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({
-    Object? disableNotifications = _undefined,
-    Object? targetID = _undefined,
-  }) => _then(
-    Input$Mutation_FollowUser_Input_Input._({
-      ..._instance._$data,
-      if (disableNotifications != _undefined && disableNotifications != null)
-        'disableNotifications': (disableNotifications as bool),
-      if (targetID != _undefined && targetID != null)
-        'targetID': (targetID as String),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$Mutation_FollowUser_Input_Input<TRes>
-    implements CopyWith$Input$Mutation_FollowUser_Input_Input<TRes> {
-  _CopyWithStubImpl$Input$Mutation_FollowUser_Input_Input(this._res);
-
-  TRes _res;
-
-  call({bool? disableNotifications, String? targetID}) => _res;
 }
 
 class Input$Mutation_RefreshExtensionHelixToken_Input_Input {
@@ -2045,15 +1183,6 @@ class Input$Mutation_RefreshExtensionHelixToken_Input_Input {
     return result$data;
   }
 
-  CopyWith$Input$Mutation_RefreshExtensionHelixToken_Input_Input<
-    Input$Mutation_RefreshExtensionHelixToken_Input_Input
-  >
-  get copyWith =>
-      CopyWith$Input$Mutation_RefreshExtensionHelixToken_Input_Input(
-        this,
-        (i) => i,
-      );
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -2082,61 +1211,6 @@ class Input$Mutation_RefreshExtensionHelixToken_Input_Input {
     final l$jwt = jwt;
     return Object.hashAll([l$extensionID, l$jwt]);
   }
-}
-
-abstract class CopyWith$Input$Mutation_RefreshExtensionHelixToken_Input_Input<
-  TRes
-> {
-  factory CopyWith$Input$Mutation_RefreshExtensionHelixToken_Input_Input(
-    Input$Mutation_RefreshExtensionHelixToken_Input_Input instance,
-    TRes Function(Input$Mutation_RefreshExtensionHelixToken_Input_Input) then,
-  ) = _CopyWithImpl$Input$Mutation_RefreshExtensionHelixToken_Input_Input;
-
-  factory CopyWith$Input$Mutation_RefreshExtensionHelixToken_Input_Input.stub(
-    TRes res,
-  ) = _CopyWithStubImpl$Input$Mutation_RefreshExtensionHelixToken_Input_Input;
-
-  TRes call({String? extensionID, String? jwt});
-}
-
-class _CopyWithImpl$Input$Mutation_RefreshExtensionHelixToken_Input_Input<TRes>
-    implements
-        CopyWith$Input$Mutation_RefreshExtensionHelixToken_Input_Input<TRes> {
-  _CopyWithImpl$Input$Mutation_RefreshExtensionHelixToken_Input_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$Mutation_RefreshExtensionHelixToken_Input_Input _instance;
-
-  final TRes Function(Input$Mutation_RefreshExtensionHelixToken_Input_Input)
-  _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({Object? extensionID = _undefined, Object? jwt = _undefined}) =>
-      _then(
-        Input$Mutation_RefreshExtensionHelixToken_Input_Input._({
-          ..._instance._$data,
-          if (extensionID != _undefined && extensionID != null)
-            'extensionID': (extensionID as String),
-          if (jwt != _undefined && jwt != null) 'jwt': (jwt as String),
-        }),
-      );
-}
-
-class _CopyWithStubImpl$Input$Mutation_RefreshExtensionHelixToken_Input_Input<
-  TRes
->
-    implements
-        CopyWith$Input$Mutation_RefreshExtensionHelixToken_Input_Input<TRes> {
-  _CopyWithStubImpl$Input$Mutation_RefreshExtensionHelixToken_Input_Input(
-    this._res,
-  );
-
-  TRes _res;
-
-  call({String? extensionID, String? jwt}) => _res;
 }
 
 class Input$Mutation_RefreshExtensionToken_Input_Input {
@@ -2184,12 +1258,6 @@ class Input$Mutation_RefreshExtensionToken_Input_Input {
     return result$data;
   }
 
-  CopyWith$Input$Mutation_RefreshExtensionToken_Input_Input<
-    Input$Mutation_RefreshExtensionToken_Input_Input
-  >
-  get copyWith =>
-      CopyWith$Input$Mutation_RefreshExtensionToken_Input_Input(this, (i) => i);
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -2224,57 +1292,6 @@ class Input$Mutation_RefreshExtensionToken_Input_Input {
     final l$jwt = jwt;
     return Object.hashAll([l$channelID, l$extensionID, l$jwt]);
   }
-}
-
-abstract class CopyWith$Input$Mutation_RefreshExtensionToken_Input_Input<TRes> {
-  factory CopyWith$Input$Mutation_RefreshExtensionToken_Input_Input(
-    Input$Mutation_RefreshExtensionToken_Input_Input instance,
-    TRes Function(Input$Mutation_RefreshExtensionToken_Input_Input) then,
-  ) = _CopyWithImpl$Input$Mutation_RefreshExtensionToken_Input_Input;
-
-  factory CopyWith$Input$Mutation_RefreshExtensionToken_Input_Input.stub(
-    TRes res,
-  ) = _CopyWithStubImpl$Input$Mutation_RefreshExtensionToken_Input_Input;
-
-  TRes call({String? channelID, String? extensionID, String? jwt});
-}
-
-class _CopyWithImpl$Input$Mutation_RefreshExtensionToken_Input_Input<TRes>
-    implements CopyWith$Input$Mutation_RefreshExtensionToken_Input_Input<TRes> {
-  _CopyWithImpl$Input$Mutation_RefreshExtensionToken_Input_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$Mutation_RefreshExtensionToken_Input_Input _instance;
-
-  final TRes Function(Input$Mutation_RefreshExtensionToken_Input_Input) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({
-    Object? channelID = _undefined,
-    Object? extensionID = _undefined,
-    Object? jwt = _undefined,
-  }) => _then(
-    Input$Mutation_RefreshExtensionToken_Input_Input._({
-      ..._instance._$data,
-      if (channelID != _undefined && channelID != null)
-        'channelID': (channelID as String),
-      if (extensionID != _undefined && extensionID != null)
-        'extensionID': (extensionID as String),
-      if (jwt != _undefined && jwt != null) 'jwt': (jwt as String),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$Mutation_RefreshExtensionToken_Input_Input<TRes>
-    implements CopyWith$Input$Mutation_RefreshExtensionToken_Input_Input<TRes> {
-  _CopyWithStubImpl$Input$Mutation_RefreshExtensionToken_Input_Input(this._res);
-
-  TRes _res;
-
-  call({String? channelID, String? extensionID, String? jwt}) => _res;
 }
 
 class Input$Mutation_SendExtensionMessage_Input_Input {
@@ -2348,12 +1365,6 @@ class Input$Mutation_SendExtensionMessage_Input_Input {
     return result$data;
   }
 
-  CopyWith$Input$Mutation_SendExtensionMessage_Input_Input<
-    Input$Mutation_SendExtensionMessage_Input_Input
-  >
-  get copyWith =>
-      CopyWith$Input$Mutation_SendExtensionMessage_Input_Input(this, (i) => i);
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -2422,81 +1433,6 @@ class Input$Mutation_SendExtensionMessage_Input_Input {
   }
 }
 
-abstract class CopyWith$Input$Mutation_SendExtensionMessage_Input_Input<TRes> {
-  factory CopyWith$Input$Mutation_SendExtensionMessage_Input_Input(
-    Input$Mutation_SendExtensionMessage_Input_Input instance,
-    TRes Function(Input$Mutation_SendExtensionMessage_Input_Input) then,
-  ) = _CopyWithImpl$Input$Mutation_SendExtensionMessage_Input_Input;
-
-  factory CopyWith$Input$Mutation_SendExtensionMessage_Input_Input.stub(
-    TRes res,
-  ) = _CopyWithStubImpl$Input$Mutation_SendExtensionMessage_Input_Input;
-
-  TRes call({
-    String? channelID,
-    String? contentType,
-    String? extAuthToken,
-    String? extensionID,
-    String? message,
-    List<String>? targets,
-  });
-}
-
-class _CopyWithImpl$Input$Mutation_SendExtensionMessage_Input_Input<TRes>
-    implements CopyWith$Input$Mutation_SendExtensionMessage_Input_Input<TRes> {
-  _CopyWithImpl$Input$Mutation_SendExtensionMessage_Input_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$Mutation_SendExtensionMessage_Input_Input _instance;
-
-  final TRes Function(Input$Mutation_SendExtensionMessage_Input_Input) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({
-    Object? channelID = _undefined,
-    Object? contentType = _undefined,
-    Object? extAuthToken = _undefined,
-    Object? extensionID = _undefined,
-    Object? message = _undefined,
-    Object? targets = _undefined,
-  }) => _then(
-    Input$Mutation_SendExtensionMessage_Input_Input._({
-      ..._instance._$data,
-      if (channelID != _undefined && channelID != null)
-        'channelID': (channelID as String),
-      if (contentType != _undefined && contentType != null)
-        'contentType': (contentType as String),
-      if (extAuthToken != _undefined && extAuthToken != null)
-        'extAuthToken': (extAuthToken as String),
-      if (extensionID != _undefined && extensionID != null)
-        'extensionID': (extensionID as String),
-      if (message != _undefined && message != null)
-        'message': (message as String),
-      if (targets != _undefined && targets != null)
-        'targets': (targets as List<String>),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$Mutation_SendExtensionMessage_Input_Input<TRes>
-    implements CopyWith$Input$Mutation_SendExtensionMessage_Input_Input<TRes> {
-  _CopyWithStubImpl$Input$Mutation_SendExtensionMessage_Input_Input(this._res);
-
-  TRes _res;
-
-  call({
-    String? channelID,
-    String? contentType,
-    String? extAuthToken,
-    String? extensionID,
-    String? message,
-    List<String>? targets,
-  }) => _res;
-}
-
 class Input$Mutation_SetExtensionConfiguration_Input_Input {
   factory Input$Mutation_SetExtensionConfiguration_Input_Input({
     required String channelID,
@@ -2550,14 +1486,6 @@ class Input$Mutation_SetExtensionConfiguration_Input_Input {
     return result$data;
   }
 
-  CopyWith$Input$Mutation_SetExtensionConfiguration_Input_Input<
-    Input$Mutation_SetExtensionConfiguration_Input_Input
-  >
-  get copyWith => CopyWith$Input$Mutation_SetExtensionConfiguration_Input_Input(
-    this,
-    (i) => i,
-  );
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -2605,80 +1533,6 @@ class Input$Mutation_SetExtensionConfiguration_Input_Input {
   }
 }
 
-abstract class CopyWith$Input$Mutation_SetExtensionConfiguration_Input_Input<
-  TRes
-> {
-  factory CopyWith$Input$Mutation_SetExtensionConfiguration_Input_Input(
-    Input$Mutation_SetExtensionConfiguration_Input_Input instance,
-    TRes Function(Input$Mutation_SetExtensionConfiguration_Input_Input) then,
-  ) = _CopyWithImpl$Input$Mutation_SetExtensionConfiguration_Input_Input;
-
-  factory CopyWith$Input$Mutation_SetExtensionConfiguration_Input_Input.stub(
-    TRes res,
-  ) = _CopyWithStubImpl$Input$Mutation_SetExtensionConfiguration_Input_Input;
-
-  TRes call({
-    String? channelID,
-    String? configVersion,
-    String? content,
-    String? extensionID,
-  });
-}
-
-class _CopyWithImpl$Input$Mutation_SetExtensionConfiguration_Input_Input<TRes>
-    implements
-        CopyWith$Input$Mutation_SetExtensionConfiguration_Input_Input<TRes> {
-  _CopyWithImpl$Input$Mutation_SetExtensionConfiguration_Input_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$Mutation_SetExtensionConfiguration_Input_Input _instance;
-
-  final TRes Function(Input$Mutation_SetExtensionConfiguration_Input_Input)
-  _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({
-    Object? channelID = _undefined,
-    Object? configVersion = _undefined,
-    Object? content = _undefined,
-    Object? extensionID = _undefined,
-  }) => _then(
-    Input$Mutation_SetExtensionConfiguration_Input_Input._({
-      ..._instance._$data,
-      if (channelID != _undefined && channelID != null)
-        'channelID': (channelID as String),
-      if (configVersion != _undefined && configVersion != null)
-        'configVersion': (configVersion as String),
-      if (content != _undefined && content != null)
-        'content': (content as String),
-      if (extensionID != _undefined && extensionID != null)
-        'extensionID': (extensionID as String),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$Mutation_SetExtensionConfiguration_Input_Input<
-  TRes
->
-    implements
-        CopyWith$Input$Mutation_SetExtensionConfiguration_Input_Input<TRes> {
-  _CopyWithStubImpl$Input$Mutation_SetExtensionConfiguration_Input_Input(
-    this._res,
-  );
-
-  TRes _res;
-
-  call({
-    String? channelID,
-    String? configVersion,
-    String? content,
-    String? extensionID,
-  }) => _res;
-}
-
 class Input$Mutation_UpdateUserProductConsent_Input_Input {
   factory Input$Mutation_UpdateUserProductConsent_Input_Input({
     required List<String> productConsentUpdate,
@@ -2722,14 +1576,6 @@ class Input$Mutation_UpdateUserProductConsent_Input_Input {
     return result$data;
   }
 
-  CopyWith$Input$Mutation_UpdateUserProductConsent_Input_Input<
-    Input$Mutation_UpdateUserProductConsent_Input_Input
-  >
-  get copyWith => CopyWith$Input$Mutation_UpdateUserProductConsent_Input_Input(
-    this,
-    (i) => i,
-  );
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -2768,63 +1614,6 @@ class Input$Mutation_UpdateUserProductConsent_Input_Input {
       l$userID,
     ]);
   }
-}
-
-abstract class CopyWith$Input$Mutation_UpdateUserProductConsent_Input_Input<
-  TRes
-> {
-  factory CopyWith$Input$Mutation_UpdateUserProductConsent_Input_Input(
-    Input$Mutation_UpdateUserProductConsent_Input_Input instance,
-    TRes Function(Input$Mutation_UpdateUserProductConsent_Input_Input) then,
-  ) = _CopyWithImpl$Input$Mutation_UpdateUserProductConsent_Input_Input;
-
-  factory CopyWith$Input$Mutation_UpdateUserProductConsent_Input_Input.stub(
-    TRes res,
-  ) = _CopyWithStubImpl$Input$Mutation_UpdateUserProductConsent_Input_Input;
-
-  TRes call({List<String>? productConsentUpdate, String? userID});
-}
-
-class _CopyWithImpl$Input$Mutation_UpdateUserProductConsent_Input_Input<TRes>
-    implements
-        CopyWith$Input$Mutation_UpdateUserProductConsent_Input_Input<TRes> {
-  _CopyWithImpl$Input$Mutation_UpdateUserProductConsent_Input_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$Mutation_UpdateUserProductConsent_Input_Input _instance;
-
-  final TRes Function(Input$Mutation_UpdateUserProductConsent_Input_Input)
-  _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({
-    Object? productConsentUpdate = _undefined,
-    Object? userID = _undefined,
-  }) => _then(
-    Input$Mutation_UpdateUserProductConsent_Input_Input._({
-      ..._instance._$data,
-      if (productConsentUpdate != _undefined && productConsentUpdate != null)
-        'productConsentUpdate': (productConsentUpdate as List<String>),
-      if (userID != _undefined && userID != null) 'userID': (userID as String),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$Mutation_UpdateUserProductConsent_Input_Input<
-  TRes
->
-    implements
-        CopyWith$Input$Mutation_UpdateUserProductConsent_Input_Input<TRes> {
-  _CopyWithStubImpl$Input$Mutation_UpdateUserProductConsent_Input_Input(
-    this._res,
-  );
-
-  TRes _res;
-
-  call({List<String>? productConsentUpdate, String? userID}) => _res;
 }
 
 class Input$Query_FeedItems_Context_Input {
@@ -2874,11 +1663,6 @@ class Input$Query_FeedItems_Context_Input {
     return result$data;
   }
 
-  CopyWith$Input$Query_FeedItems_Context_Input<
-    Input$Query_FeedItems_Context_Input
-  >
-  get copyWith => CopyWith$Input$Query_FeedItems_Context_Input(this, (i) => i);
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -2921,53 +1705,6 @@ class Input$Query_FeedItems_Context_Input {
       _$data.containsKey('platform') ? l$platform : const {},
     ]);
   }
-}
-
-abstract class CopyWith$Input$Query_FeedItems_Context_Input<TRes> {
-  factory CopyWith$Input$Query_FeedItems_Context_Input(
-    Input$Query_FeedItems_Context_Input instance,
-    TRes Function(Input$Query_FeedItems_Context_Input) then,
-  ) = _CopyWithImpl$Input$Query_FeedItems_Context_Input;
-
-  factory CopyWith$Input$Query_FeedItems_Context_Input.stub(TRes res) =
-      _CopyWithStubImpl$Input$Query_FeedItems_Context_Input;
-
-  TRes call({String? clientApp, String? pageviewLocation, String? platform});
-}
-
-class _CopyWithImpl$Input$Query_FeedItems_Context_Input<TRes>
-    implements CopyWith$Input$Query_FeedItems_Context_Input<TRes> {
-  _CopyWithImpl$Input$Query_FeedItems_Context_Input(this._instance, this._then);
-
-  final Input$Query_FeedItems_Context_Input _instance;
-
-  final TRes Function(Input$Query_FeedItems_Context_Input) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({
-    Object? clientApp = _undefined,
-    Object? pageviewLocation = _undefined,
-    Object? platform = _undefined,
-  }) => _then(
-    Input$Query_FeedItems_Context_Input._({
-      ..._instance._$data,
-      if (clientApp != _undefined && clientApp != null)
-        'clientApp': (clientApp as String),
-      if (pageviewLocation != _undefined && pageviewLocation != null)
-        'pageviewLocation': (pageviewLocation as String),
-      if (platform != _undefined) 'platform': (platform as String?),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$Query_FeedItems_Context_Input<TRes>
-    implements CopyWith$Input$Query_FeedItems_Context_Input<TRes> {
-  _CopyWithStubImpl$Input$Query_FeedItems_Context_Input(this._res);
-
-  TRes _res;
-
-  call({String? clientApp, String? pageviewLocation, String? platform}) => _res;
 }
 
 class Input$Query_FeedItems_Input_Input {
@@ -3066,9 +1803,6 @@ class Input$Query_FeedItems_Input_Input {
     return result$data;
   }
 
-  CopyWith$Input$Query_FeedItems_Input_Input<Input$Query_FeedItems_Input_Input>
-  get copyWith => CopyWith$Input$Query_FeedItems_Input_Input(this, (i) => i);
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -3143,91 +1877,6 @@ class Input$Query_FeedItems_Input_Input {
   }
 }
 
-abstract class CopyWith$Input$Query_FeedItems_Input_Input<TRes> {
-  factory CopyWith$Input$Query_FeedItems_Input_Input(
-    Input$Query_FeedItems_Input_Input instance,
-    TRes Function(Input$Query_FeedItems_Input_Input) then,
-  ) = _CopyWithImpl$Input$Query_FeedItems_Input_Input;
-
-  factory CopyWith$Input$Query_FeedItems_Input_Input.stub(TRes res) =
-      _CopyWithStubImpl$Input$Query_FeedItems_Input_Input;
-
-  TRes call({
-    Input$Query_FeedItems_Context_Input? context,
-    Enum$Query_FeedItems_FeedLocation_Enum? feedLocation,
-    Enum$Query_FeedItems_Ingress_Enum? ingress,
-    int? limit,
-    String? requestID,
-    String? sessionID,
-  });
-  CopyWith$Input$Query_FeedItems_Context_Input<TRes> get context;
-}
-
-class _CopyWithImpl$Input$Query_FeedItems_Input_Input<TRes>
-    implements CopyWith$Input$Query_FeedItems_Input_Input<TRes> {
-  _CopyWithImpl$Input$Query_FeedItems_Input_Input(this._instance, this._then);
-
-  final Input$Query_FeedItems_Input_Input _instance;
-
-  final TRes Function(Input$Query_FeedItems_Input_Input) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({
-    Object? context = _undefined,
-    Object? feedLocation = _undefined,
-    Object? ingress = _undefined,
-    Object? limit = _undefined,
-    Object? requestID = _undefined,
-    Object? sessionID = _undefined,
-  }) => _then(
-    Input$Query_FeedItems_Input_Input._({
-      ..._instance._$data,
-      if (context != _undefined)
-        'context': (context as Input$Query_FeedItems_Context_Input?),
-      if (feedLocation != _undefined)
-        'feedLocation':
-            (feedLocation as Enum$Query_FeedItems_FeedLocation_Enum?),
-      if (ingress != _undefined)
-        'ingress': (ingress as Enum$Query_FeedItems_Ingress_Enum?),
-      if (limit != _undefined) 'limit': (limit as int?),
-      if (requestID != _undefined && requestID != null)
-        'requestID': (requestID as String),
-      if (sessionID != _undefined && sessionID != null)
-        'sessionID': (sessionID as String),
-    }),
-  );
-
-  CopyWith$Input$Query_FeedItems_Context_Input<TRes> get context {
-    final local$context = _instance.context;
-    return local$context == null
-        ? CopyWith$Input$Query_FeedItems_Context_Input.stub(_then(_instance))
-        : CopyWith$Input$Query_FeedItems_Context_Input(
-            local$context,
-            (e) => call(context: e),
-          );
-  }
-}
-
-class _CopyWithStubImpl$Input$Query_FeedItems_Input_Input<TRes>
-    implements CopyWith$Input$Query_FeedItems_Input_Input<TRes> {
-  _CopyWithStubImpl$Input$Query_FeedItems_Input_Input(this._res);
-
-  TRes _res;
-
-  call({
-    Input$Query_FeedItems_Context_Input? context,
-    Enum$Query_FeedItems_FeedLocation_Enum? feedLocation,
-    Enum$Query_FeedItems_Ingress_Enum? ingress,
-    int? limit,
-    String? requestID,
-    String? sessionID,
-  }) => _res;
-
-  CopyWith$Input$Query_FeedItems_Context_Input<TRes> get context =>
-      CopyWith$Input$Query_FeedItems_Context_Input.stub(_res);
-}
-
 class Input$Query_LiveShoppingProductDetails_Input_Input {
   factory Input$Query_LiveShoppingProductDetails_Input_Input({
     required String asin,
@@ -3266,14 +1915,6 @@ class Input$Query_LiveShoppingProductDetails_Input_Input {
     return result$data;
   }
 
-  CopyWith$Input$Query_LiveShoppingProductDetails_Input_Input<
-    Input$Query_LiveShoppingProductDetails_Input_Input
-  >
-  get copyWith => CopyWith$Input$Query_LiveShoppingProductDetails_Input_Input(
-    this,
-    (i) => i,
-  );
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -3302,60 +1943,6 @@ class Input$Query_LiveShoppingProductDetails_Input_Input {
     final l$liveShoppingSessionID = liveShoppingSessionID;
     return Object.hashAll([l$asin, l$liveShoppingSessionID]);
   }
-}
-
-abstract class CopyWith$Input$Query_LiveShoppingProductDetails_Input_Input<
-  TRes
-> {
-  factory CopyWith$Input$Query_LiveShoppingProductDetails_Input_Input(
-    Input$Query_LiveShoppingProductDetails_Input_Input instance,
-    TRes Function(Input$Query_LiveShoppingProductDetails_Input_Input) then,
-  ) = _CopyWithImpl$Input$Query_LiveShoppingProductDetails_Input_Input;
-
-  factory CopyWith$Input$Query_LiveShoppingProductDetails_Input_Input.stub(
-    TRes res,
-  ) = _CopyWithStubImpl$Input$Query_LiveShoppingProductDetails_Input_Input;
-
-  TRes call({String? asin, String? liveShoppingSessionID});
-}
-
-class _CopyWithImpl$Input$Query_LiveShoppingProductDetails_Input_Input<TRes>
-    implements
-        CopyWith$Input$Query_LiveShoppingProductDetails_Input_Input<TRes> {
-  _CopyWithImpl$Input$Query_LiveShoppingProductDetails_Input_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$Query_LiveShoppingProductDetails_Input_Input _instance;
-
-  final TRes Function(Input$Query_LiveShoppingProductDetails_Input_Input) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({
-    Object? asin = _undefined,
-    Object? liveShoppingSessionID = _undefined,
-  }) => _then(
-    Input$Query_LiveShoppingProductDetails_Input_Input._({
-      ..._instance._$data,
-      if (asin != _undefined && asin != null) 'asin': (asin as String),
-      if (liveShoppingSessionID != _undefined && liveShoppingSessionID != null)
-        'liveShoppingSessionID': (liveShoppingSessionID as String),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$Query_LiveShoppingProductDetails_Input_Input<TRes>
-    implements
-        CopyWith$Input$Query_LiveShoppingProductDetails_Input_Input<TRes> {
-  _CopyWithStubImpl$Input$Query_LiveShoppingProductDetails_Input_Input(
-    this._res,
-  );
-
-  TRes _res;
-
-  call({String? asin, String? liveShoppingSessionID}) => _res;
 }
 
 class Input$Query_LiveShoppingProductSummaries_Input_Input {
@@ -3398,14 +1985,6 @@ class Input$Query_LiveShoppingProductSummaries_Input_Input {
     return result$data;
   }
 
-  CopyWith$Input$Query_LiveShoppingProductSummaries_Input_Input<
-    Input$Query_LiveShoppingProductSummaries_Input_Input
-  >
-  get copyWith => CopyWith$Input$Query_LiveShoppingProductSummaries_Input_Input(
-    this,
-    (i) => i,
-  );
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -3444,64 +2023,6 @@ class Input$Query_LiveShoppingProductSummaries_Input_Input {
       l$liveShoppingSessionID,
     ]);
   }
-}
-
-abstract class CopyWith$Input$Query_LiveShoppingProductSummaries_Input_Input<
-  TRes
-> {
-  factory CopyWith$Input$Query_LiveShoppingProductSummaries_Input_Input(
-    Input$Query_LiveShoppingProductSummaries_Input_Input instance,
-    TRes Function(Input$Query_LiveShoppingProductSummaries_Input_Input) then,
-  ) = _CopyWithImpl$Input$Query_LiveShoppingProductSummaries_Input_Input;
-
-  factory CopyWith$Input$Query_LiveShoppingProductSummaries_Input_Input.stub(
-    TRes res,
-  ) = _CopyWithStubImpl$Input$Query_LiveShoppingProductSummaries_Input_Input;
-
-  TRes call({List<String>? asins, String? liveShoppingSessionID});
-}
-
-class _CopyWithImpl$Input$Query_LiveShoppingProductSummaries_Input_Input<TRes>
-    implements
-        CopyWith$Input$Query_LiveShoppingProductSummaries_Input_Input<TRes> {
-  _CopyWithImpl$Input$Query_LiveShoppingProductSummaries_Input_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$Query_LiveShoppingProductSummaries_Input_Input _instance;
-
-  final TRes Function(Input$Query_LiveShoppingProductSummaries_Input_Input)
-  _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({
-    Object? asins = _undefined,
-    Object? liveShoppingSessionID = _undefined,
-  }) => _then(
-    Input$Query_LiveShoppingProductSummaries_Input_Input._({
-      ..._instance._$data,
-      if (asins != _undefined && asins != null)
-        'asins': (asins as List<String>),
-      if (liveShoppingSessionID != _undefined && liveShoppingSessionID != null)
-        'liveShoppingSessionID': (liveShoppingSessionID as String),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$Query_LiveShoppingProductSummaries_Input_Input<
-  TRes
->
-    implements
-        CopyWith$Input$Query_LiveShoppingProductSummaries_Input_Input<TRes> {
-  _CopyWithStubImpl$Input$Query_LiveShoppingProductSummaries_Input_Input(
-    this._res,
-  );
-
-  TRes _res;
-
-  call({List<String>? asins, String? liveShoppingSessionID}) => _res;
 }
 
 class Input$Query_StreamPlaybackAccessToken_Params_Input {
@@ -3553,14 +2074,6 @@ class Input$Query_StreamPlaybackAccessToken_Params_Input {
     return result$data;
   }
 
-  CopyWith$Input$Query_StreamPlaybackAccessToken_Params_Input<
-    Input$Query_StreamPlaybackAccessToken_Params_Input
-  >
-  get copyWith => CopyWith$Input$Query_StreamPlaybackAccessToken_Params_Input(
-    this,
-    (i) => i,
-  );
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -3603,64 +2116,6 @@ class Input$Query_StreamPlaybackAccessToken_Params_Input {
       l$playerType,
     ]);
   }
-}
-
-abstract class CopyWith$Input$Query_StreamPlaybackAccessToken_Params_Input<
-  TRes
-> {
-  factory CopyWith$Input$Query_StreamPlaybackAccessToken_Params_Input(
-    Input$Query_StreamPlaybackAccessToken_Params_Input instance,
-    TRes Function(Input$Query_StreamPlaybackAccessToken_Params_Input) then,
-  ) = _CopyWithImpl$Input$Query_StreamPlaybackAccessToken_Params_Input;
-
-  factory CopyWith$Input$Query_StreamPlaybackAccessToken_Params_Input.stub(
-    TRes res,
-  ) = _CopyWithStubImpl$Input$Query_StreamPlaybackAccessToken_Params_Input;
-
-  TRes call({String? platform, String? playerBackend, String? playerType});
-}
-
-class _CopyWithImpl$Input$Query_StreamPlaybackAccessToken_Params_Input<TRes>
-    implements
-        CopyWith$Input$Query_StreamPlaybackAccessToken_Params_Input<TRes> {
-  _CopyWithImpl$Input$Query_StreamPlaybackAccessToken_Params_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$Query_StreamPlaybackAccessToken_Params_Input _instance;
-
-  final TRes Function(Input$Query_StreamPlaybackAccessToken_Params_Input) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({
-    Object? platform = _undefined,
-    Object? playerBackend = _undefined,
-    Object? playerType = _undefined,
-  }) => _then(
-    Input$Query_StreamPlaybackAccessToken_Params_Input._({
-      ..._instance._$data,
-      if (platform != _undefined && platform != null)
-        'platform': (platform as String),
-      if (playerBackend != _undefined)
-        'playerBackend': (playerBackend as String?),
-      if (playerType != _undefined && playerType != null)
-        'playerType': (playerType as String),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$Query_StreamPlaybackAccessToken_Params_Input<TRes>
-    implements
-        CopyWith$Input$Query_StreamPlaybackAccessToken_Params_Input<TRes> {
-  _CopyWithStubImpl$Input$Query_StreamPlaybackAccessToken_Params_Input(
-    this._res,
-  );
-
-  TRes _res;
-
-  call({String? platform, String? playerBackend, String? playerType}) => _res;
 }
 
 class Input$Query_VideoPlaybackAccessToken_Params_Input {
@@ -3712,14 +2167,6 @@ class Input$Query_VideoPlaybackAccessToken_Params_Input {
     return result$data;
   }
 
-  CopyWith$Input$Query_VideoPlaybackAccessToken_Params_Input<
-    Input$Query_VideoPlaybackAccessToken_Params_Input
-  >
-  get copyWith => CopyWith$Input$Query_VideoPlaybackAccessToken_Params_Input(
-    this,
-    (i) => i,
-  );
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -3764,64 +2211,6 @@ class Input$Query_VideoPlaybackAccessToken_Params_Input {
   }
 }
 
-abstract class CopyWith$Input$Query_VideoPlaybackAccessToken_Params_Input<
-  TRes
-> {
-  factory CopyWith$Input$Query_VideoPlaybackAccessToken_Params_Input(
-    Input$Query_VideoPlaybackAccessToken_Params_Input instance,
-    TRes Function(Input$Query_VideoPlaybackAccessToken_Params_Input) then,
-  ) = _CopyWithImpl$Input$Query_VideoPlaybackAccessToken_Params_Input;
-
-  factory CopyWith$Input$Query_VideoPlaybackAccessToken_Params_Input.stub(
-    TRes res,
-  ) = _CopyWithStubImpl$Input$Query_VideoPlaybackAccessToken_Params_Input;
-
-  TRes call({String? platform, String? playerBackend, String? playerType});
-}
-
-class _CopyWithImpl$Input$Query_VideoPlaybackAccessToken_Params_Input<TRes>
-    implements
-        CopyWith$Input$Query_VideoPlaybackAccessToken_Params_Input<TRes> {
-  _CopyWithImpl$Input$Query_VideoPlaybackAccessToken_Params_Input(
-    this._instance,
-    this._then,
-  );
-
-  final Input$Query_VideoPlaybackAccessToken_Params_Input _instance;
-
-  final TRes Function(Input$Query_VideoPlaybackAccessToken_Params_Input) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({
-    Object? platform = _undefined,
-    Object? playerBackend = _undefined,
-    Object? playerType = _undefined,
-  }) => _then(
-    Input$Query_VideoPlaybackAccessToken_Params_Input._({
-      ..._instance._$data,
-      if (platform != _undefined && platform != null)
-        'platform': (platform as String),
-      if (playerBackend != _undefined)
-        'playerBackend': (playerBackend as String?),
-      if (playerType != _undefined && playerType != null)
-        'playerType': (playerType as String),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$Query_VideoPlaybackAccessToken_Params_Input<TRes>
-    implements
-        CopyWith$Input$Query_VideoPlaybackAccessToken_Params_Input<TRes> {
-  _CopyWithStubImpl$Input$Query_VideoPlaybackAccessToken_Params_Input(
-    this._res,
-  );
-
-  TRes _res;
-
-  call({String? platform, String? playerBackend, String? playerType}) => _res;
-}
-
 class Input$Query_Video_Options_Input {
   factory Input$Query_Video_Options_Input({bool? includePrivate}) =>
       Input$Query_Video_Options_Input._({
@@ -3852,9 +2241,6 @@ class Input$Query_Video_Options_Input {
     return result$data;
   }
 
-  CopyWith$Input$Query_Video_Options_Input<Input$Query_Video_Options_Input>
-  get copyWith => CopyWith$Input$Query_Video_Options_Input(this, (i) => i);
-
   @override
   bool operator ==(Object other) {
     if (identical(this, other)) {
@@ -3883,46 +2269,6 @@ class Input$Query_Video_Options_Input {
       _$data.containsKey('includePrivate') ? l$includePrivate : const {},
     ]);
   }
-}
-
-abstract class CopyWith$Input$Query_Video_Options_Input<TRes> {
-  factory CopyWith$Input$Query_Video_Options_Input(
-    Input$Query_Video_Options_Input instance,
-    TRes Function(Input$Query_Video_Options_Input) then,
-  ) = _CopyWithImpl$Input$Query_Video_Options_Input;
-
-  factory CopyWith$Input$Query_Video_Options_Input.stub(TRes res) =
-      _CopyWithStubImpl$Input$Query_Video_Options_Input;
-
-  TRes call({bool? includePrivate});
-}
-
-class _CopyWithImpl$Input$Query_Video_Options_Input<TRes>
-    implements CopyWith$Input$Query_Video_Options_Input<TRes> {
-  _CopyWithImpl$Input$Query_Video_Options_Input(this._instance, this._then);
-
-  final Input$Query_Video_Options_Input _instance;
-
-  final TRes Function(Input$Query_Video_Options_Input) _then;
-
-  static const _undefined = <dynamic, dynamic>{};
-
-  TRes call({Object? includePrivate = _undefined}) => _then(
-    Input$Query_Video_Options_Input._({
-      ..._instance._$data,
-      if (includePrivate != _undefined)
-        'includePrivate': (includePrivate as bool?),
-    }),
-  );
-}
-
-class _CopyWithStubImpl$Input$Query_Video_Options_Input<TRes>
-    implements CopyWith$Input$Query_Video_Options_Input<TRes> {
-  _CopyWithStubImpl$Input$Query_Video_Options_Input(this._res);
-
-  TRes _res;
-
-  call({bool? includePrivate}) => _res;
 }
 
 enum Enum$Badge_ImageURL_Size_Enum {

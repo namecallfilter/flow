@@ -9,6 +9,68 @@ import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  testWidgets("blocks overlapping settings edits while saving", (tester) async {
+    final preferencesStore = _DelayedWritesPreferencesStore();
+    final settingsStore = AppSettingsStore(
+      preferences: SharedPreferencesFlowPreferences(store: preferencesStore),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: SettingsScreen(settingsStore: settingsStore),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final toggle = tester.widget<Switch>(find.byKey(const ValueKey("settings_ad_proxy_toggle")));
+    toggle.onChanged!(true);
+    toggle.onChanged!(false);
+    await tester.pump();
+
+    expect(preferencesStore.writes, 1);
+    expect(
+      tester
+          .widget<AbsorbPointer>(
+            find.byKey(
+              const ValueKey("settings_content_interaction_gate"),
+            ),
+          )
+          .absorbing,
+      isTrue,
+    );
+    preferencesStore.saved.complete();
+    await tester.pumpAndSettle();
+    expect(settingsStore.adProxyEnabled, isTrue);
+    expect(
+      tester
+          .widget<AbsorbPointer>(
+            find.byKey(
+              const ValueKey("settings_content_interaction_gate"),
+            ),
+          )
+          .absorbing,
+      isFalse,
+    );
+  });
+
+  testWidgets("failed saves keep the saved setting and offer useful feedback", (tester) async {
+    final settingsStore = AppSettingsStore(
+      preferences: SharedPreferencesFlowPreferences(store: _FailingWritesPreferencesStore()),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: SettingsScreen(settingsStore: settingsStore),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey("settings_ad_proxy_toggle")));
+    await tester.pumpAndSettle();
+
+    expect(settingsStore.adProxyEnabled, isFalse);
+    expect(find.text("Couldn't save settings. Please try again."), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   test("shares preference reads between concurrent settings loads", () async {
     final preferencesStore = _DelayedPreferencesStore();
     final settingsStore = AppSettingsStore(
@@ -275,6 +337,23 @@ class _MemoryPreferencesStore implements FlowPreferencesStore {
   @override
   Future<void> setStringList(String key, List<String> value) async =>
       stringLists[key] = List.of(value);
+}
+
+class _FailingWritesPreferencesStore extends _MemoryPreferencesStore {
+  @override
+  Future<void> setString(String key, String value) async => throw StateError("write failed");
+}
+
+class _DelayedWritesPreferencesStore extends _MemoryPreferencesStore {
+  final saved = Completer<void>();
+  int writes = 0;
+
+  @override
+  Future<void> setString(String key, String value) async {
+    writes++;
+    await saved.future;
+    await super.setString(key, value);
+  }
 }
 
 class _DelayedPreferencesStore extends _MemoryPreferencesStore {

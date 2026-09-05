@@ -285,7 +285,8 @@ class TwitchApiClient {
   }
 
   Future<List<TwitchFollowedStream>> fetchFollowedStreams(String userId) async {
-    final streams = <TwitchFollowedStream>[];
+    final streams = <String, TwitchFollowedStream>{};
+    final cursors = <String>{};
     String? after;
 
     do {
@@ -308,20 +309,22 @@ class TwitchApiClient {
         final node = _mapValue(edge["node"]);
         final stream = _mapValue(node?["stream"]);
         if (node != null && stream != null) {
-          streams.add(_streamFromGraphQlStream(stream, fallbackBroadcaster: node));
+          final followedStream = _streamFromGraphQlStream(stream, fallbackBroadcaster: node);
+          streams[followedStream.userId] = followedStream;
         }
       }
 
       after = _connectionCursor(connection);
-    } while (after != null && after.isNotEmpty);
+    } while (after != null && cursors.add(after));
 
-    return streams;
+    return streams.values.toList();
   }
 
   Future<List<TwitchFollowedChannel>> fetchFollowedChannels(
     String userId,
   ) async {
-    final channels = <TwitchFollowedChannel>[];
+    final channels = <String, TwitchFollowedChannel>{};
+    final cursors = <String>{};
     String? after;
 
     do {
@@ -345,20 +348,19 @@ class TwitchApiClient {
         if (node == null) {
           continue;
         }
-        channels.add(
-          TwitchFollowedChannel(
-            broadcasterId: _stringValue(node["id"]),
-            broadcasterLogin: _stringValue(node["login"]),
-            broadcasterName: _stringValue(node["displayName"]),
-            followedAt: _dateTimeValue(edge["followedAt"]),
-          ),
+        final id = _stringValue(node["id"]);
+        channels[id] = TwitchFollowedChannel(
+          broadcasterId: id,
+          broadcasterLogin: _stringValue(node["login"]),
+          broadcasterName: _stringValue(node["displayName"]),
+          followedAt: _dateTimeValue(edge["followedAt"]),
         );
       }
 
       after = _connectionCursor(connection);
-    } while (after != null && after.isNotEmpty);
+    } while (after != null && cursors.add(after));
 
-    return channels;
+    return channels.values.toList();
   }
 
   Future<Map<String, TwitchUser>> fetchUsersByIds(List<String> ids) async {
@@ -1003,8 +1005,7 @@ class TwitchApiClient {
   }
 
   static Iterable<List<String>> _batches(List<String> values) sync* {
-    final uniqueValues = values.where((value) => value.isNotEmpty).toSet();
-    final items = uniqueValues.toList();
+    final items = _nonEmptyValues(values).toSet().toList();
     for (var index = 0; index < items.length; index += 100) {
       yield items.skip(index).take(100).toList();
     }

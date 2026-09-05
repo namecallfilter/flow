@@ -92,10 +92,19 @@ abstract class BrowseSearchStoreBase with Store {
 
     try {
       final channelPage = await apiCache.searchChannelsPage(normalizedQuery, first: 8);
+      if (generation != _searchGeneration) {
+        return;
+      }
       final categoryPage = await apiCache.searchCategoriesPage(normalizedQuery, first: 8);
+      if (generation != _searchGeneration) {
+        return;
+      }
       final validUsersById = await apiCache.fetchUsersByIds([
         for (final channel in channelPage.data) channel.id,
       ]);
+      if (generation != _searchGeneration) {
+        return;
+      }
       final liveChannelLogins = [
         for (final channel in channelPage.data)
           if (channel.isLive && validUsersById.containsKey(channel.id)) channel.broadcasterLogin,

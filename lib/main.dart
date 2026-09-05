@@ -7,7 +7,11 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final preferences = SharedPreferencesFlowPreferences();
   final settingsStore = AppSettingsStore(preferences: preferences);
-  await settingsStore.load();
+  try {
+    await settingsStore.load();
+  } on Object {
+    debugPrint("Couldn't load saved settings. Settings can be retried in the app.");
+  }
   runApp(
     FlowApp(
       preferences: preferences,

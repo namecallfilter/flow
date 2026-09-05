@@ -9,6 +9,7 @@ targets:
                     clients:
                         - graphql
                     addTypename: false
+                    disableCopyWithGeneration: true
                     allowMissingNullableKeysInFromJson: true
                     assetsPath: "lib/graphql/*{.graphql,.graphqls}"
                     generatedFileHeader: "// GENERATED CODE - DO NOT MODIFY BY HAND\n// ignore_for_file: type=lint\n"

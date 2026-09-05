@@ -76,8 +76,8 @@ abstract class AppSettingsStoreBase with Store {
       preferences.readAdProxyEnabled(),
       preferences.readAdProxyUrls(),
       preferences.readAdProxyWhitelistedChannels(),
+      subscriptionLoad.then((_) => true),
     ]);
-    await subscriptionLoad;
     runInAction(() {
       themeMode = values[0] as ThemeMode;
       adProxyEnabled = values[1] as bool;
@@ -131,25 +131,27 @@ abstract class AppSettingsStoreBase with Store {
       return;
     }
 
-    themeMode = mode;
     await preferences.saveThemeMode(mode);
+    themeMode = mode;
   }
 
   @action
   Future<void> setAdProxyEnabled({required bool enabled}) async {
-    adProxyEnabled = enabled;
     await preferences.saveAdProxyEnabled(enabled: enabled);
+    adProxyEnabled = enabled;
   }
 
   @action
   Future<void> setAdProxyUrls(List<String> urls) async {
-    adProxyUrls = ObservableList.of(normalizeAdProxyUrls(urls));
-    await preferences.saveAdProxyUrls(adProxyUrls);
+    final normalized = normalizeAdProxyUrls(urls);
+    await preferences.saveAdProxyUrls(normalized);
+    adProxyUrls = ObservableList.of(normalized);
   }
 
   @action
   Future<void> setAdProxyWhitelistedChannels(List<String> channels) async {
-    adProxyWhitelistedChannels = ObservableList.of(normalizeChannelLogins(channels));
-    await preferences.saveAdProxyWhitelistedChannels(adProxyWhitelistedChannels);
+    final normalized = normalizeChannelLogins(channels);
+    await preferences.saveAdProxyWhitelistedChannels(normalized);
+    adProxyWhitelistedChannels = ObservableList.of(normalized);
   }
 }

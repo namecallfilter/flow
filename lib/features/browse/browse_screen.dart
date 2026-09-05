@@ -84,7 +84,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
     if (!widget.showLiveChannelsSection) {
       _store.selectSection(BrowseSection.categories);
     }
-    _preferences = widget.preferences ?? _MemoryFlowPreferences();
+    _preferences = widget.preferences ?? MemoryFlowPreferences();
     _searchStore = BrowseSearchStore(
       apiCache: _apiCache,
       preferences: _preferences,
@@ -296,57 +296,65 @@ class _BrowseScreenState extends State<BrowseScreen> {
               indicatorStartTop: topScrollPadding + 16,
               indicatorMaxTravel: 72,
               periodicRefreshInterval: widget.periodicRefreshInterval,
-              child: ListView(
+              child: CustomScrollView(
                 controller: _scrollController,
                 physics: const AlwaysScrollableScrollPhysics(
                   parent: ClampingScrollPhysics(),
                 ),
-                padding: EdgeInsets.fromLTRB(
-                  AppSpacing.lg,
-                  topScrollPadding,
-                  AppSpacing.lg,
-                  0,
-                ).copyWith(bottom: bottomScrollPadding),
-                children: [
-                  if (widget.showLiveChannelsSection) ...[
-                    _BrowseSectionSelector(
-                      selectedSection: selectedSection,
-                      onSectionSelected: _selectSection,
-                    ),
-                    const SizedBox(height: AppSpacing.md),
-                  ],
-                  Offstage(
-                    key: const ValueKey("browse_categories_section"),
-                    offstage: selectedSection != BrowseSection.categories,
-                    child: _RetainedBrowseSection(
-                      isLoading: _store.isLoadingCategories,
-                      hasItems: _store.categories.isNotEmpty,
-                      errorMessage: _store.categoriesError,
-                      loadingSkeleton: const _CategoryGridSkeleton(),
-                      child: _CategoryGrid(
-                        key: const ValueKey("browse_categories_content"),
-                        categories: _store.categories,
-                        onCategorySelected: _openCategory,
-                      ),
-                    ),
-                  ),
-                  Offstage(
-                    key: const ValueKey("browse_live_channels_section"),
-                    offstage: selectedSection != BrowseSection.liveChannels,
-                    child: _RetainedBrowseSection(
-                      isLoading: _store.isLoadingLiveChannels,
-                      hasItems: _store.liveChannels.isNotEmpty,
-                      errorMessage: _store.liveChannelsError,
-                      loadingSkeleton: const _StreamListSkeleton(
-                        key: ValueKey("browse_live_channels_skeleton"),
-                        semanticLabel: "Loading live channels",
-                      ),
-                      child: _LiveChannelsList(
-                        key: const ValueKey("browse_live_channels_content"),
-                        channels: _store.liveChannels,
-                        onChannelSelected: _openLiveChannel,
-                        onStreamSelected: _openPlayer,
-                      ),
+                slivers: [
+                  SliverPadding(
+                    padding: EdgeInsets.fromLTRB(
+                      AppSpacing.lg,
+                      topScrollPadding,
+                      AppSpacing.lg,
+                      0,
+                    ).copyWith(bottom: bottomScrollPadding),
+                    sliver: SliverMainAxisGroup(
+                      slivers: [
+                        if (widget.showLiveChannelsSection) ...[
+                          SliverToBoxAdapter(
+                            child: _BrowseSectionSelector(
+                              selectedSection: selectedSection,
+                              onSectionSelected: _selectSection,
+                            ),
+                          ),
+                          const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.md)),
+                        ],
+                        SliverOffstage(
+                          key: const ValueKey("browse_categories_section"),
+                          offstage: selectedSection != BrowseSection.categories,
+                          sliver: _RetainedBrowseSection(
+                            isLoading: _store.isLoadingCategories,
+                            hasItems: _store.categories.isNotEmpty,
+                            errorMessage: _store.categoriesError,
+                            loadingSkeleton: const _CategoryGridSkeleton(),
+                            child: _CategoryGrid(
+                              key: const ValueKey("browse_categories_content"),
+                              categories: _store.categories,
+                              onCategorySelected: _openCategory,
+                            ),
+                          ),
+                        ),
+                        SliverOffstage(
+                          key: const ValueKey("browse_live_channels_section"),
+                          offstage: selectedSection != BrowseSection.liveChannels,
+                          sliver: _RetainedBrowseSection(
+                            isLoading: _store.isLoadingLiveChannels,
+                            hasItems: _store.liveChannels.isNotEmpty,
+                            errorMessage: _store.liveChannelsError,
+                            loadingSkeleton: const _StreamListSkeleton(
+                              key: ValueKey("browse_live_channels_skeleton"),
+                              semanticLabel: "Loading live channels",
+                            ),
+                            child: _LiveChannelsList(
+                              key: const ValueKey("browse_live_channels_content"),
+                              channels: _store.liveChannels,
+                              onChannelSelected: _openLiveChannel,
+                              onStreamSelected: _openPlayer,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -977,7 +985,7 @@ class _SearchResults extends StatelessWidget {
     if (channels.isEmpty && categories.isEmpty) {
       return Padding(
         padding: EdgeInsets.only(top: topPadding),
-        child: const _StatusMessage(message: "No matching channels."),
+        child: const _StatusMessage(message: "No matching channels or categories."),
       );
     }
 
@@ -1364,44 +1372,40 @@ class _CategoryStreamsScreenState extends State<CategoryStreamsScreen> {
             indicatorStartTop:
                 PageHeaderLayout.backButtonRefreshIndicatorStartTop + topSafeAreaInset,
             indicatorMaxTravel: 52,
-            child: ListView(
+            child: CustomScrollView(
               controller: _scrollController,
               physics: const AlwaysScrollableScrollPhysics(
                 parent: ClampingScrollPhysics(),
               ),
-              padding: PageHeaderLayout.scrollPadding(
-                top: PageHeaderLayout.backButtonContentTopPadding + topSafeAreaInset,
-                bottom: bottomScrollPadding,
-              ),
-              children: [
-                if (_store.isLoading && _store.channels.isEmpty)
-                  const _StreamListSkeleton(
-                    key: ValueKey("category_streams_skeleton"),
-                    semanticLabel: "Loading category streams",
-                    showCategories: false,
-                  )
-                else if (_store.errorMessage != null)
-                  _StatusMessage(message: _store.errorMessage!)
-                else if (_store.channels.isEmpty)
-                  _StatusMessage(
-                    message: "No live channels streaming ${widget.category.name}.",
-                  )
-                else
-                  _LiveChannelsList(
-                    channels: _store.channels,
-                    onChannelSelected: _openLiveChannel,
-                    onStreamSelected: _openPlayer,
-                    showCategories: false,
+              slivers: [
+                SliverPadding(
+                  padding: PageHeaderLayout.scrollPadding(
+                    top: PageHeaderLayout.backButtonContentTopPadding + topSafeAreaInset,
+                    bottom: bottomScrollPadding,
                   ),
-                if (_store.isLoading && _store.channels.isNotEmpty) ...[
-                  const SizedBox(height: AppSpacing.md),
-                  const Center(
-                    child: SizedBox.square(
-                      dimension: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2.4),
+                  sliver: _RetainedBrowseSection(
+                    isLoading: _store.isLoading,
+                    hasItems: _store.channels.isNotEmpty,
+                    errorMessage: _store.errorMessage,
+                    loadingSkeleton: const _StreamListSkeleton(
+                      key: ValueKey("category_streams_skeleton"),
+                      semanticLabel: "Loading category streams",
+                      showCategories: false,
                     ),
+                    child: _store.channels.isEmpty
+                        ? SliverToBoxAdapter(
+                            child: _StatusMessage(
+                              message: "No live channels streaming ${widget.category.name}.",
+                            ),
+                          )
+                        : _LiveChannelsList(
+                            channels: _store.channels,
+                            onChannelSelected: _openLiveChannel,
+                            onStreamSelected: _openPlayer,
+                            showCategories: false,
+                          ),
                   ),
-                ],
+                ),
               ],
             ),
           ),
@@ -1593,28 +1597,29 @@ class _RetainedBrowseSection extends StatelessWidget {
     final error = errorMessage;
     if (!hasItems) {
       if (isLoading) {
-        return loadingSkeleton;
+        return SliverToBoxAdapter(child: loadingSkeleton);
       }
       if (error != null) {
-        return _StatusMessage(message: error);
+        return SliverToBoxAdapter(child: _StatusMessage(message: error));
       }
       return child;
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
+    return SliverMainAxisGroup(
+      slivers: [
         if (error != null) ...[
-          _StatusMessage(message: error),
-          const SizedBox(height: AppSpacing.md),
+          SliverToBoxAdapter(child: _StatusMessage(message: error)),
+          const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.md)),
         ],
         child,
         if (isLoading) ...[
-          const SizedBox(height: AppSpacing.md),
-          const Center(
-            child: SizedBox.square(
-              dimension: 22,
-              child: CircularProgressIndicator(strokeWidth: 2.4),
+          const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.md)),
+          const SliverToBoxAdapter(
+            child: Center(
+              child: SizedBox.square(
+                dimension: 22,
+                child: CircularProgressIndicator(strokeWidth: 2.4),
+              ),
             ),
           ),
         ],
@@ -1651,23 +1656,24 @@ class _LiveChannelsList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (channels.isEmpty) {
-      return const _StatusMessage(message: "No live channels found.");
+      return const SliverToBoxAdapter(child: _StatusMessage(message: "No live channels found."));
     }
 
-    return Column(
+    return SliverList.builder(
       key: const ValueKey("browse_live_channels"),
-      children: [
-        for (final channel in channels)
-          StreamCard(
-            key: ValueKey(
-              channel.id.isNotEmpty ? channel.id : channel.login.toLowerCase(),
-            ),
-            channel: channel,
-            onChannelSelected: onChannelSelected,
-            onStreamSelected: onStreamSelected,
-            showCategory: showCategories,
+      itemCount: channels.length,
+      itemBuilder: (context, index) {
+        final channel = channels[index];
+        return StreamCard(
+          key: ValueKey(
+            channel.id.isNotEmpty ? channel.id : channel.login.toLowerCase(),
           ),
-      ],
+          channel: channel,
+          onChannelSelected: onChannelSelected,
+          onStreamSelected: onStreamSelected,
+          showCategory: showCategories,
+        );
+      },
     );
   }
 
@@ -1824,14 +1830,11 @@ class _CategoryGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (categories.isEmpty) {
-      return const _StatusMessage(message: "No categories found.");
+      return const SliverToBoxAdapter(child: _StatusMessage(message: "No categories found."));
     }
 
-    return GridView.builder(
+    return SliverGrid.builder(
       key: const ValueKey("browse_categories_grid"),
-      padding: EdgeInsets.zero,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
       itemCount: categories.length,
       gridDelegate: _categoryGridDelegate(context),
       findChildIndexCallback: (key) {
@@ -1873,7 +1876,11 @@ double _categoryTileExtent(BuildContext context) {
   final horizontalPadding = MediaQuery.of(context).padding.horizontal + (AppSpacing.lg * 2);
   final availableWidth = MediaQuery.sizeOf(context).width - horizontalPadding - 20;
   final tileWidth = availableWidth / 3;
-  return (tileWidth * 4 / 3) + 68;
+  final textScaleExtra = (MediaQuery.textScalerOf(context).scale(12) - 12).clamp(
+    0.0,
+    double.infinity,
+  );
+  return (tileWidth * 4 / 3) + 68 + (textScaleExtra * 4);
 }
 
 class _CategoryCard extends StatelessWidget {
@@ -2083,57 +2090,4 @@ class _StatusMessage extends StatelessWidget {
     super.debugFillProperties(properties);
     properties.add(StringProperty("message", message));
   }
-}
-
-class _MemoryFlowPreferences implements FlowPreferences {
-  List<String> searchHistory = const <String>[];
-
-  @override
-  Future<bool> readAdProxyEnabled() async => false;
-
-  @override
-  Future<List<String>> readAdProxyUrls() async => const [];
-
-  @override
-  Future<List<String>> readAdProxyWhitelistedChannels() async => const [];
-
-  @override
-  Future<List<String>> readAdProxySubscriptionChannels() async => const [];
-
-  @override
-  Future<void> saveAdProxyEnabled({required bool enabled}) async {}
-
-  @override
-  Future<void> saveAdProxyUrls(List<String> urls) async {}
-
-  @override
-  Future<void> saveAdProxyWhitelistedChannels(List<String> channels) async {}
-
-  @override
-  Future<void> saveAdProxySubscriptionChannels(List<String> channels) async {}
-
-  @override
-  Future<void> clearBrowseSearchHistory() async {
-    searchHistory = const <String>[];
-  }
-
-  @override
-  Future<List<String>> readBrowseSearchHistory() async => searchHistory;
-
-  @override
-  Future<bool> readLoginOfferDismissed() async => false;
-
-  @override
-  Future<ThemeMode> readThemeMode() async => ThemeMode.system;
-
-  @override
-  Future<void> saveBrowseSearchHistory(List<String> history) async {
-    searchHistory = List<String>.of(history);
-  }
-
-  @override
-  Future<void> saveLoginOfferDismissed({required bool dismissed}) async {}
-
-  @override
-  Future<void> saveThemeMode(ThemeMode mode) async {}
 }

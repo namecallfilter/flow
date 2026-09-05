@@ -1,7 +1,36 @@
 import "package:flow/shared/preferences/preferences.dart";
+import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  test("memory preferences use the same normalization and keep independent snapshots", () async {
+    final preferences = MemoryFlowPreferences(themeMode: ThemeMode.dark);
+    final channels = [" Creator ", "CREATOR"];
+    await preferences.saveAdProxySubscriptionChannels(channels);
+    channels.clear();
+    final stored = await preferences.readAdProxySubscriptionChannels();
+    stored.clear();
+    await preferences.saveBrowseSearchHistory([" mine ", "Mine"]);
+
+    expect(await preferences.readThemeMode(), ThemeMode.dark);
+    expect(await preferences.readAdProxySubscriptionChannels(), ["creator"]);
+    expect(await preferences.readBrowseSearchHistory(), ["mine"]);
+  });
+
+  test("proxy credentials remain case sensitive during deduplication", () {
+    expect(
+      normalizeAdProxyUrls([
+        "http://User:Secret@PROXY.EXAMPLE:8080/",
+        "http://User:Secret@proxy.example:8080",
+        "http://user:secret@proxy.example:8080",
+      ]),
+      [
+        "http://User:Secret@proxy.example:8080",
+        "http://user:secret@proxy.example:8080",
+      ],
+    );
+  });
+
   test("normalizes browse search history in shared preferences", () async {
     final store = _MemoryPreferencesStore();
     final preferences = SharedPreferencesFlowPreferences(store: store);

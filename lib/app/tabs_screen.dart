@@ -129,7 +129,10 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
   @override
   void initState() {
     super.initState();
-    _preferences = widget.preferences ?? _MemoryFlowPreferences(themeMode: widget.currentThemeMode);
+    _preferences =
+        widget.preferences ??
+        widget.settingsStore?.preferences ??
+        MemoryFlowPreferences(themeMode: widget.currentThemeMode);
     _settingsStore = widget.settingsStore ?? AppSettingsStore(preferences: _preferences);
     _authController =
         widget.followingStore?.authController ??
@@ -156,7 +159,11 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
     }
     unawaited(_initialSessionRestore);
     if (!_settingsStore.isLoaded) {
-      unawaited(_settingsStore.load());
+      unawaited(
+        _settingsStore.load().catchError((Object error) {
+          debugPrint("Couldn't load settings: $error");
+        }),
+      );
     }
     _followingNavigatorObserver = _TabNavigatorObserver(_handleTabNavigatorChanged);
     _browseNavigatorObserver = _TabNavigatorObserver(_handleTabNavigatorChanged);
@@ -468,7 +475,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
   }
 
   Widget _buildTabs(BuildContext context) {
-    _footerExtent = AppBottomNav.contentHeight + MediaQuery.paddingOf(context).bottom;
+    _footerExtent = AppBottomNav.heightOf(context) + MediaQuery.paddingOf(context).bottom;
 
     return NotificationListener<ScrollReactiveHeaderProgressNotification>(
       onNotification: _handleHeaderProgressNotification,
@@ -887,69 +894,4 @@ Future<TwitchApiClient> _loadApiClient(TwitchAuthController authController) asyn
     savedTokens.accessToken ?? "",
     gqlAccessToken: savedTokens.webSessionToken,
   );
-}
-
-class _MemoryFlowPreferences implements FlowPreferences {
-  _MemoryFlowPreferences({required this.themeMode});
-
-  ThemeMode themeMode;
-  List<String> searchHistory = const <String>[];
-  bool adProxyEnabled = false;
-  bool loginOfferDismissed = false;
-  List<String> adProxyUrls = const [];
-  List<String> adProxyWhitelistedChannels = const [];
-
-  @override
-  Future<bool> readAdProxyEnabled() async => adProxyEnabled;
-
-  @override
-  Future<List<String>> readAdProxyUrls() async => adProxyUrls;
-
-  @override
-  Future<List<String>> readAdProxyWhitelistedChannels() async => adProxyWhitelistedChannels;
-
-  @override
-  Future<List<String>> readAdProxySubscriptionChannels() async => const [];
-
-  @override
-  Future<void> saveAdProxyEnabled({required bool enabled}) async => adProxyEnabled = enabled;
-
-  @override
-  Future<void> saveAdProxyUrls(List<String> urls) async => adProxyUrls = List.of(urls);
-
-  @override
-  Future<void> saveAdProxyWhitelistedChannels(List<String> channels) async =>
-      adProxyWhitelistedChannels = List.of(channels);
-
-  @override
-  Future<void> saveAdProxySubscriptionChannels(List<String> channels) async {}
-
-  @override
-  Future<void> clearBrowseSearchHistory() async {
-    searchHistory = const <String>[];
-  }
-
-  @override
-  Future<List<String>> readBrowseSearchHistory() async => searchHistory;
-
-  @override
-  Future<bool> readLoginOfferDismissed() async => loginOfferDismissed;
-
-  @override
-  Future<ThemeMode> readThemeMode() async => themeMode;
-
-  @override
-  Future<void> saveBrowseSearchHistory(List<String> history) async {
-    searchHistory = List<String>.of(history);
-  }
-
-  @override
-  Future<void> saveLoginOfferDismissed({required bool dismissed}) async {
-    loginOfferDismissed = dismissed;
-  }
-
-  @override
-  Future<void> saveThemeMode(ThemeMode mode) async {
-    themeMode = mode;
-  }
 }

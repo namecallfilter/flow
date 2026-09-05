@@ -6,6 +6,68 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  test("following pagination stops repeated cursors and merges duplicate channels", () async {
+    var requests = 0;
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      gqlAccessToken: "web-token-123",
+      httpClient: MockClient((_) async {
+        requests++;
+        if (requests > 4) {
+          throw StateError("Repeated cursor was requested again.");
+        }
+        final connection = {
+          "edges": [
+            {
+              "cursor": "repeated-cursor",
+              "node": {
+                "id": "creator-1",
+                "login": "creator",
+                "displayName": "Creator",
+                "profileImageURL": null,
+                "stream": {
+                  "id": "stream-1",
+                  "viewersCount": 10,
+                  "freeformTags": <Object?>[],
+                },
+              },
+            },
+          ],
+          "pageInfo": {"hasNextPage": true},
+        };
+        return _jsonResponse({
+          "data": {
+            "currentUser": {"followedLiveUsers": connection, "follows": connection},
+          },
+        });
+      }),
+    );
+
+    expect((await client.fetchFollowedStreams("viewer")).single.userId, "creator-1");
+    expect((await client.fetchFollowedChannels("viewer")).single.broadcasterId, "creator-1");
+    expect(requests, 4);
+  });
+
+  test("user ID batches trim blanks and duplicate values", () async {
+    late http.Request capturedRequest;
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      httpClient: MockClient((request) async {
+        capturedRequest = request;
+        return _jsonResponse({
+          "data": {"users": <Object?>[]},
+        });
+      }),
+    );
+
+    await client.fetchUsersByIds([" 1 ", "", " ", "1", "2"]);
+    final body = jsonDecode(capturedRequest.body) as Map<String, Object?>;
+    final variables = body["variables"]! as Map<String, Object?>;
+    expect(variables["ids"], ["1", "2"]);
+  });
+
   test("fetches category viewer counts with top games", () async {
     late http.Request capturedRequest;
     final client = TwitchApiClient(

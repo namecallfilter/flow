@@ -27,6 +27,38 @@ abstract interface class FlowPreferencesStore {
   Future<void> remove(String key);
 }
 
+class MemoryFlowPreferences extends SharedPreferencesFlowPreferences {
+  MemoryFlowPreferences({ThemeMode themeMode = ThemeMode.system})
+    : super(store: _MemoryPreferencesStore(themeMode));
+}
+
+class _MemoryPreferencesStore implements FlowPreferencesStore {
+  _MemoryPreferencesStore(ThemeMode themeMode)
+    : _values = {
+        SharedPreferencesFlowPreferences.themeModeKey: themeModePreferenceValue(themeMode),
+      };
+
+  final Map<String, Object> _values;
+
+  @override
+  Future<String?> getString(String key) async => _values[key] as String?;
+
+  @override
+  Future<List<String>?> getStringList(String key) async {
+    final values = _values[key] as List<String>?;
+    return values == null ? null : List.of(values);
+  }
+
+  @override
+  Future<void> setString(String key, String value) async => _values[key] = value;
+
+  @override
+  Future<void> setStringList(String key, List<String> value) async => _values[key] = List.of(value);
+
+  @override
+  Future<void> remove(String key) async => _values.remove(key);
+}
+
 class SharedPreferencesFlowPreferences implements FlowPreferences {
   SharedPreferencesFlowPreferences({
     FlowPreferencesStore? store,
@@ -175,7 +207,7 @@ List<String> normalizeAdProxyUrls(Iterable<String> values) {
   return [
     for (final rawValue in values)
       if (normalizeAdProxyUrl(rawValue) case final value?)
-        if (seen.add(value.toLowerCase())) value,
+        if (seen.add(value)) value,
   ];
 }
 

@@ -92,7 +92,7 @@ void main() {
     expect(await response.future, isNull);
   });
 
-  test("initialize is ignored after disposal", () async {
+  test("commands are ignored after disposal", () async {
     const viewId = 45;
     const channel = MethodChannel("flow/twitch_player/$viewId");
     final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -109,6 +109,11 @@ void main() {
 
     controller.dispose();
     await controller.initialize();
+    await controller.play();
+    await controller.pause();
+    await controller.togglePlayback();
+    await controller.jumpToLive();
+    await controller.setQuality("auto");
 
     expect(calls, isEmpty);
   });

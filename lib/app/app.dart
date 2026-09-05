@@ -51,7 +51,11 @@ class _FlowAppState extends State<FlowApp> {
         SharedPreferencesFlowPreferences();
     _settingsStore = widget.settingsStore ?? AppSettingsStore(preferences: _preferences);
     if (!_settingsStore.isLoaded) {
-      unawaited(_settingsStore.load());
+      unawaited(
+        _settingsStore.load().catchError((Object error) {
+          debugPrint("Couldn't load settings: $error");
+        }),
+      );
     }
   }
 

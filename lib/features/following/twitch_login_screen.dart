@@ -94,7 +94,6 @@ class _TwitchLoginScreenState extends State<TwitchLoginScreen> {
   Future<NavigationDecision> _handleNavigation(
     NavigationRequest request,
   ) async {
-    debugPrint("Twitch auth navigation: ${request.url}");
     unawaited(_completeAuthFromUrl(request.url));
     return NavigationDecision.navigate;
   }

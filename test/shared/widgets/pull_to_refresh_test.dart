@@ -6,6 +6,29 @@ import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  testWidgets("cancelling a pull never starts a refresh", (tester) async {
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+    var refreshes = 0;
+    await tester.pumpWidget(
+      _RefreshApp(
+        scrollController: scrollController,
+        periodicRefreshInterval: null,
+        onRefresh: () async => refreshes++,
+      ),
+    );
+
+    final gesture = await tester.startGesture(const Offset(200, 100));
+    await gesture.moveBy(const Offset(0, 220));
+    await tester.pump();
+    expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsOneWidget);
+    await gesture.cancel();
+    await tester.pumpAndSettle();
+
+    expect(refreshes, 0);
+    expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsNothing);
+  });
+
   testWidgets("periodically refreshes without showing the pull indicator", (tester) async {
     final scrollController = ScrollController();
     addTearDown(scrollController.dispose);

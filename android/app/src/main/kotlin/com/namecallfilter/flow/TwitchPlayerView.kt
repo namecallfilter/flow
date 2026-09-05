@@ -170,6 +170,7 @@ internal class TwitchPlayerView(
             .build()
         player.setAudioAttributes(AudioAttributes.DEFAULT, true)
         player.setHandleAudioBecomingNoisy(true)
+        player.playWhenReady = true
         player.addListener(playbackListener)
         playerView.player = player
         playerView.setShutterBackgroundColor(Color.BLACK)
@@ -385,7 +386,6 @@ internal class TwitchPlayerView(
 
         player.setMediaSource(mediaSource)
         player.prepare()
-        player.play()
     }
 
     private fun refreshPlaybackUri(): String {
@@ -530,7 +530,6 @@ internal class TwitchPlayerView(
             bufferedPositionMs = bufferedPositionMs,
             windowDurationMs = windowDurationMs,
             bufferedSafetyMs = CORRECTION_EDGE_GUARD_MS,
-            partialBufferedSafetyMs = CORRECTION_PARTIAL_BUFFER_SAFETY_MS,
             minimumAdvanceMs = CORRECTION_MINIMUM_ADVANCE_MS,
             targetToleranceMs = CORRECTION_TARGET_TOLERANCE_MS,
         )
@@ -865,7 +864,6 @@ internal class TwitchPlayerView(
         const val PRIMARY_LATENCY_FRESHNESS_MS = 2500L
         // Keep every correction seek above Media3's post-rebuffer threshold.
         const val CORRECTION_EDGE_GUARD_MS = BUFFER_AFTER_REBUFFER_MS + 500L
-        const val CORRECTION_PARTIAL_BUFFER_SAFETY_MS = CORRECTION_EDGE_GUARD_MS
         const val CORRECTION_MINIMUM_ADVANCE_MS = 100L
         const val CORRECTION_TARGET_TOLERANCE_MS = 100L
         const val CORRECTION_MEASUREMENT_MAX_AGE_MS = 2500L

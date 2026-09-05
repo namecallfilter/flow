@@ -134,16 +134,6 @@ mixin _$AppSettingsStore on AppSettingsStoreBase, Store {
     });
   }
 
-  late final _$loadAsyncAction = AsyncAction(
-    'AppSettingsStoreBase.load',
-    context: context,
-  );
-
-  @override
-  Future<void> load() {
-    return _$loadAsyncAction.run(() => super.load());
-  }
-
   late final _$setThemeModeAsyncAction = AsyncAction(
     'AppSettingsStoreBase.setThemeMode',
     context: context,
@@ -186,6 +176,23 @@ mixin _$AppSettingsStore on AppSettingsStoreBase, Store {
     return _$setAdProxyWhitelistedChannelsAsyncAction.run(
       () => super.setAdProxyWhitelistedChannels(channels),
     );
+  }
+
+  late final _$AppSettingsStoreBaseActionController = ActionController(
+    name: 'AppSettingsStoreBase',
+    context: context,
+  );
+
+  @override
+  Future<void> load() {
+    final _$actionInfo = _$AppSettingsStoreBaseActionController.startAction(
+      name: 'AppSettingsStoreBase.load',
+    );
+    try {
+      return super.load();
+    } finally {
+      _$AppSettingsStoreBaseActionController.endAction(_$actionInfo);
+    }
   }
 
   @override

@@ -89,6 +89,7 @@ void main() {
   test("invalidates an in-flight search before the next debounce starts", () async {
     final slowSearch = Completer<http.Response>();
     final preferences = _MemoryFlowPreferences();
+    var followupRequests = 0;
     final cache = TwitchApiCache(
       clientLoader: () async => TwitchApiClient(
         clientId: "client-123",
@@ -100,6 +101,7 @@ void main() {
             if (query.contains("FlowSearchChannels")) {
               return slowSearch.future;
             }
+            followupRequests++;
             if (query.contains("FlowSearchCategories")) {
               return _searchCategoriesResponse(const <Map<String, Object?>>[]);
             }
@@ -161,6 +163,7 @@ void main() {
     expect(store.channels.single.displayName, "CachedCreator");
     expect(store.errorMessage, isNull);
     expect(preferences.searchHistory, isEmpty);
+    expect(followupRequests, 0);
   });
 }
 

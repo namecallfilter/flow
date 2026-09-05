@@ -16,6 +16,10 @@ class AppBottomNav extends StatelessWidget {
 
   static const contentHeight = 60.0;
 
+  static double heightOf(BuildContext context) =>
+      contentHeight +
+      (MediaQuery.textScalerOf(context).scale(13) - 13).clamp(0.0, double.infinity) * 1.4;
+
   final String currentRoute;
   final ValueChanged<String>? onRouteSelected;
   final bool showLiveChannels;
@@ -53,7 +57,7 @@ class AppBottomNav extends StatelessWidget {
           child: SafeArea(
             top: false,
             child: SizedBox(
-              height: contentHeight,
+              height: heightOf(context),
               child: Row(
                 children: [
                   _BottomNavItem(
@@ -152,6 +156,7 @@ class _BottomNavItem extends StatelessWidget {
                 style: TextStyle(
                   color: color,
                   fontSize: 13,
+                  height: 1.4,
                   fontWeight: isActive ? FontWeight.w800 : FontWeight.w600,
                 ),
               ),

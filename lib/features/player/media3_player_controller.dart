@@ -113,23 +113,25 @@ class MethodChannelTwitchPlayerController implements TwitchPlayerController {
     _methodChannel.setMethodCallHandler(null);
   }
 
-  Future<void> initialize() =>
-      _disposed ? Future<void>.value() : _methodChannel.invokeMethod<void>("initialize");
+  Future<void> _invoke(String method, [Object? arguments]) =>
+      _disposed ? Future<void>.value() : _methodChannel.invokeMethod<void>(method, arguments);
+
+  Future<void> initialize() => _invoke("initialize");
 
   @override
-  Future<void> jumpToLive() => _methodChannel.invokeMethod<void>("jumpToLive");
+  Future<void> jumpToLive() => _invoke("jumpToLive");
 
   @override
-  Future<void> pause() => _methodChannel.invokeMethod<void>("pause");
+  Future<void> pause() => _invoke("pause");
 
   @override
-  Future<void> play() => _methodChannel.invokeMethod<void>("play");
+  Future<void> play() => _invoke("play");
 
   @override
-  Future<void> setQuality(String id) => _methodChannel.invokeMethod<void>("setQuality", id);
+  Future<void> setQuality(String id) => _invoke("setQuality", id);
 
   @override
-  Future<void> togglePlayback() => _methodChannel.invokeMethod<void>("togglePlayback");
+  Future<void> togglePlayback() => _invoke("togglePlayback");
 }
 
 TwitchPlayerEvent? _decodeEvent(Object? rawEvent) {

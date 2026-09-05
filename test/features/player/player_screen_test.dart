@@ -548,6 +548,44 @@ void main() {
     expect(player._toggleCount, 1);
   });
 
+  testWidgets("hidden controls retain latency without rebuilding the video surface", (
+    tester,
+  ) async {
+    final player = _FakePlayerController();
+    var surfaceBuilds = 0;
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        playerSurfaceBuilder: (context, uri, onControllerCreated) {
+          surfaceBuilds++;
+          return _FakePlayerSurface(player: player, onControllerCreated: onControllerCreated);
+        },
+      ),
+    );
+    await tester.pump();
+    player.emit(
+      const TwitchPlaybackStateEvent(
+        isPlaying: true,
+        isBuffering: false,
+        playWhenReady: true,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(_controlsOpacity(tester), 0);
+    final hiddenSurfaceBuilds = surfaceBuilds;
+
+    player.emit(const TwitchLatencyEvent(2300));
+    await tester.pump(const Duration(seconds: 2));
+    expect(surfaceBuilds, hiddenSurfaceBuilds);
+
+    await tester.tapAt(tester.getCenter(find.byKey(const ValueKey("player_viewport"))));
+    await tester.pump();
+    expect(_controlsOpacity(tester), 1);
+    expect(find.text("2.30s"), findsOneWidget);
+  });
+
   testWidgets("the live dot stays static without moving its aligned center", (
     tester,
   ) async {

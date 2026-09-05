@@ -12,10 +12,11 @@ mixin _$FollowingStore on FollowingStoreBase, Store {
   Computed<List<StreamChannel>>? _$liveChannelsComputed;
 
   @override
-  List<StreamChannel> get liveChannels => (_$liveChannelsComputed ??= Computed<List<StreamChannel>>(
-    () => super.liveChannels,
-    name: 'FollowingStoreBase.liveChannels',
-  )).value;
+  List<StreamChannel> get liveChannels =>
+      (_$liveChannelsComputed ??= Computed<List<StreamChannel>>(
+        () => super.liveChannels,
+        name: 'FollowingStoreBase.liveChannels',
+      )).value;
   Computed<List<OfflineChannel>>? _$offlineChannelsComputed;
 
   @override
@@ -27,10 +28,11 @@ mixin _$FollowingStore on FollowingStoreBase, Store {
   Computed<TwitchUser?>? _$profileUserComputed;
 
   @override
-  TwitchUser? get profileUser => (_$profileUserComputed ??= Computed<TwitchUser?>(
-    () => super.profileUser,
-    name: 'FollowingStoreBase.profileUser',
-  )).value;
+  TwitchUser? get profileUser =>
+      (_$profileUserComputed ??= Computed<TwitchUser?>(
+        () => super.profileUser,
+        name: 'FollowingStoreBase.profileUser',
+      )).value;
   Computed<bool>? _$offlineExpandedComputed;
 
   @override
@@ -41,10 +43,11 @@ mixin _$FollowingStore on FollowingStoreBase, Store {
   Computed<bool>? _$showLiveEmptyStateComputed;
 
   @override
-  bool get showLiveEmptyState => (_$showLiveEmptyStateComputed ??= Computed<bool>(
-    () => super.showLiveEmptyState,
-    name: 'FollowingStoreBase.showLiveEmptyState',
-  )).value;
+  bool get showLiveEmptyState =>
+      (_$showLiveEmptyStateComputed ??= Computed<bool>(
+        () => super.showLiveEmptyState,
+        name: 'FollowingStoreBase.showLiveEmptyState',
+      )).value;
   Computed<bool>? _$isLoggedInComputed;
 
   @override
