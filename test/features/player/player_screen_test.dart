@@ -863,7 +863,7 @@ void main() {
     ("player_category_button", "category_streams_page_Just Chatting"),
   ]) {
     testWidgets(
-      "starting a new stream from $destinationKey disposes the old player without resuming",
+      "starting a new stream retains $destinationKey and disposes the old player without resuming",
       (
         tester,
       ) async {
@@ -901,10 +901,11 @@ void main() {
         await _pumpNavigation(tester);
         expect(player._pauseCount, 1);
         expect(player._playCount, 0);
+        final destination = tester.element(find.byKey(ValueKey(destinationKey)));
 
         unawaited(
           openStreamPlayer(
-            tester.element(find.byKey(ValueKey(destinationKey))),
+            destination,
             builder: (_) => const Scaffold(key: ValueKey("new stream")),
           ),
         );
@@ -918,6 +919,11 @@ void main() {
           findsNothing,
         );
 
+        rootNavigator.currentState!.pop();
+        await _pumpNavigation(tester);
+        expect(tester.element(find.byKey(ValueKey(destinationKey))), same(destination));
+        expect(rootNavigator.currentState!.canPop(), isTrue);
+        expect(player._playCount, 0);
         rootNavigator.currentState!.pop();
         await _pumpNavigation(tester);
         expect(find.byKey(const ValueKey("tab shell")), findsOneWidget);

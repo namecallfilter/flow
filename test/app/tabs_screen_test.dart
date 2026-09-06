@@ -836,6 +836,45 @@ void main() {
     expect(tester.getTopLeft(footer).dy, closeTo(initialFooterTop, 0.1));
   });
 
+  testWidgets("automatic Following refresh leaves the list visible after a connection reset", (
+    tester,
+  ) async {
+    var failUsers = false;
+    final secureStore = _MemoryTwitchStore()
+      ..accessToken = "token-123"
+      ..webSessionToken = "gql-token-123";
+    final authController = _authController(
+      secureStore: secureStore,
+      onRequest: (request) {
+        if (failUsers && _isGraphQlOperation(request, "FlowUsers")) {
+          throw http.ClientException("Connection reset by peer", request.url);
+        }
+      },
+    );
+    final followingStore = FollowingStore(authController: authController);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.light),
+        home: FlowTabsScreen(followingStore: followingStore),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final connection = followingStore.connection;
+    expect(connection, isNotNull);
+    expect(find.text("AussieAntics"), findsOneWidget);
+
+    failUsers = true;
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pumpAndSettle();
+
+    expect(followingStore.connection, same(connection));
+    expect(followingStore.followingError, isNull);
+    expect(find.text("AussieAntics"), findsOneWidget);
+    expect(find.textContaining("Exception"), findsNothing);
+    expect(find.textContaining("Couldn't load Following"), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets("refreshes Following and Browse roots while hidden and on resume", (
     tester,
   ) async {

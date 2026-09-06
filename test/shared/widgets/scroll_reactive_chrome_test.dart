@@ -188,6 +188,113 @@ void main() {
     expect(tester.getRect(badge).center.dx, closeTo(400, 0.1));
   });
 
+  testWidgets("removes the Top badge when collapsing content corrects the scroll offset", (
+    tester,
+  ) async {
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+    _configureView(tester);
+    late StateSetter updateContent;
+    var expanded = true;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ScrollReactiveChrome(
+            scrollController: scrollController,
+            header: const SizedBox(key: ValueKey("test_header"), height: 100),
+            child: SingleChildScrollView(
+              controller: scrollController,
+              child: StatefulBuilder(
+                builder: (context, setState) {
+                  updateContent = setState;
+                  return AnimatedSize(
+                    duration: const Duration(milliseconds: 180),
+                    child: SizedBox(height: expanded ? 5000 : 300),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    scrollController.jumpTo(700);
+    await tester.pump();
+    expect(find.byKey(const ValueKey("scroll_to_top_badge")), findsOneWidget);
+
+    updateContent(() => expanded = false);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 180));
+    await tester.pump();
+
+    expect(scrollController.offset, 0);
+    expect(find.byKey(const ValueKey("scroll_to_top_badge")), findsNothing);
+    expect(tester.getTopLeft(find.byKey(const ValueKey("test_header"))).dy, 44);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets("hidden content metrics stay quiet and chrome syncs when reactivated", (
+    tester,
+  ) async {
+    final scrollController = ScrollController();
+    final active = ValueNotifier(true);
+    addTearDown(scrollController.dispose);
+    addTearDown(active.dispose);
+    _configureView(tester);
+    final headerProgress = <double>[];
+    late StateSetter updateContent;
+    var expanded = true;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: NotificationListener<ScrollReactiveHeaderProgressNotification>(
+            onNotification: (notification) {
+              headerProgress.add(notification.hiddenFraction);
+              return false;
+            },
+            child: ValueListenableBuilder(
+              valueListenable: active,
+              builder: (context, enabled, child) => TickerMode(enabled: enabled, child: child!),
+              child: ScrollReactiveChrome(
+                scrollController: scrollController,
+                header: const SizedBox(key: ValueKey("test_header"), height: 100),
+                child: SingleChildScrollView(
+                  controller: scrollController,
+                  child: StatefulBuilder(
+                    builder: (context, setState) {
+                      updateContent = setState;
+                      return SizedBox(height: expanded ? 5000 : 300);
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    scrollController.jumpTo(700);
+    await tester.pump();
+    expect(find.byKey(const ValueKey("scroll_to_top_badge")), findsOneWidget);
+
+    active.value = false;
+    await tester.pumpAndSettle();
+    headerProgress.clear();
+    updateContent(() => expanded = false);
+    await tester.pumpAndSettle();
+    expect(scrollController.offset, 0);
+    expect(headerProgress, isEmpty);
+
+    active.value = true;
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("scroll_to_top_badge")), findsNothing);
+    expect(tester.getTopLeft(find.byKey(const ValueKey("test_header"))).dy, 44);
+    expect(headerProgress.last, 0);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets("returns continuously at a bounded pace from nearby and deep offsets", (
     tester,
   ) async {

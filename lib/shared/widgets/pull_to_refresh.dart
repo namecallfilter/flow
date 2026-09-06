@@ -201,6 +201,11 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> with WidgetsBindi
 
     final dragDelta = delta > 0 ? delta * _pullResistance : delta * _reverseResistance;
     final nextExtent = (_pullExtent + dragDelta).clamp(0.0, widget.triggerDistance);
+    if (!_hasReversed &&
+        _pullExtent < widget.triggerDistance &&
+        nextExtent >= widget.triggerDistance) {
+      unawaited(HapticFeedback.selectionClick());
+    }
 
     _snapScrollableToTop();
     setState(() {

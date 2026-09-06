@@ -3,6 +3,7 @@ import "dart:async";
 import "package:flow/shared/widgets/pull_to_refresh.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
@@ -78,6 +79,7 @@ void main() {
   });
 
   testWidgets("an accepted vertical pull refreshes once on release", (tester) async {
+    final haptics = _recordHaptics(tester);
     final scrollController = ScrollController();
     addTearDown(scrollController.dispose);
     final refreshCompleter = Completer<void>();
@@ -97,15 +99,23 @@ void main() {
     await gesture.moveBy(const Offset(0, 8));
     await tester.pump();
     expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsNothing);
+    expect(haptics, isEmpty);
 
     await gesture.moveBy(const Offset(0, 220));
     await tester.pump();
     expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsOneWidget);
     expect(refreshes, 0);
+    expect(haptics, ["HapticFeedbackType.selectionClick"]);
+
+    await gesture.moveBy(const Offset(0, 20));
+    await gesture.moveBy(const Offset(0, 1));
+    await tester.pump();
+    expect(haptics, ["HapticFeedbackType.selectionClick"]);
 
     await gesture.up();
     await tester.pump();
     expect(refreshes, 1);
+    expect(haptics, ["HapticFeedbackType.selectionClick", "HapticFeedbackType.mediumImpact"]);
     expect(
       tester.widget<RefreshProgressIndicator>(find.byType(RefreshProgressIndicator)).value,
       null,
@@ -118,6 +128,7 @@ void main() {
   });
 
   testWidgets("reversing a vertical pull cancels refresh", (tester) async {
+    final haptics = _recordHaptics(tester);
     final scrollController = ScrollController();
     addTearDown(scrollController.dispose);
     var refreshes = 0;
@@ -135,14 +146,18 @@ void main() {
     expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsOneWidget);
     await gesture.moveBy(const Offset(0, -40));
     await tester.pump();
+    await gesture.moveBy(const Offset(0, 90));
+    await tester.pump();
     await gesture.up();
     await tester.pumpAndSettle();
 
     expect(refreshes, 0);
+    expect(haptics, ["HapticFeedbackType.selectionClick"]);
     expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsNothing);
   });
 
-  testWidgets("cancelling a pull never starts a refresh", (tester) async {
+  testWidgets("cancelling a pull skips refresh and lets the next pull arm again", (tester) async {
+    final haptics = _recordHaptics(tester);
     final scrollController = ScrollController();
     addTearDown(scrollController.dispose);
     var refreshes = 0;
@@ -151,6 +166,10 @@ void main() {
         scrollController: scrollController,
         periodicRefreshInterval: null,
         onRefresh: () async => refreshes++,
+        title: const Tooltip(
+          message: "Full stream title",
+          child: SizedBox(height: 200),
+        ),
       ),
     );
 
@@ -162,10 +181,25 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(refreshes, 0);
+    expect(haptics, ["HapticFeedbackType.selectionClick"]);
     expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsNothing);
+
+    final nextGesture = await tester.startGesture(const Offset(200, 100));
+    await nextGesture.moveBy(const Offset(0, 220));
+    await tester.pump();
+    expect(haptics, ["HapticFeedbackType.selectionClick", "HapticFeedbackType.selectionClick"]);
+    await nextGesture.up();
+    await tester.pumpAndSettle();
+    expect(refreshes, 1);
+    expect(haptics, [
+      "HapticFeedbackType.selectionClick",
+      "HapticFeedbackType.selectionClick",
+      "HapticFeedbackType.mediumImpact",
+    ]);
   });
 
   testWidgets("periodically refreshes without showing the pull indicator", (tester) async {
+    final haptics = _recordHaptics(tester);
     final scrollController = ScrollController();
     addTearDown(scrollController.dispose);
     var refreshes = 0;
@@ -188,6 +222,7 @@ void main() {
 
     await tester.pump(const Duration(seconds: 30));
     expect(refreshes, 2);
+    expect(haptics, isEmpty);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(seconds: 30));
@@ -298,6 +333,25 @@ void main() {
       expect(refreshes, 0);
     });
   }
+}
+
+List<Object?> _recordHaptics(WidgetTester tester) {
+  final haptics = <Object?>[];
+  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (
+    call,
+  ) async {
+    if (call.method == "HapticFeedback.vibrate") {
+      haptics.add(call.arguments);
+    }
+    return null;
+  });
+  addTearDown(
+    () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      null,
+    ),
+  );
+  return haptics;
 }
 
 class _RefreshApp extends StatelessWidget {

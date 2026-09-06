@@ -13,6 +13,93 @@ import "package:http/testing.dart";
 typedef _RequestObserver = void Function(http.Request request);
 
 void main() {
+  test("background connection resets retain following without showing an error", () async {
+    var failUsers = false;
+    final store = FollowingStore(
+      authController: _authController(
+        onRequest: (request) {
+          if (failUsers && _isGraphQlOperation(request, "FlowUsers")) {
+            throw http.ClientException("Connection reset by peer", request.url);
+          }
+        },
+      ),
+    );
+    await store.loadSavedConnection();
+    final connection = store.connection;
+    failUsers = true;
+
+    await store.loadSavedConnection(refresh: true, background: true);
+
+    expect(store.connection, same(connection));
+    expect(store.liveChannels.single.name, "AussieAntics");
+    expect(store.followingError, isNull);
+    expect(store.sessionStatus, TwitchSessionStatus.authenticated);
+    expect(store.isLoadingFollowing, isFalse);
+
+    await store.loadSavedConnection(refresh: true);
+    expect(store.followingError, "Couldn't load Following. Pull down to try again.");
+    expect(store.connection, same(connection));
+    failUsers = false;
+    await store.loadSavedConnection(refresh: true, background: true);
+    expect(store.followingError, isNull);
+  });
+
+  test("an initial background failure still shows a concise actionable error", () async {
+    final store = FollowingStore(
+      authController: _authController(
+        onRequest: (request) {
+          throw http.ClientException("Connection reset by peer", request.url);
+        },
+      ),
+    );
+    await store.loadSavedConnection(background: true);
+
+    expect(store.connection, isNull);
+    expect(store.sessionStatus, TwitchSessionStatus.restoreFailed);
+    expect(store.followingError, "Couldn't load Following. Pull down to try again.");
+  });
+
+  test("background refresh keeps authentication failures visible", () async {
+    final authController = _DelayedAuthController();
+    final connection = _connection("current-user");
+    final store = FollowingStore(authController: authController)..applyConnection(connection);
+    final refresh = store.loadSavedConnection(refresh: true, background: true);
+    authController.restore.completeError(TwitchAuthException("Please sign in to Twitch again."));
+    await refresh;
+
+    expect(store.connection, same(connection));
+    expect(store.followingError, "Please sign in to Twitch again.");
+  });
+
+  test("background refresh still clears an expired session", () async {
+    final authController = _DelayedAuthController();
+    final store = FollowingStore(authController: authController)
+      ..applyConnection(_connection("current-user"));
+    final refresh = store.loadSavedConnection(refresh: true, background: true);
+    authController.restore.complete(null);
+    await refresh;
+
+    expect(store.connection, isNull);
+    expect(store.sessionStatus, TwitchSessionStatus.loggedOut);
+  });
+
+  test("manual refresh joining a background queue retains visible error reporting", () async {
+    final authController = _DelayedAuthController();
+    final connection = _connection("current-user");
+    final store = FollowingStore(authController: authController)..applyConnection(connection);
+    final first = store.loadSavedConnection(refresh: true, background: true);
+    final queued = store.loadSavedConnection(refresh: true, background: true);
+    final manual = store.loadSavedConnection(refresh: true);
+    authController.restore.complete(connection);
+    await Future<void>.delayed(Duration.zero);
+    authController.refreshedRestore.completeError(http.ClientException("Connection reset by peer"));
+    await Future.wait([first, queued, manual]);
+
+    expect(authController.loadCalls, 2);
+    expect(store.connection, same(connection));
+    expect(store.followingError, "Couldn't load Following. Pull down to try again.");
+  });
+
   test("viewer sorts preserve the followed-query recommendation snapshot", () async {
     final store = FollowingStore(authController: _authController(), apiCache: _TrackingApiCache());
     store.applyConnection(

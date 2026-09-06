@@ -210,7 +210,17 @@ class _ScrollReactiveChromeState extends State<ScrollReactiveChrome> {
           child: SafeArea(
             top: false,
             bottom: false,
-            child: widget.child,
+            child: NotificationListener<ScrollMetricsNotification>(
+              onNotification: (notification) {
+                if (notification.depth == 0 &&
+                    notification.metrics.axis == Axis.vertical &&
+                    TickerMode.valuesOf(context).enabled) {
+                  _handleScroll();
+                }
+                return false;
+              },
+              child: widget.child,
+            ),
           ),
         ),
         AnimatedBuilder(

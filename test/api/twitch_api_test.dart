@@ -10,6 +10,72 @@ import "package:http/testing.dart";
 void main() {
   tearDown(() => TwitchApiClient.restoreWebSessionDeviceId(null));
 
+  for (final (failure, transient) in [
+    (http.ClientException("Connection reset by peer", Uri.https("gql.twitch.tv", "/gql")), true),
+    (TimeoutException("Request timed out"), true),
+    (http.Response('{"errors":[{"message":"Unavailable"}]}', 503), true),
+    (http.Response("Service unavailable", 503), true),
+    (http.Response("Too many requests", 429), true),
+    (http.Response("Unauthorized", 401), false),
+    (http.Response("Forbidden", 403), false),
+    (
+      _jsonResponse({
+        "errors": [
+          {"message": "Unauthorized"},
+        ],
+      }),
+      false,
+    ),
+    (
+      _jsonResponse({
+        "errors": [
+          {"message": "failed integrity check"},
+        ],
+      }),
+      false,
+    ),
+  ]) {
+    final failureDescription = failure is http.Response
+        ? "${failure.statusCode} ${failure.body}"
+        : failure.toString();
+    test("classifies GraphQL failure as transient=$transient: $failureDescription", () async {
+      final client = TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+        httpClient: MockClient((_) async {
+          if (failure is http.Response) {
+            return failure;
+          }
+          throw failure as Exception;
+        }),
+      );
+
+      await expectLater(
+        client.fetchUsersByIds(["creator-1"]),
+        throwsA(
+          isA<TwitchApiException>().having((error) => error.isTransient, "isTransient", transient),
+        ),
+      );
+    });
+  }
+
+  test("token validation separates expired credentials from a temporary outage", () async {
+    var status = 401;
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      httpClient: MockClient((_) async => http.Response("Unavailable", status)),
+    );
+    expect(await client.validateAccessToken("token-123"), isFalse);
+    status = 503;
+    await expectLater(
+      client.validateAccessToken("token-123"),
+      throwsA(
+        isA<TwitchApiException>().having((error) => error.isTransient, "isTransient", isTrue),
+      ),
+    );
+  });
+
   test("channel info reads the actual last broadcast and category identity", () async {
     final client = TwitchApiClient(
       clientId: "client-123",

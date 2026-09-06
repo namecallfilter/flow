@@ -1,3 +1,4 @@
+import "dart:async";
 import "dart:math" as math;
 
 import "package:flow/api/twitch_cookie_extractor.dart";
@@ -19,9 +20,10 @@ import "package:graphql/client.dart" as graphql;
 import "package:http/http.dart" as http;
 
 class TwitchApiException implements Exception {
-  TwitchApiException(this.message);
+  TwitchApiException(this.message, {this.isTransient = false});
 
   final String message;
+  final bool isTransient;
 
   @override
   String toString() => "TwitchApiException: $message";
@@ -294,6 +296,7 @@ class TwitchApiClient {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw TwitchApiException(
         "Twitch token validation failed (${response.statusCode}): ${response.body}",
+        isTransient: _isTransientHttpStatus(response.statusCode),
       );
     }
 
@@ -864,6 +867,7 @@ class TwitchApiClient {
     if (exception != null) {
       throw TwitchApiException(
         "Twitch GraphQL $operationName failed: ${_graphQlExceptionMessage(exception)}",
+        isTransient: _isTransientGraphQlException(exception),
       );
     }
 
@@ -1247,6 +1251,25 @@ class TwitchApiClient {
   }
 
   static String _stringValue(Object? value) => value?.toString() ?? "";
+
+  static bool _isTransientHttpStatus(int? status) =>
+      status == 408 || status == 429 || (status != null && status >= 500 && status < 600);
+
+  static bool _isTransientGraphQlException(graphql.OperationException exception) {
+    if (exception.graphqlErrors.isNotEmpty) {
+      return false;
+    }
+    final linkException = exception.linkException;
+    final status = switch (linkException) {
+      graphql.ServerException(:final statusCode) => statusCode,
+      graphql.HttpLinkParserException(:final response) => response.statusCode,
+      _ => null,
+    };
+    return linkException is graphql.NetworkException ||
+        linkException?.originalException is http.ClientException ||
+        linkException?.originalException is TimeoutException ||
+        _isTransientHttpStatus(status);
+  }
 
   static String _graphQlExceptionMessage(graphql.OperationException exception) {
     if (exception.graphqlErrors.isNotEmpty) {

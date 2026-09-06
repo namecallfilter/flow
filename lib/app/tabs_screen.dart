@@ -437,7 +437,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
   }
 
   Future<void> _refreshSavedConnection({required bool refresh}) async {
-    await _followingStore.loadSavedConnection(refresh: refresh);
+    await _followingStore.loadSavedConnection(refresh: refresh, background: true);
     if (!mounted ||
         !_showStartupLoginOffer ||
         _startupLoginMessage != null ||

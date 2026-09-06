@@ -7,6 +7,7 @@ import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
+import "package:http/http.dart" as http;
 import "package:mobx/mobx.dart";
 
 part "following_store.g.dart";
@@ -36,6 +37,8 @@ abstract class FollowingStoreBase with Store {
   bool _hasAttemptedSavedConnection = false;
   Future<void>? _savedConnectionLoad;
   Future<void>? _savedConnectionRefresh;
+  bool _loadInBackground = false;
+  bool _queuedRefreshInBackground = false;
   int _sessionRevision = 0;
 
   @observable
@@ -118,12 +121,16 @@ abstract class FollowingStoreBase with Store {
   bool get isLoggedIn => connection != null;
 
   @action
-  Future<void> loadSavedConnection({bool refresh = false}) async {
+  Future<void> loadSavedConnection({bool refresh = false, bool background = false}) async {
     if (preferences != null) {
       await restoreStreamSort();
     }
     final activeLoad = _savedConnectionLoad;
     if (activeLoad != null) {
+      if (!background) {
+        _loadInBackground = false;
+        _queuedRefreshInBackground = false;
+      }
       if (!refresh) {
         await activeLoad;
         return;
@@ -137,13 +144,14 @@ abstract class FollowingStoreBase with Store {
       final operation = Completer<void>();
       final operationFuture = operation.future;
       final revision = _sessionRevision;
+      _queuedRefreshInBackground = background;
       _savedConnectionRefresh = operationFuture;
       try {
         await activeLoad;
         if (revision != _sessionRevision) {
           return;
         }
-        await loadSavedConnection(refresh: true);
+        await loadSavedConnection(refresh: true, background: _queuedRefreshInBackground);
       } finally {
         if (identical(_savedConnectionRefresh, operationFuture)) {
           _savedConnectionRefresh = null;
@@ -165,6 +173,7 @@ abstract class FollowingStoreBase with Store {
     final operationFuture = operation.future;
     final revision = ++_sessionRevision;
     _savedConnectionLoad = operationFuture;
+    _loadInBackground = background;
     var didStartLoading = false;
 
     try {
@@ -198,7 +207,15 @@ abstract class FollowingStoreBase with Store {
       if (revision != _sessionRevision) {
         return;
       }
-      followingError = error.toString();
+      final isTransient =
+          error is http.ClientException ||
+          error is TimeoutException ||
+          (error is TwitchApiException && error.isTransient);
+      if (!_loadInBackground || connection == null || !isTransient) {
+        followingError = error is TwitchAuthException
+            ? error.message
+            : "Couldn't load Following. Pull down to try again.";
+      }
       sessionStatus = connection == null
           ? TwitchSessionStatus.restoreFailed
           : TwitchSessionStatus.authenticated;

@@ -186,9 +186,12 @@ mixin _$FollowingStore on FollowingStoreBase, Store {
   );
 
   @override
-  Future<void> loadSavedConnection({bool refresh = false}) {
+  Future<void> loadSavedConnection({
+    bool refresh = false,
+    bool background = false,
+  }) {
     return _$loadSavedConnectionAsyncAction.run(
-      () => super.loadSavedConnection(refresh: refresh),
+      () => super.loadSavedConnection(refresh: refresh, background: background),
     );
   }
 
