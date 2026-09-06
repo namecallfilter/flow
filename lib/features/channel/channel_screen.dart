@@ -193,7 +193,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
                               name: liveStream.category,
                             ),
                     ),
-                    const SizedBox(height: AppSpacing.xxl),
+                    const SizedBox(height: AppSpacing.md),
                     const SectionHeader(title: "Past broadcasts"),
                     const SizedBox(height: AppSpacing.sm),
                     if (channel == null || channel.pastBroadcasts.isEmpty)
@@ -248,7 +248,7 @@ const _pastBroadcastThumbnailWidth = 148.0;
 const _pastBroadcastThumbnailMinHeight = _pastBroadcastThumbnailWidth * 9 / 16;
 const _pastBroadcastSkeletonExtent = _pastBroadcastThumbnailMinHeight + AppSpacing.md;
 const _channelSkeletonFixedContentExtent =
-    _channelHeaderSkeletonExtent + AppSpacing.xxl + 32 + AppSpacing.sm;
+    _channelHeaderSkeletonExtent + AppSpacing.md + 32 + AppSpacing.sm;
 
 class _ChannelSkeleton extends StatelessWidget {
   const _ChannelSkeleton({required this.viewportHeight});
@@ -273,7 +273,7 @@ class _ChannelSkeleton extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const _ChannelHeaderSkeleton(),
-            const SizedBox(height: AppSpacing.xxl),
+            const SizedBox(height: AppSpacing.md),
             const SectionHeader(title: "Past broadcasts"),
             const SizedBox(height: AppSpacing.sm),
             for (var index = 0; index < broadcastCount; index++)
