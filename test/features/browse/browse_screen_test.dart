@@ -1218,11 +1218,17 @@ void main() {
   testWidgets("opens live search results in the player and avatars as channels", (
     tester,
   ) async {
+    final rootNavigator = GlobalKey<NavigatorState>();
+    final tabNavigator = GlobalKey<NavigatorState>();
     await tester.pumpWidget(
       MaterialApp(
+        navigatorKey: rootNavigator,
         theme: buildFlowTheme(Brightness.dark),
-        home: BrowseScreen(
-          authController: _authController(),
+        home: Navigator(
+          key: tabNavigator,
+          onGenerateRoute: (_) => MaterialPageRoute<void>(
+            builder: (_) => BrowseScreen(authController: _authController()),
+          ),
         ),
       ),
     );
@@ -1236,6 +1242,8 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 350));
     await tester.pumpAndSettle();
+    final searchPage = tester.element(find.byKey(const ValueKey("browse_search_page")));
+    expect(Navigator.of(searchPage), same(tabNavigator.currentState));
 
     await tester.tap(find.byKey(const ValueKey("browse_search_channel_MinecraftCreator")));
     await tester.pumpAndSettle();
@@ -1261,9 +1269,14 @@ void main() {
     ).pop();
     await tester.pumpAndSettle();
 
+    expect(tester.element(find.byKey(const ValueKey("browse_search_page"))), same(searchPage));
+    expect(find.text("mine"), findsOneWidget);
+    expect(rootNavigator.currentState!.canPop(), isFalse);
+    expect(tabNavigator.currentState!.canPop(), isTrue);
     await tester.tap(find.byKey(const ValueKey("browse_search_channel_avatar_HighCreator")));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey("channel_page_highcreator")), findsOneWidget);
+    expect(rootNavigator.currentState!.canPop(), isFalse);
   });
 }
 

@@ -414,6 +414,50 @@ void main() {
     expect(find.byKey(const ValueKey("channel_page_offlineone")), findsOneWidget);
   });
 
+  testWidgets("offline categories receive their own tap without opening the channel", (
+    tester,
+  ) async {
+    var channelSelections = 0;
+    var categorySelections = 0;
+    const channel = OfflineChannel(
+      id: "offline-1",
+      login: "offlineone",
+      name: "OfflineOne",
+      initials: "OO",
+      lastLive: "Last live today",
+      category: "Just Chatting",
+      categoryId: "509658",
+      avatarColors: [Colors.purple, Colors.pink],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: Scaffold(
+          body: OfflineChannelRow(
+            channel: channel,
+            onTap: () => channelSelections++,
+            onCategoryTap: () => categorySelections++,
+          ),
+        ),
+      ),
+    );
+
+    final categoryFinder = find.byKey(const ValueKey("offline_channel_category_OfflineOne"));
+    await tester.tap(categoryFinder);
+    await tester.pump();
+    expect(categorySelections, 1);
+    expect(channelSelections, 0);
+    expect(
+      tester.widget<Text>(categoryFinder).style?.color,
+      buildFlowTheme(Brightness.dark).colorScheme.primary,
+    );
+    await tester.tap(find.text("OfflineOne"));
+    await tester.pump();
+    expect(channelSelections, 1);
+    expect(categorySelections, 1);
+  });
+
   testWidgets("limits stream-card channel links to the avatar, name, and badge", (
     tester,
   ) async {

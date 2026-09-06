@@ -258,6 +258,23 @@ const documentNodeQueryFlowUsers = DocumentNode(
                   selectionSet: null,
                 ),
                 FieldNode(
+                  name: NameNode(value: 'lastBroadcast'),
+                  alias: null,
+                  arguments: [],
+                  directives: [],
+                  selectionSet: SelectionSetNode(
+                    selections: [
+                      FieldNode(
+                        name: NameNode(value: 'startedAt'),
+                        alias: null,
+                        arguments: [],
+                        directives: [],
+                        selectionSet: null,
+                      ),
+                    ],
+                  ),
+                ),
+                FieldNode(
                   name: NameNode(value: 'broadcastSettings'),
                   alias: null,
                   arguments: [],
@@ -548,6 +565,7 @@ class Query$FlowUsers$users {
     this.login,
     this.displayName,
     this.profileImageURL,
+    this.lastBroadcast,
     this.broadcastSettings,
     this.stream,
   });
@@ -561,6 +579,9 @@ class Query$FlowUsers$users {
     final l$profileImageURL = json.containsKey('profileImageURL')
         ? json['profileImageURL']
         : null;
+    final l$lastBroadcast = json.containsKey('lastBroadcast')
+        ? json['lastBroadcast']
+        : null;
     final l$broadcastSettings = json.containsKey('broadcastSettings')
         ? json['broadcastSettings']
         : null;
@@ -570,6 +591,11 @@ class Query$FlowUsers$users {
       login: (l$login as String?),
       displayName: (l$displayName as String?),
       profileImageURL: (l$profileImageURL as String?),
+      lastBroadcast: l$lastBroadcast == null
+          ? null
+          : Query$FlowUsers$users$lastBroadcast.fromJson(
+              (l$lastBroadcast as Map<String, dynamic>),
+            ),
       broadcastSettings: l$broadcastSettings == null
           ? null
           : Query$FlowUsers$users$broadcastSettings.fromJson(
@@ -591,6 +617,8 @@ class Query$FlowUsers$users {
 
   final String? profileImageURL;
 
+  final Query$FlowUsers$users$lastBroadcast? lastBroadcast;
+
   final Query$FlowUsers$users$broadcastSettings? broadcastSettings;
 
   final Query$FlowUsers$users$stream? stream;
@@ -605,6 +633,8 @@ class Query$FlowUsers$users {
     _resultData['displayName'] = l$displayName;
     final l$profileImageURL = profileImageURL;
     _resultData['profileImageURL'] = l$profileImageURL;
+    final l$lastBroadcast = lastBroadcast;
+    _resultData['lastBroadcast'] = l$lastBroadcast?.toJson();
     final l$broadcastSettings = broadcastSettings;
     _resultData['broadcastSettings'] = l$broadcastSettings?.toJson();
     final l$stream = stream;
@@ -618,6 +648,7 @@ class Query$FlowUsers$users {
     final l$login = login;
     final l$displayName = displayName;
     final l$profileImageURL = profileImageURL;
+    final l$lastBroadcast = lastBroadcast;
     final l$broadcastSettings = broadcastSettings;
     final l$stream = stream;
     return Object.hashAll([
@@ -625,6 +656,7 @@ class Query$FlowUsers$users {
       l$login,
       l$displayName,
       l$profileImageURL,
+      l$lastBroadcast,
       l$broadcastSettings,
       l$stream,
     ]);
@@ -658,6 +690,11 @@ class Query$FlowUsers$users {
     if (l$profileImageURL != lOther$profileImageURL) {
       return false;
     }
+    final l$lastBroadcast = lastBroadcast;
+    final lOther$lastBroadcast = other.lastBroadcast;
+    if (l$lastBroadcast != lOther$lastBroadcast) {
+      return false;
+    }
     final l$broadcastSettings = broadcastSettings;
     final lOther$broadcastSettings = other.broadcastSettings;
     if (l$broadcastSettings != lOther$broadcastSettings) {
@@ -666,6 +703,53 @@ class Query$FlowUsers$users {
     final l$stream = stream;
     final lOther$stream = other.stream;
     if (l$stream != lOther$stream) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowUsers$users$lastBroadcast {
+  Query$FlowUsers$users$lastBroadcast({this.startedAt});
+
+  factory Query$FlowUsers$users$lastBroadcast.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$startedAt = json.containsKey('startedAt')
+        ? json['startedAt']
+        : null;
+    return Query$FlowUsers$users$lastBroadcast(
+      startedAt: (l$startedAt as String?),
+    );
+  }
+
+  final String? startedAt;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$startedAt = startedAt;
+    _resultData['startedAt'] = l$startedAt;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$startedAt = startedAt;
+    return Object.hashAll([l$startedAt]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other is! Query$FlowUsers$users$lastBroadcast ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$startedAt = startedAt;
+    final lOther$startedAt = other.startedAt;
+    if (l$startedAt != lOther$startedAt) {
       return false;
     }
     return true;

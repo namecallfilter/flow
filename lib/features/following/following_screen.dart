@@ -14,6 +14,7 @@ import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/following/following_store.dart";
 import "package:flow/features/following/twitch_login_offer_screen.dart";
 import "package:flow/features/following/twitch_login_screen.dart";
+import "package:flow/features/player/player_navigation.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
@@ -248,16 +249,15 @@ class _FollowingScreenState extends State<FollowingScreen> {
       return;
     }
     unawaited(
-      Navigator.of(context, rootNavigator: true).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => StreamPlayerScreen(apiCache: _apiCache, channel: channel),
-        ),
+      openStreamPlayer(
+        context,
+        builder: (_) => StreamPlayerScreen(apiCache: _apiCache, channel: channel),
       ),
     );
   }
 
-  void _openCategory(StreamChannel channel) {
-    if (channel.categoryId.isEmpty) {
+  void _openCategory({required String id, required String name}) {
+    if (id.isEmpty) {
       return;
     }
     unawaited(
@@ -267,12 +267,12 @@ class _FollowingScreenState extends State<FollowingScreen> {
             apiCache: _apiCache,
             preferences: _store.preferences,
             category: BrowseCategory(
-              id: channel.categoryId,
-              name: channel.category,
+              id: id,
+              name: name,
               viewerCount: 0,
               viewers: "--",
               imageUrl: null,
-              colors: colorsForText(channel.categoryId),
+              colors: colorsForText(id),
             ),
           ),
         ),
@@ -404,7 +404,10 @@ class _FollowingScreenState extends State<FollowingScreen> {
                           channel: channel,
                           onChannelSelected: _openLiveChannel,
                           onStreamSelected: _openPlayer,
-                          onCategorySelected: _openCategory,
+                          onCategorySelected: (channel) => _openCategory(
+                            id: channel.categoryId,
+                            name: channel.category,
+                          ),
                         ),
                     if (!showsAnonymousChannels) ...[
                       const SizedBox(height: AppSpacing.sm),
@@ -413,6 +416,10 @@ class _FollowingScreenState extends State<FollowingScreen> {
                         expanded: offlineExpanded,
                         onToggle: _store.toggleOfflineExpanded,
                         onChannelSelected: _openOfflineChannel,
+                        onCategorySelected: (channel) => _openCategory(
+                          id: channel.categoryId,
+                          name: channel.category,
+                        ),
                       ),
                     ],
                   ],
@@ -1160,12 +1167,14 @@ class _OfflineCard extends StatelessWidget {
     required this.expanded,
     required this.onToggle,
     required this.onChannelSelected,
+    required this.onCategorySelected,
   });
 
   final List<OfflineChannel> channels;
   final bool expanded;
   final VoidCallback onToggle;
   final ValueChanged<OfflineChannel> onChannelSelected;
+  final ValueChanged<OfflineChannel> onCategorySelected;
 
   @override
   Widget build(BuildContext context) => _OfflineCardShell(
@@ -1200,6 +1209,7 @@ class _OfflineCard extends StatelessWidget {
                               channel: channels[index],
                               showDivider: index != channels.length - 1,
                               onTap: () => onChannelSelected(channels[index]),
+                              onCategoryTap: () => onCategorySelected(channels[index]),
                             ),
                         ],
                       )
@@ -1221,6 +1231,12 @@ class _OfflineCard extends StatelessWidget {
         onChannelSelected,
       ),
     );
+    properties.add(
+      ObjectFlagProperty<ValueChanged<OfflineChannel>>.has(
+        "onCategorySelected",
+        onCategorySelected,
+      ),
+    );
   }
 }
 
@@ -1230,16 +1246,19 @@ class OfflineChannelRow extends StatelessWidget {
     super.key,
     this.showDivider = true,
     this.onTap,
+    this.onCategoryTap,
   });
 
   final OfflineChannel channel;
   final bool showDivider;
   final VoidCallback? onTap;
+  final VoidCallback? onCategoryTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final mutedColor = theme.colorScheme.onSurface.withValues(alpha: 0.58);
+    final canOpenCategory = onCategoryTap != null && channel.categoryId.isNotEmpty;
 
     return GestureDetector(
       key: ValueKey("offline_channel_row_${channel.name}"),
@@ -1282,13 +1301,17 @@ class OfflineChannelRow extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 2),
-                      Text(
-                        channel.category,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: mutedColor,
-                          fontWeight: FontWeight.w500,
+                      GestureDetector(
+                        onTap: canOpenCategory ? onCategoryTap : null,
+                        child: Text(
+                          channel.category,
+                          key: ValueKey("offline_channel_category_${channel.name}"),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: canOpenCategory ? theme.colorScheme.primary : mutedColor,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                       ),
                     ],
@@ -1313,6 +1336,7 @@ class OfflineChannelRow extends StatelessWidget {
     properties.add(DiagnosticsProperty<OfflineChannel>("channel", channel));
     properties.add(DiagnosticsProperty<bool>("showDivider", showDivider));
     properties.add(ObjectFlagProperty<VoidCallback?>.has("onTap", onTap));
+    properties.add(ObjectFlagProperty<VoidCallback?>.has("onCategoryTap", onCategoryTap));
   }
 }
 

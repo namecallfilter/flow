@@ -7,6 +7,7 @@ import "package:flow/app/radius.dart";
 import "package:flow/app/spacing.dart";
 import "package:flow/features/browse/browse_screen.dart";
 import "package:flow/features/channel/channel_store.dart";
+import "package:flow/features/player/player_navigation.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
@@ -89,12 +90,11 @@ class _ChannelScreenState extends State<ChannelScreen> {
     }
 
     unawaited(
-      Navigator.of(context, rootNavigator: true).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => StreamPlayerScreen(
-            apiCache: widget.apiCache,
-            channel: channel,
-          ),
+      openStreamPlayer(
+        context,
+        builder: (_) => StreamPlayerScreen(
+          apiCache: widget.apiCache,
+          channel: channel,
         ),
       ),
     );
@@ -422,7 +422,6 @@ class _PastBroadcastSkeleton extends StatelessWidget {
             key: ValueKey("channel_broadcast_skeleton_text_$index"),
             height: _pastBroadcastThumbnailMinHeight,
             child: Column(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _PastBroadcastSkeletonLine(
@@ -879,7 +878,6 @@ class _PastBroadcastCard extends StatelessWidget {
                 constraints: const BoxConstraints(minHeight: _pastBroadcastThumbnailMinHeight),
                 child: Column(
                   key: ValueKey("past_broadcast_text_${broadcast.id}"),
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Tooltip(

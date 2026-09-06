@@ -13,6 +13,7 @@ import "package:flow/features/browse/browse_store.dart";
 import "package:flow/features/browse/category_streams_store.dart";
 import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/following/following_screen.dart";
+import "package:flow/features/player/player_navigation.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/stream_sort.dart";
@@ -1841,10 +1842,9 @@ void _openStreamPlayer(
     return;
   }
   unawaited(
-    Navigator.of(context, rootNavigator: true).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => StreamPlayerScreen(apiCache: apiCache, channel: channel),
-      ),
+    openStreamPlayer(
+      context,
+      builder: (_) => StreamPlayerScreen(apiCache: apiCache, channel: channel),
     ),
   );
 }

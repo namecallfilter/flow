@@ -10,6 +10,50 @@ import "package:http/testing.dart";
 void main() {
   tearDown(() => TwitchApiClient.restoreWebSessionDeviceId(null));
 
+  test("channel info reads the actual last broadcast and category identity", () async {
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      httpClient: MockClient((request) async {
+        expect(request.body, contains("lastBroadcast"));
+        return _jsonResponse({
+          "data": {
+            "users": [
+              {
+                "id": "creator-1",
+                "login": "creator",
+                "displayName": "Creator",
+                "lastBroadcast": {"startedAt": "2026-09-02T02:37:34.734703Z"},
+                "broadcastSettings": {
+                  "title": "Back later",
+                  "game": {"id": "509658", "displayName": "Just Chatting"},
+                },
+              },
+              {
+                "id": "creator-2",
+                "login": "unknown",
+                "displayName": "Unknown",
+                "lastBroadcast": null,
+                "broadcastSettings": null,
+              },
+            ],
+          },
+        });
+      }),
+    );
+
+    final channels = await client.fetchChannelInfoByBroadcasterIds(["creator-1", "creator-2"]);
+
+    expect(
+      channels["creator-1"]?.lastBroadcastStartedAt?.toUtc(),
+      DateTime.parse("2026-09-02T02:37:34.734703Z"),
+    );
+    expect(channels["creator-1"]?.gameId, "509658");
+    expect(channels["creator-1"]?.gameName, "Just Chatting");
+    expect(channels["creator-2"]?.lastBroadcastStartedAt, isNull);
+    expect(channels["creator-2"]?.gameId, isEmpty);
+  });
+
   for (final clearDuring in ["initial request", "session observation"]) {
     test("clearing the web session cancels recovery during $clearDuring", () async {
       final requestStarted = Completer<void>();

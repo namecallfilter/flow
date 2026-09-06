@@ -91,12 +91,16 @@ class TwitchChannelInfo {
     required this.broadcasterName,
     required this.gameName,
     required this.title,
+    this.gameId = "",
+    this.lastBroadcastStartedAt,
   });
 
   final String broadcasterId;
   final String broadcasterName;
   final String gameName;
+  final String gameId;
   final String title;
+  final DateTime? lastBroadcastStartedAt;
 }
 
 class TwitchCategory {
@@ -434,7 +438,9 @@ class TwitchApiClient {
           broadcasterId: _stringValue(item["id"]),
           broadcasterName: _stringValue(item["displayName"]),
           gameName: _stringValue(game?["displayName"]),
+          gameId: _stringValue(game?["id"]),
           title: _stringValue(broadcastSettings?["title"]),
+          lastBroadcastStartedAt: _dateTimeValue(_mapValue(item["lastBroadcast"])?["startedAt"]),
         );
         channels[channel.broadcasterId] = channel;
       }

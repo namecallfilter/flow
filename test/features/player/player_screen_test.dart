@@ -6,6 +6,7 @@ import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/player/media3_player_controller.dart";
+import "package:flow/features/player/player_navigation.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
@@ -857,6 +858,75 @@ void main() {
     expect(player._playCount, 1);
   });
 
+  for (final (buttonKey, destinationKey) in [
+    ("player_profile_button", "channel_page_creator"),
+    ("player_category_button", "category_streams_page_Just Chatting"),
+  ]) {
+    testWidgets(
+      "starting a new stream from $destinationKey disposes the old player without resuming",
+      (
+        tester,
+      ) async {
+        tester.view.physicalSize = const Size(400, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final player = _FakePlayerController();
+        final displayMode = _FakeDisplayModeController();
+        final playerApp =
+            _playerApp(
+                  player: player,
+                  displayMode: displayMode,
+                  apiCache: _navigationApiCache(),
+                )
+                as MaterialApp;
+        final rootNavigator = GlobalKey<NavigatorState>();
+        await tester.pumpWidget(
+          MaterialApp(
+            navigatorKey: rootNavigator,
+            theme: playerApp.theme,
+            home: const Scaffold(key: ValueKey("tab shell")),
+          ),
+        );
+        unawaited(
+          openStreamPlayer(
+            tester.element(find.byKey(const ValueKey("tab shell"))),
+            builder: (_) => playerApp.home!,
+          ),
+        );
+        await _pumpNavigation(tester);
+        await tester.tap(find.byKey(const ValueKey("player_orientation_button")));
+        await tester.pump();
+        await tester.tap(find.byKey(ValueKey(buttonKey)));
+        await _pumpNavigation(tester);
+        expect(player._pauseCount, 1);
+        expect(player._playCount, 0);
+
+        unawaited(
+          openStreamPlayer(
+            tester.element(find.byKey(ValueKey(destinationKey))),
+            builder: (_) => const Scaffold(key: ValueKey("new stream")),
+          ),
+        );
+        await tester.pump();
+        expect(player._playCount, 0);
+        await _pumpNavigation(tester);
+        expect(player._disposeCount, 1);
+        expect(displayMode._landscapeRequests, [true]);
+        expect(
+          find.byKey(const ValueKey("player_page_creator"), skipOffstage: false),
+          findsNothing,
+        );
+
+        rootNavigator.currentState!.pop();
+        await _pumpNavigation(tester);
+        expect(find.byKey(const ValueKey("tab shell")), findsOneWidget);
+        expect(rootNavigator.currentState!.canPop(), isFalse);
+        expect(player._playCount, 0);
+      },
+    );
+  }
+
   testWidgets("ignores inactive state until the app is backgrounded", (tester) async {
     final player = _FakePlayerController();
     await tester.pumpWidget(_playerApp(player: player));
@@ -1517,12 +1587,15 @@ class _FakePlayerController implements TwitchPlayerController {
   int _toggleCount = 0;
   int _pauseCount = 0;
   int _playCount = 0;
+  int _disposeCount = 0;
 
   @override
   Stream<TwitchPlayerEvent> get events => _events.stream;
 
   @override
-  void dispose() {}
+  void dispose() {
+    _disposeCount++;
+  }
 
   void emit(TwitchPlayerEvent event) => _events.add(event);
 

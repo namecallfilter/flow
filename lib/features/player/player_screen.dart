@@ -627,12 +627,12 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       await open();
     } finally {
       _openingDestination = false;
-      if (mounted && restoreLandscapeOnReturn) {
+      if (mounted && restoreLandscapeOnReturn && ModalRoute.of(context)?.isCurrent == true) {
         await _queueDisplayMode(
           () => widget.displayModeController.setLandscape(landscape: true),
         );
       }
-      if (mounted && resumeOnReturn) {
+      if (mounted && resumeOnReturn && ModalRoute.of(context)?.isCurrent == true) {
         if (_appIsResumed) {
           await _playerController?.play();
         } else {

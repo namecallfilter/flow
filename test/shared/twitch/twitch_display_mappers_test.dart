@@ -11,6 +11,53 @@ void main() {
   });
 
   group("offlineChannelsFromConnection", () {
+    test("labels the last broadcast instead of the follow date and retains category identity", () {
+      final now = DateTime.now();
+      final channels = offlineChannelsFromConnection(
+        TwitchAuthConnection(
+          user: const TwitchUser(id: "viewer", login: "viewer", displayName: "Viewer"),
+          followedStreams: const [],
+          followedChannels: [
+            for (final id in ["today", "older", "unknown", "missing-name"])
+              TwitchFollowedChannel(
+                broadcasterId: id,
+                broadcasterLogin: id,
+                broadcasterName: id,
+                followedAt: DateTime(2020),
+              ),
+          ],
+          channelInfoByBroadcasterId: {
+            "missing-name": const TwitchChannelInfo(
+              broadcasterId: "missing-name",
+              broadcasterName: "missing-name",
+              gameName: "",
+              gameId: "509658",
+              title: "Back later",
+            ),
+            for (final id in ["today", "older"])
+              id: TwitchChannelInfo(
+                broadcasterId: id,
+                broadcasterName: id,
+                gameName: "Just Chatting",
+                gameId: "509658",
+                title: "Back later",
+                lastBroadcastStartedAt: id == "today" ? now : now.subtract(const Duration(days: 3)),
+              ),
+          },
+        ),
+      );
+      final byId = {for (final channel in channels) channel.id: channel};
+
+      expect(byId["today"]?.lastLive, "Last live today");
+      expect(byId["older"]?.lastLive, "Last live 3 days ago");
+      expect(byId["unknown"]?.lastLive, "Offline");
+      expect(byId["today"]?.categoryId, "509658");
+      expect(byId["today"]?.category, "Just Chatting");
+      expect(byId["unknown"]?.categoryId, isEmpty);
+      expect(byId["missing-name"]?.category, "Back later");
+      expect(byId["missing-name"]?.categoryId, isEmpty);
+    });
+
     test("sorts offline channels by most recent follow first", () {
       final channels = offlineChannelsFromConnection(
         TwitchAuthConnection(

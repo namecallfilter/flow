@@ -4,6 +4,9 @@ query FlowUsers($ids: [ID!], $logins: [String!]) {
     login
     displayName
     profileImageURL(width: 300)
+    lastBroadcast {
+      startedAt
+    }
     broadcastSettings {
       title
       game {

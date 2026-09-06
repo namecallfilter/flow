@@ -132,6 +132,10 @@ void main() {
   });
 
   testWidgets("renders channel identity and past broadcasts", (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 1000);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
     await tester.pumpWidget(
       MaterialApp(
         theme: buildFlowTheme(Brightness.dark),
@@ -198,10 +202,10 @@ void main() {
     final durationBadgeRect = tester.getRect(durationBadgeFinder);
     expect(durationBadgeRect.left, closeTo(thumbnailRect.left + 6, 1));
     expect(durationBadgeRect.bottom, closeTo(thumbnailRect.bottom - 5, 1));
-    _expectPastBroadcastImageAlignment(tester);
+    _expectPastBroadcastAlignment(tester);
   });
 
-  testWidgets("broadcast thumbnails align with title and views at larger text sizes", (
+  testWidgets("broadcast text stays compact and left aligned at larger text sizes", (
     tester,
   ) async {
     tester.view.devicePixelRatio = 1;
@@ -233,7 +237,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    _expectPastBroadcastImageAlignment(tester);
+    _expectPastBroadcastAlignment(tester);
     expect(tester.takeException(), isNull);
   });
 
@@ -880,14 +884,20 @@ void main() {
   });
 }
 
-void _expectPastBroadcastImageAlignment(WidgetTester tester) {
+void _expectPastBroadcastAlignment(WidgetTester tester) {
   final thumbnail = tester.getRect(find.byKey(const ValueKey("past_broadcast_thumbnail_vod-1")));
   final title = tester.getRect(find.byKey(const ValueKey("past_broadcast_title_preview_vod-1")));
+  final metadata = tester.getRect(find.byKey(const ValueKey("past_broadcast_metadata_vod-1")));
   final views = tester.getRect(find.byKey(const ValueKey("past_broadcast_views_vod-1")));
   expect(thumbnail.width, 148);
   expect(thumbnail.height, greaterThanOrEqualTo(83.25));
   expect(thumbnail.top, closeTo(title.top, 0.1));
-  expect(thumbnail.bottom, closeTo(views.bottom, 0.1));
+  expect(title.left - thumbnail.right, closeTo(AppSpacing.md, 0.1));
+  expect(metadata.left, closeTo(title.left, 0.1));
+  expect(views.left, closeTo(title.left, 0.1));
+  expect(metadata.top - title.bottom, closeTo(AppSpacing.xs, 0.1));
+  expect(views.top - metadata.bottom, closeTo(2, 0.1));
+  expect(views.bottom, lessThanOrEqualTo(thumbnail.bottom));
 }
 
 void _expectVisibleHeaderGap(

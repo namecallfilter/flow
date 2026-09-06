@@ -54,10 +54,13 @@ List<OfflineChannel> offlineChannelsFromConnection(
         initials: initialsForName(
           displayName(channel.broadcasterName, channel.broadcasterLogin),
         ),
-        lastLive: channel.followedAt == null
-            ? "Offline"
-            : "Followed ${relativeTime(channel.followedAt!)}",
+        lastLive: offlineLastLive(connection.channelInfoByBroadcasterId[channel.broadcasterId]),
         category: offlineCategory(connection, channel),
+        categoryId:
+            connection.channelInfoByBroadcasterId[channel.broadcasterId]?.gameName.isNotEmpty ??
+                false
+            ? connection.channelInfoByBroadcasterId[channel.broadcasterId]?.gameId ?? ""
+            : "",
         avatarColors: colorsForText(channel.broadcasterId),
         avatarImageUrl: connection.usersById[channel.broadcasterId]?.profileImageUrl,
       ),
@@ -144,6 +147,11 @@ String offlineCategory(
     return info.title;
   }
   return channel.broadcasterLogin.isEmpty ? "Channel" : channel.broadcasterLogin;
+}
+
+String offlineLastLive(TwitchChannelInfo? info) {
+  final startedAt = info?.lastBroadcastStartedAt;
+  return startedAt == null ? "Offline" : "Last live ${relativeTime(startedAt)}";
 }
 
 String displayName(String primary, String fallback) {
