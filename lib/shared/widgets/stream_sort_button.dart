@@ -31,6 +31,12 @@ class StreamSortButton extends StatelessWidget {
     onSelected: onSelected,
     options: options,
     label: (value) => value.label,
+    icon: switch (sort) {
+      StreamSort.recommendedForYou => Icons.auto_awesome,
+      StreamSort.viewersHighToLow => Icons.arrow_downward,
+      StreamSort.viewersLowToHigh => Icons.arrow_upward,
+      StreamSort.recentlyStarted => Icons.schedule,
+    },
     tooltip: "Sort live channels",
   );
 
@@ -56,6 +62,10 @@ class CategorySortButton extends StatelessWidget {
     onSelected: onSelected,
     options: CategorySort.values,
     label: (value) => value.label,
+    icon: switch (sort) {
+      CategorySort.recommendedForYou => Icons.auto_awesome,
+      CategorySort.viewersHighToLow => Icons.arrow_downward,
+    },
     tooltip: "Sort categories",
   );
 
@@ -74,6 +84,7 @@ class _SortMenu<T> extends StatelessWidget {
     required this.onSelected,
     required this.options,
     required this.label,
+    required this.icon,
     required this.tooltip,
   });
 
@@ -81,6 +92,7 @@ class _SortMenu<T> extends StatelessWidget {
   final ValueChanged<T> onSelected;
   final List<T> options;
   final String Function(T) label;
+  final IconData icon;
   final String tooltip;
 
   @override
@@ -105,7 +117,7 @@ class _SortMenu<T> extends StatelessWidget {
           key: const ValueKey("sort_button_content"),
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.sort, size: 20),
+            Icon(icon, size: 20),
             const SizedBox(width: AppSpacing.sm),
             Flexible(child: Text(label(sort), overflow: TextOverflow.ellipsis)),
             const Icon(Icons.arrow_drop_down),
@@ -123,6 +135,7 @@ class _SortMenu<T> extends StatelessWidget {
       ..add(IterableProperty<T>("options", options))
       ..add(ObjectFlagProperty<ValueChanged<T>>.has("onSelected", onSelected))
       ..add(ObjectFlagProperty<String Function(T)>.has("label", label))
+      ..add(DiagnosticsProperty<IconData>("icon", icon))
       ..add(StringProperty("tooltip", tooltip));
   }
 }
