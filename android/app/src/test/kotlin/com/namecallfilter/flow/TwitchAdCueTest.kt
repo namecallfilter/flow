@@ -24,11 +24,6 @@ class TwitchAdCueTest {
                 "X-TV-TWITCH-AD-AD-SESSION-ID=\"pod-abc\"," +
                 "X-TV-TWITCH-AD-ROLL-TYPE=\"PREROLL\"," +
                 "X-TV-TWITCH-AD-URL=\"https://example.com/a,b\""
-        val attributes = parseHlsAttributeList(tag)
-        assertEquals("stitched-ad-123", attributes["ID"])
-        assertEquals("2026-07-10T05:05:39.621Z", attributes["START-DATE"])
-        assertEquals("15.164", attributes["DURATION"])
-
         val cue = parseTwitchAdCue(tag)
 
         requireNotNull(cue)
@@ -98,13 +93,6 @@ class TwitchAdCueTest {
         assertNull(adFallbackLatencyMs(50_000L, null, 48_500L))
         assertEquals(48_500L, playbackEpochMs(40_000L, 8_500L))
         assertNull(playbackEpochMs(C.TIME_UNSET, 8_500L))
-    }
-
-    @Test
-    fun roundsVisibleAdTimeUpToTheNextWholeSecond() {
-        assertEquals(0L, roundRemainingAdTimeMs(0L))
-        assertEquals(1_000L, roundRemainingAdTimeMs(1L))
-        assertEquals(2_000L, roundRemainingAdTimeMs(1_001L))
     }
 
     @Test

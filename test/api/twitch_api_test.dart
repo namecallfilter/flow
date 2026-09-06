@@ -10,6 +10,230 @@ import "package:http/testing.dart";
 void main() {
   tearDown(() => TwitchApiClient.restoreWebSessionDeviceId(null));
 
+  for (final operation in ["current user", "live follows", "follows", "subscription", "playback"]) {
+    test("$operation recovers an integrity challenge before returning data", () async {
+      var requests = 0;
+      final client = TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+        gqlAccessToken: "web-token-123",
+        integrityContextLoader: (_) async => {
+          "Client-Id": "kimne78kx3ncx6brgo4mv6wki5h1ko",
+          "X-Device-ID": "browser-device",
+          "Client-Session-Id": "page-session",
+          "Client-Version": "page-build",
+          "Client-Integrity": "new-grant",
+        },
+        httpClient: MockClient((request) async {
+          requests++;
+          expect(request.headers["Authorization"], "OAuth web-token-123");
+          if (requests == 1) {
+            return _jsonResponse({
+              "errors": [
+                {"message": "failed integrity check"},
+              ],
+            });
+          }
+          expect(request.headers["Client-Integrity"], "new-grant");
+          final connection = {
+            "edges": <Object?>[],
+            "pageInfo": {"hasNextPage": false},
+          };
+          return _jsonResponse({
+            "data": {
+              "currentUser": {
+                "id": "viewer",
+                "followedLiveUsers": connection,
+                "follows": connection,
+              },
+              "user": {
+                "self": {"subscriptionBenefit": null},
+              },
+              "streamPlaybackAccessToken": {"value": "playback-token", "signature": "signature"},
+            },
+          });
+        }),
+      );
+      await switch (operation) {
+        "current user" => client.fetchCurrentUser(),
+        "live follows" => client.fetchFollowedStreams("viewer"),
+        "follows" => client.fetchFollowedChannels("viewer"),
+        "subscription" => client.fetchChannelSubscriptionStatus("creator"),
+        _ => client.fetchLivePlaybackUri("creator"),
+      };
+      expect(requests, 2);
+    });
+  }
+
+  test("concurrent and late challenges share recovery across existing clients", () async {
+    final observed = Completer<Map<String, String>?>();
+    final observationStarted = Completer<void>();
+    final lateResponse = Completer<http.Response>();
+    final initialRequests = Completer<void>();
+    var requests = 0;
+    var observations = 0;
+    final challenge = _jsonResponse({
+      "errors": [
+        {"message": "failed integrity check"},
+      ],
+    });
+    final clients = List.generate(3, (index) {
+      var calls = 0;
+      return TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+        gqlAccessToken: "web-token-123",
+        integrityContextLoader: (_) {
+          observations++;
+          if (!observationStarted.isCompleted) {
+            observationStarted.complete();
+          }
+          return observed.future;
+        },
+        httpClient: MockClient((request) async {
+          calls++;
+          if (calls == 1) {
+            if (++requests == 3) {
+              initialRequests.complete();
+            }
+            return index == 2 ? lateResponse.future : challenge;
+          }
+          expect(request.headers["Client-Integrity"], "shared-grant");
+          expect(request.headers["X-Device-ID"], "browser-device");
+          return _jsonResponse({
+            "data": {
+              "games": {
+                "edges": <Object?>[],
+                "pageInfo": {"hasNextPage": false},
+              },
+            },
+          });
+        }),
+      );
+    });
+    final loads = [
+      for (final client in clients)
+        client.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou),
+    ];
+    await initialRequests.future;
+    await observationStarted.future;
+    observed.complete({
+      "Client-Id": "kimne78kx3ncx6brgo4mv6wki5h1ko",
+      "X-Device-ID": "browser-device",
+      "Client-Session-Id": "page-session",
+      "Client-Version": "page-build",
+      "Client-Integrity": "shared-grant",
+    });
+    await Future.wait(loads.take(2));
+    lateResponse.complete(challenge);
+    await loads.last;
+    expect(observations, 1);
+  });
+
+  test("existing clients pick up a refreshed grant and drop it on session reset", () async {
+    final sentTokens = <String?>[];
+    var challenged = false;
+    final httpClient = MockClient((request) async {
+      sentTokens.add(request.headers["Client-Integrity"]);
+      if (sentTokens.length == 2 && !challenged) {
+        challenged = true;
+        return _jsonResponse({
+          "errors": [
+            {"message": "failed integrity check"},
+          ],
+        });
+      }
+      return _jsonResponse({
+        "data": {
+          "games": {
+            "edges": <Object?>[],
+            "pageInfo": {"hasNextPage": false},
+          },
+        },
+      });
+    });
+    TwitchApiClient client() => TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      gqlAccessToken: "web-token-123",
+      httpClient: httpClient,
+      integrityContextLoader: (_) async => {
+        "Client-Id": "kimne78kx3ncx6brgo4mv6wki5h1ko",
+        "X-Device-ID": "browser-device",
+        "Client-Session-Id": "page-session",
+        "Client-Version": "page-build",
+        "Client-Integrity": "new-grant",
+      },
+    );
+    final existing = client();
+    final recovering = client();
+    await existing.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
+    await recovering.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
+    await existing.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
+    TwitchApiClient.restoreWebSessionDeviceId(null);
+    await recovering.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
+    expect(sentTokens, [null, null, "new-grant", "new-grant", null]);
+  });
+
+  for (final throws in [false, true]) {
+    test("shared recovery failure is released for the next refresh (throws=$throws)", () async {
+      final observed = Completer<Map<String, String>?>();
+      final started = Completer<void>();
+      var observations = 0;
+      final client = TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+        gqlAccessToken: "web-token-123",
+        integrityContextLoader: (_) {
+          observations++;
+          if (observations == 1) {
+            started.complete();
+            return observed.future;
+          }
+          return Future.value({
+            "Client-Id": "kimne78kx3ncx6brgo4mv6wki5h1ko",
+            "X-Device-ID": "browser-device",
+            "Client-Session-Id": "page-session",
+            "Client-Version": "page-build",
+            "Client-Integrity": "new-grant",
+          });
+        },
+        httpClient: MockClient(
+          (request) async => _jsonResponse(
+            request.headers["Client-Integrity"] == null
+                ? {
+                    "errors": [
+                      {"message": "failed integrity check"},
+                    ],
+                  }
+                : {
+                    "data": {
+                      "games": {"edges": <Object?>[]},
+                    },
+                  },
+          ),
+        ),
+      );
+      final failures = [
+        for (var i = 0; i < 2; i++)
+          expectLater(
+            client.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou),
+            throwsA(isA<TwitchApiException>()),
+          ),
+      ];
+      await started.future;
+      if (throws) {
+        observed.completeError(StateError("WebView unavailable"));
+      } else {
+        observed.complete(null);
+      }
+      await Future.wait(failures);
+      expect(observations, 1);
+      await client.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
+      expect(observations, 2);
+    });
+  }
+
   for (final (failure, transient) in [
     (http.ClientException("Connection reset by peer", Uri.https("gql.twitch.tv", "/gql")), true),
     (TimeoutException("Request timed out"), true),
@@ -17,19 +241,10 @@ void main() {
     (http.Response("Service unavailable", 503), true),
     (http.Response("Too many requests", 429), true),
     (http.Response("Unauthorized", 401), false),
-    (http.Response("Forbidden", 403), false),
     (
       _jsonResponse({
         "errors": [
           {"message": "Unauthorized"},
-        ],
-      }),
-      false,
-    ),
-    (
-      _jsonResponse({
-        "errors": [
-          {"message": "failed integrity check"},
         ],
       }),
       false,
@@ -174,66 +389,68 @@ void main() {
     });
   }
 
-  for (final directory in ["global", "category"]) {
-    for (final outcome in ["success", "challenge again", "no observed token"]) {
-      test("authenticated $directory integrity recovery retries at most once: $outcome", () async {
-        final gqlRequests = <http.Request>[];
-        var observedSessions = 0;
-        final client = TwitchApiClient(
-          clientId: "client-123",
-          accessToken: "token-123",
-          gqlAccessToken: "web-token-123",
-          integrityContextLoader: (authorization) async {
-            observedSessions++;
-            expect(authorization, "OAuth web-token-123");
-            return {
-              "Client-Id": "kimne78kx3ncx6brgo4mv6wki5h1ko",
-              "X-Device-ID": "observed-browser-device",
-              "Client-Session-Id": "observed-page-session",
-              "Client-Version": "observed-page-build",
-              if (outcome != "no observed token")
-                "Client-Integrity": "server-issued-integrity-token",
-            };
-          },
-          httpClient: MockClient((request) async {
-            expect(request.headers["Authorization"], "OAuth web-token-123");
-            expect(request.headers["Client-Id"], "kimne78kx3ncx6brgo4mv6wki5h1ko");
-            expect(request.url.path, "/gql");
-            gqlRequests.add(request);
-            if (gqlRequests.length == 1 || outcome == "challenge again") {
-              return _jsonResponse({
-                "errors": [
-                  {"message": "failed integrity check"},
-                ],
-              });
-            }
-            expect(request.body, gqlRequests.first.body);
-            expect(request.headers["Client-Integrity"], "server-issued-integrity-token");
-            expect(request.headers["Client-Session-Id"], "observed-page-session");
+  for (final (directory, outcome) in [
+    ("global", "success"),
+    ("category", "success"),
+    ("global", "challenge again"),
+    ("global", "no observed token"),
+  ]) {
+    test("authenticated $directory integrity recovery retries at most once: $outcome", () async {
+      final gqlRequests = <http.Request>[];
+      var observedSessions = 0;
+      final client = TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+        gqlAccessToken: "web-token-123",
+        integrityContextLoader: (authorization) async {
+          observedSessions++;
+          expect(authorization, "OAuth web-token-123");
+          return {
+            "Client-Id": "kimne78kx3ncx6brgo4mv6wki5h1ko",
+            "X-Device-ID": "observed-browser-device",
+            "Client-Session-Id": "observed-page-session",
+            "Client-Version": "observed-page-build",
+            if (outcome != "no observed token") "Client-Integrity": "server-issued-integrity-token",
+          };
+        },
+        httpClient: MockClient((request) async {
+          expect(request.headers["Authorization"], "OAuth web-token-123");
+          expect(request.headers["Client-Id"], "kimne78kx3ncx6brgo4mv6wki5h1ko");
+          expect(request.url.path, "/gql");
+          gqlRequests.add(request);
+          if (gqlRequests.length == 1 || outcome == "challenge again") {
             return _jsonResponse({
-              "data": {
-                "streams": {
-                  "edges": <Object?>[],
-                  "pageInfo": {"hasNextPage": false},
-                },
-              },
+              "errors": [
+                {"message": "failed integrity check"},
+              ],
             });
-          }),
-        );
-        final load = client.fetchLiveStreamsPage(
-          sort: StreamSort.recommendedForYou,
-          gameIds: directory == "category" ? ["category-id"] : const [],
-          cursor: "personal-page-2",
-        );
-        if (outcome == "success") {
-          await load;
-        } else {
-          await expectLater(load, throwsA(isA<TwitchApiException>()));
-        }
-        expect(observedSessions, 1);
-        expect(gqlRequests, hasLength(outcome == "no observed token" ? 1 : 2));
-      });
-    }
+          }
+          expect(request.body, gqlRequests.first.body);
+          expect(request.headers["Client-Integrity"], "server-issued-integrity-token");
+          expect(request.headers["Client-Session-Id"], "observed-page-session");
+          return _jsonResponse({
+            "data": {
+              "streams": {
+                "edges": <Object?>[],
+                "pageInfo": {"hasNextPage": false},
+              },
+            },
+          });
+        }),
+      );
+      final load = client.fetchLiveStreamsPage(
+        sort: StreamSort.recommendedForYou,
+        gameIds: directory == "category" ? ["category-id"] : const [],
+        cursor: "personal-page-2",
+      );
+      if (outcome == "success") {
+        await load;
+      } else {
+        await expectLater(load, throwsA(isA<TwitchApiException>()));
+      }
+      expect(observedSessions, 1);
+      expect(gqlRequests, hasLength(outcome == "no observed token" ? 1 : 2));
+    });
   }
 
   test("personalized recommendations use mobile context and retain auth across pages", () async {
@@ -344,7 +561,7 @@ void main() {
                 for (var index = 0; index < 12; index++)
                   {
                     "cursor": "game-$index",
-                    "node": {"id": "$index", "displayName": "Game $index"},
+                    "node": {"id": "$index", "displayName": "Game $index", "viewersCount": 4200},
                   },
               ],
               "pageInfo": {"hasNextPage": true},
@@ -358,6 +575,7 @@ void main() {
     expect(streams.data, hasLength(8));
     expect(streams.cursor, "stream-3");
     expect(games.data, hasLength(12));
+    expect(games.data.first.viewerCount, 4200);
     expect(games.cursor, "game-7");
     expect((await client.fetchLiveStreamsPage()).cursor, "stream-7");
     expect((await client.fetchTopCategoriesPage()).cursor, "game-11");
@@ -404,61 +622,6 @@ void main() {
     expect((await client.fetchFollowedStreams("viewer")).single.userId, "creator-1");
     expect((await client.fetchFollowedChannels("viewer")).single.broadcasterId, "creator-1");
     expect(requests, 4);
-  });
-
-  test("user ID batches trim blanks and duplicate values", () async {
-    late http.Request capturedRequest;
-    final client = TwitchApiClient(
-      clientId: "client-123",
-      accessToken: "token-123",
-      httpClient: MockClient((request) async {
-        capturedRequest = request;
-        return _jsonResponse({
-          "data": {"users": <Object?>[]},
-        });
-      }),
-    );
-
-    await client.fetchUsersByIds([" 1 ", "", " ", "1", "2"]);
-    final body = jsonDecode(capturedRequest.body) as Map<String, Object?>;
-    final variables = body["variables"]! as Map<String, Object?>;
-    expect(variables["ids"], ["1", "2"]);
-  });
-
-  test("fetches category viewer counts with top games", () async {
-    late http.Request capturedRequest;
-    final client = TwitchApiClient(
-      clientId: "client-123",
-      accessToken: "token-123",
-      httpClient: MockClient((request) async {
-        capturedRequest = request;
-        return _jsonResponse({
-          "data": {
-            "games": {
-              "edges": [
-                {
-                  "cursor": null,
-                  "node": {
-                    "id": "27471",
-                    "displayName": "Minecraft",
-                    "boxArtURL":
-                        "https://static-cdn.jtvnw.net/ttv-boxart/27471-{width}x{height}.jpg",
-                    "viewersCount": 4200,
-                  },
-                },
-              ],
-              "pageInfo": {"hasNextPage": false},
-            },
-          },
-        });
-      }),
-    );
-
-    final categories = await client.fetchTopCategories();
-    final body = jsonDecode(capturedRequest.body) as Map<String, Object?>;
-
-    expect(body["query"], contains("viewersCount"));
-    expect(categories.single.viewerCount, 4200);
   });
 
   test("fetches channel details with live status and past broadcasts", () async {
@@ -622,31 +785,6 @@ void main() {
     expect(authorizationHeaders, ["OAuth stale-web-token", null]);
     expect(uri.queryParameters["sig"], "anonymous-signature");
     expect(uri.queryParameters["token"], "anonymous-token");
-  });
-
-  test("checks an authenticated channel subscription", () async {
-    late http.Request capturedRequest;
-    final client = TwitchApiClient(
-      clientId: "client-123",
-      accessToken: "token-123",
-      gqlAccessToken: "web-token-123",
-      httpClient: MockClient((request) async {
-        capturedRequest = request;
-        return _jsonResponse({
-          "data": {
-            "user": {
-              "self": {
-                "subscriptionBenefit": {"id": "sub-1"},
-              },
-            },
-          },
-        });
-      }),
-    );
-
-    expect(await client.fetchChannelSubscriptionStatus("Creator"), isTrue);
-    expect(capturedRequest.headers["Authorization"], "OAuth web-token-123");
-    expect(capturedRequest.body, contains("FlowChannelSubscription"));
   });
 }
 

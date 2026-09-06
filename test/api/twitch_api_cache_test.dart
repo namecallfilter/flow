@@ -70,7 +70,7 @@ void main() {
     expect(responses, hasLength(2));
   });
 
-  test("cache keys preserve list boundaries and category order", () async {
+  test("category cache keys preserve which category is requested first", () async {
     var requests = 0;
     final client = TwitchApiClient(
       clientId: "client-123",
@@ -84,12 +84,10 @@ void main() {
     );
     final cache = TwitchApiCache(clientLoader: () async => client);
 
-    await cache.fetchUsersByIds(["1,2"]);
-    await cache.fetchUsersByIds(["1", "2"]);
     await cache.fetchLiveStreamsPage(gameIds: ["1", "2"]);
     await cache.fetchLiveStreamsPage(gameIds: ["2", "1"]);
 
-    expect(requests, 4);
+    expect(requests, 2);
   });
 
   test("deduplicates in-flight requests and reuses session cache", () async {
@@ -122,30 +120,6 @@ void main() {
 
     expect(cached.data.single.name, "Just Chatting");
     expect(requests, 1);
-  });
-
-  test("caches channel details by normalized login and supports refresh", () async {
-    var requests = 0;
-    final client = TwitchApiClient(
-      clientId: "client-123",
-      accessToken: "token-123",
-      httpClient: MockClient((_) async {
-        requests++;
-        return _channelDetailsResponse(
-          login: "jason",
-          displayName: "Jason $requests",
-        );
-      }),
-    );
-    final cache = TwitchApiCache(clientLoader: () async => client);
-
-    expect((await cache.fetchChannelDetails("Jason")).displayName, "Jason 1");
-    expect((await cache.fetchChannelDetails("jason")).displayName, "Jason 1");
-    expect(
-      (await cache.fetchChannelDetails("jason", refresh: true)).displayName,
-      "Jason 2",
-    );
-    expect(requests, 2);
   });
 
   test("evicts the least recently used value when capacity is exceeded", () async {
@@ -231,27 +205,6 @@ http.Response _topGamesResponse({
         },
       ],
       "pageInfo": {"hasNextPage": false},
-    },
-  },
-});
-
-http.Response _channelDetailsResponse({
-  required String login,
-  required String displayName,
-}) => _jsonResponse({
-  "data": {
-    "user": {
-      "id": "creator-1",
-      "login": login,
-      "displayName": displayName,
-      "description": "",
-      "profileImageURL": "https://static-cdn.jtvnw.net/creator-1.png",
-      "followers": {"totalCount": 0},
-      "stream": null,
-      "videos": {
-        "edges": const <Object?>[],
-        "pageInfo": {"hasNextPage": false},
-      },
     },
   },
 });

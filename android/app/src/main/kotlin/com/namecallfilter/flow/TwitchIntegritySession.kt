@@ -6,6 +6,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
@@ -27,12 +28,16 @@ class TwitchIntegritySession(private val activity: Activity) {
             var completed = false
             var observed: Map<String, String>? = null
             var pageFinished = false
-            var scrollingScheduled = false
+            var scrollPosted = false
+            var lastScrolledHeight = 0
+            var scrollsRemaining = 5
+            var scrollListener: ViewTreeObserver.OnPreDrawListener? = null
 
             fun finish(context: Map<String, String>?) {
                 if (completed) return
                 completed = true
                 handler.removeCallbacksAndMessages(null)
+                scrollListener?.let { webView.viewTreeObserver.removeOnPreDrawListener(it) }
                 webView.stopLoading()
                 webView.webViewClient = WebViewClient()
                 (webView.parent as? ViewGroup)?.removeView(webView)
@@ -40,20 +45,21 @@ class TwitchIntegritySession(private val activity: Activity) {
                 callback(context)
             }
 
-            fun scheduleScrolling() {
-                if (scrollingScheduled || !pageFinished || observed == null) return
-                scrollingScheduled = true
-                // Wait for directory data, then use normal scrolling to request later pages.
-                for (delay in listOf(2000L, 5000L, 9000L, 13000L, 17000L)) {
-                    handler.postDelayed({
-                        if (!completed) {
-                            if (activity.isFinishing || activity.isDestroyed) {
-                                finish(null)
-                            } else {
-                                webView.pageDown(true)
-                            }
+            fun scrollWhenReady() {
+                if (completed || scrollPosted || !pageFinished || observed == null || scrollsRemaining == 0) return
+                val height = webView.contentHeight
+                if (height <= lastScrolledHeight || !webView.canScrollVertically(1)) return
+                scrollPosted = true
+                handler.post {
+                    scrollPosted = false
+                    if (!completed) {
+                        if (activity.isFinishing || activity.isDestroyed) {
+                            finish(null)
+                        } else if (webView.pageDown(true)) {
+                            lastScrolledHeight = height
+                            scrollsRemaining--
                         }
-                    }, delay)
+                    }
                 }
             }
 
@@ -92,7 +98,7 @@ class TwitchIntegritySession(private val activity: Activity) {
                             if (context.containsKey("Client-Integrity")) {
                                 finish(context)
                             } else {
-                                scheduleScrolling()
+                                scrollWhenReady()
                             }
                         }
                     }
@@ -102,7 +108,7 @@ class TwitchIntegritySession(private val activity: Activity) {
                 override fun onPageFinished(view: WebView, url: String) {
                     if (!completed) {
                         pageFinished = true
-                        scheduleScrolling()
+                        scrollWhenReady()
                     }
                 }
 
@@ -129,6 +135,11 @@ class TwitchIntegritySession(private val activity: Activity) {
                     ViewGroup.LayoutParams.MATCH_PARENT,
                 ),
             )
+            // Scroll as directory content is laid out, without fixed waits between pages.
+            scrollListener = ViewTreeObserver.OnPreDrawListener {
+                scrollWhenReady()
+                true
+            }.also { webView.viewTreeObserver.addOnPreDrawListener(it) }
             handler.postDelayed({ finish(observed) }, 20_000)
             webView.loadUrl("https://www.twitch.tv/directory/all")
         }

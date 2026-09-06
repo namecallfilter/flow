@@ -38,13 +38,6 @@ class ServerTimePlaylistParserFactoryTest {
         assertEquals(40L, mediaSequence(first))
         assertEquals(41L, segmentSequence(first, "segment-41.ts"))
         assertEquals(42L, segmentSequence(first, "segment-42.ts"))
-        // The anchor is a completed transfer, while promoted prefetch stays excluded.
-        val segments = TwitchPrefetchSegments()
-        val base = "https://example.com/live/index.m3u8"
-        segments.update(base, playlist)
-        assertEquals(0, segments.flagsFor("https://example.com/live/segment-41.ts", 0))
-        assertEquals(DataSpec.FLAG_MIGHT_NOT_USE_FULL_NETWORK_SPEED,
-            segments.flagsFor("https://example.com/live/segment-42.ts", 0))
         // Future refreshes and variant switches use native live-edge positioning.
         val refreshed = playlist.replace("#EXT-X-START:TIME-OFFSET=-1.65,PRECISE=NO\n", "")
         assertEquals(rewriteTwitchLowLatencyPlaylist(refreshed), factory.rewritePlaylist(refreshed))

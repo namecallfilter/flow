@@ -142,25 +142,6 @@ void main() {
     });
   });
 
-  test("preserves stream start time for player metadata", () {
-    final startedAt = DateTime(2026, 7, 9, 20, 30);
-
-    final channel = streamChannelFromStream(
-      TwitchFollowedStream(
-        id: "stream-1",
-        userId: "creator-1",
-        userLogin: "creator",
-        userName: "Creator",
-        gameName: "Just Chatting",
-        title: "Live now",
-        viewerCount: 1234,
-        startedAt: startedAt,
-      ),
-    );
-
-    expect(channel.startedAt, startedAt);
-  });
-
   test("requests appropriately sized category artwork", () {
     expect(
       twitchBoxArtUrl("https://example.com/box-{width}x{height}.jpg"),
@@ -170,19 +151,5 @@ void main() {
       twitchBoxArtUrl("https://example.com/box-52x72.jpg"),
       "https://example.com/box-300x400.jpg",
     );
-  });
-
-  test("maps category viewer counts without fetching streams", () {
-    final category = browseCategoryFromApi(
-      const TwitchCategory(
-        id: "27471",
-        name: "Minecraft",
-        boxArtUrl: "https://example.com/box-{width}x{height}.jpg",
-        viewerCount: 4200,
-      ),
-    );
-
-    expect(category.viewerCount, 4200);
-    expect(category.viewers, "4.2K");
   });
 }

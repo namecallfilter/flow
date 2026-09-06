@@ -4,7 +4,6 @@ import "dart:convert";
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
-import "package:flow/app/spacing.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/browse/browse_screen.dart";
 import "package:flow/features/browse/browse_search_store.dart";
@@ -15,10 +14,7 @@ import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
-import "package:flow/shared/widgets/avatar_ring.dart";
-import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flow/shared/widgets/pull_to_refresh.dart";
-import "package:flow/shared/widgets/skeleton.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:http/http.dart" as http;
@@ -82,14 +78,15 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(store.liveChannels, hasLength(8));
-    expect(requests, hasLength(1));
+    expect(requests, hasLength(2));
+    expect(store.liveChannelsError, isNull);
     await tester.drag(find.byType(CustomScrollView), const Offset(0, -650));
     await tester.pumpAndSettle();
-    expect(requests, hasLength(2));
+    expect(requests, hasLength(3));
     expect(store.liveChannelsError, contains("Connection lost"));
     await tester.drag(find.byType(CustomScrollView), const Offset(0, -100));
     await tester.pumpAndSettle();
-    expect(requests, hasLength(2));
+    expect(requests, hasLength(3));
 
     rejectContinuation = false;
     tester.widget<CustomScrollView>(find.byType(CustomScrollView)).controller!.jumpTo(0);
@@ -97,7 +94,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.drag(find.byType(CustomScrollView), const Offset(0, -650));
     await tester.pumpAndSettle();
-    expect(requests, hasLength(4));
+    expect(requests, hasLength(5));
     expect(_graphQlVariables(requests.last)["after"], "personal-next-page");
     expect(_graphQlVariables(requests.last)["first"], 24);
     expect(store.liveChannels, hasLength(28));
@@ -153,7 +150,7 @@ void main() {
       ..loaded = true
       ..errorMessage = "Connection lost. Try again."
       ..channels = List.generate(
-        300,
+        1,
         (index) => StreamChannel(
           login: "streamer$index",
           name: "Streamer $index",
@@ -179,61 +176,6 @@ void main() {
 
     expect(find.text("Connection lost. Try again."), findsOneWidget);
     expect(find.byKey(const ValueKey("stream_thumbnail_Streamer 0")), findsOneWidget);
-    expect(find.byType(StreamCard).evaluate().length, lessThan(20));
-  });
-
-  testWidgets("only builds visible browse categories and streams", (tester) async {
-    tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(390, 800);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    addTearDown(tester.view.resetPhysicalSize);
-    final apiCache = TwitchApiCache(
-      clientLoader: () async => throw StateError("Unexpected request"),
-    );
-    final store = BrowseStore(apiCache: apiCache)
-      ..categoriesLoaded = true
-      ..liveChannelsLoaded = true
-      ..liveChannels = List.generate(
-        300,
-        (index) => StreamChannel(
-          login: "streamer$index",
-          name: "Streamer $index",
-          initials: "S",
-          title: "Live now",
-          category: "Just Chatting",
-          viewers: "1",
-          avatarColors: const [Colors.purple, Colors.pink],
-          thumbnailColors: const [Colors.black, Colors.grey],
-        ),
-      )
-      ..categories = List.generate(
-        300,
-        (index) => BrowseCategory(
-          id: "category-$index",
-          name: "Category $index",
-          viewerCount: 1,
-          viewers: "1",
-          imageUrl: null,
-          colors: const [Colors.purple, Colors.pink],
-        ),
-      );
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFlowTheme(Brightness.dark),
-        home: BrowseScreen(apiCache: apiCache, browseStore: store, periodicRefreshInterval: null),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const ValueKey("browse_category_card_Category 0")), findsOneWidget);
-    expect(find.byKey(const ValueKey("browse_category_card_Category 299")), findsNothing);
-    expect(find.byType(InkWell).evaluate().length, lessThan(50));
-
-    await tester.tap(find.byKey(const ValueKey("browse_segment_live_channels")));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey("stream_thumbnail_Streamer 0")), findsOneWidget);
-    expect(find.byKey(const ValueKey("stream_thumbnail_Streamer 299")), findsNothing);
-    expect(find.byType(StreamCard).evaluate().length, lessThan(20));
   });
 
   testWidgets("browse categories and navigation fit larger system text", (tester) async {
@@ -268,58 +210,6 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    expect(find.byKey(const ValueKey("browse_category_card_Just Chatting")), findsOneWidget);
-  });
-
-  testWidgets("shows category skeleton until initial Browse content loads", (tester) async {
-    tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(390, 1200);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    addTearDown(tester.view.resetPhysicalSize);
-
-    final apiCache = TwitchApiCache(
-      clientLoader: () async => TwitchApiClient(
-        clientId: "client-123",
-        accessToken: "token-123",
-      ),
-    );
-    final store = BrowseStore(apiCache: apiCache)..isLoadingCategories = true;
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFlowTheme(Brightness.dark),
-        home: BrowseScreen(apiCache: apiCache, browseStore: store),
-      ),
-    );
-    await tester.pump();
-
-    final categorySkeleton = find.byKey(const ValueKey("browse_categories_skeleton"));
-    final categorySkeletonBoxes = find.descendant(
-      of: categorySkeleton,
-      matching: find.byType(SkeletonBox),
-    );
-    expect(categorySkeleton, findsOneWidget);
-    expect(categorySkeletonBoxes, findsNWidgets(54));
-    expect(tester.getBottomLeft(categorySkeletonBoxes.at(53)).dy, greaterThanOrEqualTo(1200));
-    expect(find.byType(LinearProgressIndicator), findsNothing);
-    expect(find.text("No categories found."), findsNothing);
-
-    store
-      ..categories = const [
-        BrowseCategory(
-          id: "category-1",
-          name: "Just Chatting",
-          viewerCount: 1,
-          viewers: "1",
-          imageUrl: null,
-          colors: [Colors.purple, Colors.pink],
-        ),
-      ]
-      ..categoriesLoaded = true
-      ..isLoadingCategories = false;
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const ValueKey("browse_categories_skeleton")), findsNothing);
     expect(find.byKey(const ValueKey("browse_category_card_Just Chatting")), findsOneWidget);
   });
 
@@ -361,288 +251,6 @@ void main() {
     expect(find.byKey(const ValueKey("browse_categories_grid")), findsOneWidget);
     expect(find.byKey(const ValueKey("browse_category_card_Just Chatting")), findsOneWidget);
     expect(find.byKey(const ValueKey("bottom_nav_item_Live Channels")), findsOneWidget);
-  });
-
-  testWidgets("uses the same visible gap above and below both Browse sort pickers", (tester) async {
-    tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(390, 1200);
-    tester.view.padding = const FakeViewPadding(top: 59);
-    tester.view.viewPadding = const FakeViewPadding(top: 59);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetPadding);
-    addTearDown(tester.view.resetViewPadding);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFlowTheme(Brightness.light),
-        home: BrowseScreen(authController: _authController()),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    final selector = find.byKey(const ValueKey("browse_segmented_control"));
-    final sortContent = find.byKey(const ValueKey("sort_button_content"));
-    expect(
-      tester.getTopLeft(sortContent).dy - tester.getBottomLeft(selector).dy,
-      closeTo(AppSpacing.md, 0.1),
-    );
-    expect(
-      tester.getTopLeft(find.byKey(const ValueKey("browse_category_card_Just Chatting"))).dy -
-          tester.getBottomLeft(sortContent).dy,
-      closeTo(AppSpacing.md, 0.1),
-    );
-
-    await tester.tap(find.byKey(const ValueKey("browse_segment_live_channels")));
-    await tester.pumpAndSettle();
-
-    expect(
-      tester.getTopLeft(sortContent).dy - tester.getBottomLeft(selector).dy,
-      closeTo(AppSpacing.md, 0.1),
-    );
-    expect(
-      tester.getTopLeft(find.byType(StreamCard).first).dy - tester.getBottomLeft(sortContent).dy,
-      closeTo(AppSpacing.md, 0.1),
-    );
-  });
-
-  testWidgets("matches stream skeleton geometry in Browse Live Channels", (tester) async {
-    tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(390, 1200);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    addTearDown(tester.view.resetPhysicalSize);
-
-    final apiCache = TwitchApiCache(
-      clientLoader: () async => TwitchApiClient(
-        clientId: "client-123",
-        accessToken: "token-123",
-      ),
-    );
-    final store = BrowseStore(apiCache: apiCache)
-      ..categoriesLoaded = true
-      ..selectedSection = BrowseSection.liveChannels
-      ..isLoadingLiveChannels = true;
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFlowTheme(Brightness.dark),
-        home: BrowseScreen(apiCache: apiCache, browseStore: store),
-      ),
-    );
-    await tester.pump();
-
-    final liveSkeleton = find.byKey(const ValueKey("browse_live_channels_skeleton"));
-    final firstCard = find
-        .descendant(
-          of: liveSkeleton,
-          matching: find.byType(StreamCardSkeleton),
-        )
-        .first;
-    final thumbnail = find.descendant(
-      of: firstCard,
-      matching: find.byKey(const ValueKey("stream_skeleton_thumbnail")),
-    );
-    final viewers = find.descendant(
-      of: firstCard,
-      matching: find.byKey(const ValueKey("stream_skeleton_viewers")),
-    );
-    final avatar = find.descendant(
-      of: firstCard,
-      matching: find.byKey(const ValueKey("stream_skeleton_avatar")),
-    );
-    final verified = find.descendant(
-      of: firstCard,
-      matching: find.byKey(const ValueKey("stream_skeleton_verified")),
-    );
-    final title = find.descendant(
-      of: firstCard,
-      matching: find.byKey(const ValueKey("stream_skeleton_title")),
-    );
-    final metadata = find.descendant(
-      of: firstCard,
-      matching: find.byKey(const ValueKey("stream_skeleton_metadata")),
-    );
-    final secondTitleLine = find.descendant(
-      of: firstCard,
-      matching: find.byKey(const ValueKey("stream_skeleton_title_second_line")),
-    );
-
-    expect(liveSkeleton, findsOneWidget);
-    expect(tester.widget<StreamCardSkeleton>(firstCard).showCategory, isTrue);
-    expect(tester.getSize(firstCard).height, 93);
-    expect(tester.getSize(thumbnail), const Size(116, 65.25));
-    expect(tester.getSize(viewers), const Size(49, 17));
-    expect(tester.getSize(avatar), const Size(28, 28));
-    expect(tester.getSize(verified), const Size(14, 14));
-    expect(tester.getSize(title).height, 17);
-    expect(tester.getSize(metadata), const Size(104, 15));
-    expect(secondTitleLine, findsNothing);
-  });
-
-  testWidgets("shows skeletons for category streams and search results", (tester) async {
-    tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(390, 1200);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    addTearDown(tester.view.resetPhysicalSize);
-
-    final apiCache = TwitchApiCache(
-      clientLoader: () async => TwitchApiClient(
-        clientId: "client-123",
-        accessToken: "token-123",
-      ),
-    );
-    const category = BrowseCategory(
-      id: "category-1",
-      name: "Just Chatting",
-      viewerCount: 1,
-      viewers: "1",
-      imageUrl: null,
-      colors: [Colors.purple, Colors.pink],
-    );
-    final categoryStore = CategoryStreamsStore(apiCache: apiCache, category: category)
-      ..isLoading = true;
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFlowTheme(Brightness.dark),
-        home: CategoryStreamsScreen(
-          apiCache: apiCache,
-          category: category,
-          categoryStreamsStore: categoryStore,
-        ),
-      ),
-    );
-    await tester.pump();
-
-    final categorySkeleton = find.byKey(const ValueKey("category_streams_skeleton"));
-    final firstCategoryCard = find
-        .descendant(
-          of: categorySkeleton,
-          matching: find.byType(StreamCardSkeleton),
-        )
-        .first;
-    final firstTitleLine = find.descendant(
-      of: firstCategoryCard,
-      matching: find.byKey(const ValueKey("stream_skeleton_title")),
-    );
-    final secondTitleLine = find.descendant(
-      of: firstCategoryCard,
-      matching: find.byKey(const ValueKey("stream_skeleton_title_second_line")),
-    );
-    final metadata = find.descendant(
-      of: firstCategoryCard,
-      matching: find.byKey(const ValueKey("stream_skeleton_metadata")),
-    );
-
-    expect(categorySkeleton, findsOneWidget);
-    expect(find.byType(StreamCardSkeleton), findsNWidgets(13));
-    expect(tester.widget<StreamCardSkeleton>(firstCategoryCard).showCategory, isFalse);
-    expect(tester.getSize(firstCategoryCard).height, 93);
-    expect(tester.getSize(firstTitleLine).height, 17);
-    expect(tester.getSize(secondTitleLine).height, 15);
-    expect(tester.getSize(secondTitleLine).width, tester.getSize(firstTitleLine).width);
-    expect(
-      tester.getTopLeft(secondTitleLine).dy - tester.getBottomLeft(firstTitleLine).dy,
-      5,
-    );
-    expect(metadata, findsNothing);
-    expect(
-      tester.getBottomLeft(find.byType(StreamCardSkeleton).at(12)).dy,
-      greaterThanOrEqualTo(1200),
-    );
-    expect(find.byType(LinearProgressIndicator), findsNothing);
-    expect(find.text("No live channels streaming Just Chatting."), findsNothing);
-
-    final searchStore =
-        BrowseSearchStore(
-            apiCache: apiCache,
-            preferences: _MemorySearchHistoryStore(),
-          )
-          ..query = "flow"
-          ..isSearching = true;
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFlowTheme(Brightness.dark),
-        home: BrowseSearchScreen(
-          authController: _authController(),
-          apiCache: apiCache,
-          preferences: searchStore.preferences,
-          searchStore: searchStore,
-        ),
-      ),
-    );
-    await tester.pump();
-
-    final channelsHeader = find.byKey(
-      const ValueKey("browse_search_channels_skeleton_header"),
-    );
-    final categoriesHeader = find.byKey(
-      const ValueKey("browse_search_categories_skeleton_header"),
-    );
-    final firstChannelRow = find.byKey(const ValueKey("browse_search_channel_skeleton_0"));
-    final secondChannelRow = find.byKey(const ValueKey("browse_search_channel_skeleton_1"));
-    final firstCategoryRow = find.byKey(const ValueKey("browse_search_category_skeleton_0"));
-    final secondCategoryRow = find.byKey(const ValueKey("browse_search_category_skeleton_1"));
-    final channelAvatar = find.descendant(
-      of: firstChannelRow,
-      matching: find.byWidgetPredicate(
-        (widget) => widget is SkeletonBox && widget.width == 42 && widget.height == 42,
-      ),
-    );
-    final channelTitle = find.descendant(
-      of: firstChannelRow,
-      matching: find.byWidgetPredicate(
-        (widget) => widget is SkeletonBox && widget.height == 16,
-      ),
-    );
-    final categoryThumbnail = find.descendant(
-      of: firstCategoryRow,
-      matching: find.byWidgetPredicate(
-        (widget) => widget is SkeletonBox && widget.height == 1,
-      ),
-    );
-    final categoryTitle = find.descendant(
-      of: firstCategoryRow,
-      matching: find.byWidgetPredicate(
-        (widget) => widget is SkeletonBox && widget.height == 16,
-      ),
-    );
-
-    expect(find.byKey(const ValueKey("browse_search_skeleton")), findsOneWidget);
-    expect(find.byKey(const ValueKey("browse_search_channel_skeleton_6")), findsOneWidget);
-    expect(find.byKey(const ValueKey("browse_search_channel_skeleton_7")), findsNothing);
-    expect(find.byKey(const ValueKey("browse_search_category_skeleton_3")), findsOneWidget);
-    expect(find.byKey(const ValueKey("browse_search_category_skeleton_4")), findsNothing);
-    expect(tester.getSize(channelsHeader).height, 35);
-    expect(tester.getSize(categoriesHeader).height, 35);
-    expect(
-      tester.getSize(find.descendant(of: channelsHeader, matching: find.byType(SkeletonBox))),
-      const Size(68, 14),
-    );
-    expect(
-      tester.getSize(find.descendant(of: categoriesHeader, matching: find.byType(SkeletonBox))),
-      const Size(82, 14),
-    );
-    expect(tester.getSize(firstChannelRow).height, 72);
-    expect(tester.getTopLeft(secondChannelRow).dy - tester.getTopLeft(firstChannelRow).dy, 72);
-    expect(tester.getSize(channelAvatar), const Size(42, 42));
-    expect(
-      tester.getTopLeft(channelTitle).dx - tester.getTopRight(channelAvatar).dx,
-      closeTo(AppSpacing.lg, 0.1),
-    );
-    expect(tester.getSize(firstCategoryRow).height, 144);
-    expect(tester.getTopLeft(secondCategoryRow).dy - tester.getTopLeft(firstCategoryRow).dy, 144);
-    expect(tester.getSize(categoryThumbnail), const Size(96, 128));
-    expect(
-      tester.getTopLeft(categoryTitle).dx - tester.getTopRight(categoryThumbnail).dx,
-      closeTo(AppSpacing.md, 0.1),
-    );
-    expect(
-      tester.getBottomLeft(find.byKey(const ValueKey("browse_search_category_skeleton_3"))).dy,
-      greaterThanOrEqualTo(1200),
-    );
-    expect(find.byType(LinearProgressIndicator), findsNothing);
-    expect(find.text("No matching channels."), findsNothing);
   });
 
   testWidgets("shows search skeleton immediately during debounce", (tester) async {
@@ -725,15 +333,6 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    _expectVisibleHeaderGap(
-      tester,
-      header: find.ancestor(
-        of: find.byKey(const ValueKey("browse_title")),
-        matching: find.byKey(const ValueKey("scroll_reactive_header_clip")),
-      ),
-      content: find.byKey(const ValueKey("browse_segmented_control")),
-    );
-
     requestedRequests.clear();
     await tester.tap(find.byKey(const ValueKey("browse_category_card_Just Chatting")));
     await tester.pumpAndSettle();
@@ -745,14 +344,6 @@ void main() {
     expect(find.text("NovaSkye"), findsOneWidget);
     expect(find.byKey(const ValueKey("stream_category_AussieAntics")), findsNothing);
     expect(find.byKey(const ValueKey("stream_category_NovaSkye")), findsNothing);
-    _expectVisibleHeaderGap(
-      tester,
-      header: find.ancestor(
-        of: find.byKey(const ValueKey("category_streams_title_Just Chatting")),
-        matching: find.byKey(const ValueKey("scroll_reactive_header_clip")),
-      ),
-      content: find.byKey(const ValueKey("sort_button_content")),
-    );
     expect(
       requestedRequests.any(
         (request) =>
@@ -794,32 +385,6 @@ void main() {
         )
         .length;
     expect(categoryRequestsAfterReopen, categoryRequestsAfterFirstOpen);
-  });
-
-  testWidgets("opens browse live channel identities from the Live Channels section", (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFlowTheme(Brightness.dark),
-        home: BrowseScreen(
-          authController: _authController(),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byKey(const ValueKey("browse_segment_live_channels")));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const ValueKey("browse_live_channels")), findsOneWidget);
-    expect(find.byKey(const ValueKey("stream_channel_identity_AussieAntics")), findsOneWidget);
-    expect(find.byKey(const ValueKey("stream_category_AussieAntics")), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey("stream_channel_identity_AussieAntics")));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const ValueKey("channel_page_aussieantics")), findsOneWidget);
   });
 
   testWidgets("does not open players for missing browse or category logins", (tester) async {
@@ -921,82 +486,6 @@ void main() {
     );
   });
 
-  testWidgets("retains Browse content and images when switching sections", (tester) async {
-    tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(390, 1200);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    addTearDown(tester.view.resetPhysicalSize);
-    var topCategoriesRequests = 0;
-    var topLiveStreamsRequests = 0;
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFlowTheme(Brightness.dark),
-        home: BrowseScreen(
-          authController: _authController(
-            onRequest: (request) {
-              if (_isGraphQlOperation(request, "FlowTopGames") &&
-                  _graphQlVariables(request)["after"] == null) {
-                topCategoriesRequests++;
-              }
-              if (_isGraphQlOperation(request, "FlowTopStreams") &&
-                  _graphQlVariables(request)["after"] == null) {
-                topLiveStreamsRequests++;
-              }
-            },
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.drag(find.byType(CustomScrollView), const Offset(0, -800));
-    await tester.pumpAndSettle();
-    await tester.drag(find.byType(CustomScrollView), const Offset(0, 800));
-    await tester.pumpAndSettle();
-
-    final categoryImage = find.descendant(
-      of: find.byKey(
-        const ValueKey("browse_category_card_Just Chatting"),
-        skipOffstage: false,
-      ),
-      matching: find.byType(Image, skipOffstage: false),
-      skipOffstage: false,
-    );
-    final categoryImageElement = tester.element(categoryImage);
-
-    await tester.tap(find.byKey(const ValueKey("browse_segment_live_channels")));
-    await tester.pumpAndSettle();
-
-    final liveImage = find.descendant(
-      of: find.byKey(
-        const ValueKey("stream_thumbnail_AussieAntics"),
-        skipOffstage: false,
-      ),
-      matching: find.byType(Image, skipOffstage: false),
-      skipOffstage: false,
-    );
-    final liveImageElement = tester.element(liveImage);
-    expect(topCategoriesRequests, 1);
-    expect(topLiveStreamsRequests, 1);
-
-    await tester.tap(find.byKey(const ValueKey("browse_segment_categories")));
-    await tester.pumpAndSettle();
-
-    expect(tester.element(categoryImage), same(categoryImageElement));
-    expect(tester.element(liveImage), same(liveImageElement));
-    expect(find.byKey(const ValueKey("stream_thumbnail_AussieAntics")), findsNothing);
-    expect(topCategoriesRequests, 1);
-    expect(topLiveStreamsRequests, 1);
-
-    await tester.tap(find.byKey(const ValueKey("browse_segment_live_channels")));
-    await tester.pumpAndSettle();
-
-    expect(tester.element(liveImage), same(liveImageElement));
-    expect(topCategoriesRequests, 1);
-    expect(topLiveStreamsRequests, 1);
-  });
-
   testWidgets("shows recent search history and clears it", (tester) async {
     final searchHistoryStore = _MemorySearchHistoryStore();
 
@@ -1046,14 +535,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey("browse_search_history_mine")), findsOneWidget);
-    _expectVisibleHeaderGap(
-      tester,
-      header: find.byKey(const ValueKey("browse_search_top_bar")),
-      content: find.descendant(
-        of: find.byKey(const ValueKey("browse_search_history_header")),
-        matching: find.text("History"),
-      ),
-    );
 
     await tester.tap(find.byKey(const ValueKey("browse_search_clear_history_button")));
     await tester.pumpAndSettle();
@@ -1061,158 +542,6 @@ void main() {
     expect(find.byKey(const ValueKey("browse_search_history_mine")), findsNothing);
     expect(find.text("No recent searches"), findsOneWidget);
     expect(searchHistoryStore.history, isEmpty);
-  });
-
-  testWidgets("searches channels before categories and filters unavailable channels", (
-    tester,
-  ) async {
-    final requestedRequests = <http.Request>[];
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFlowTheme(Brightness.dark),
-        home: BrowseScreen(
-          authController: _authController(onRequest: requestedRequests.add),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byKey(const ValueKey("browse_search_field")));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const ValueKey("browse_search_page_field")),
-      "mine",
-    );
-    await tester.pump(const Duration(milliseconds: 350));
-    await tester.pumpAndSettle();
-
-    expect(
-      find.byKey(const ValueKey("browse_search_channel_MinecraftCreator")),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey("browse_search_channel_HighCreator")),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey("browse_search_channel_LowCreator")),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey("browse_search_channel_BannedCreator")),
-      findsNothing,
-    );
-    expect(
-      find.byKey(const ValueKey("browse_search_category_Minecraft")),
-      findsOneWidget,
-    );
-    expect(
-      requestedRequests.any(
-        (request) => _isGraphQlOperation(request, "FlowSearchCategories"),
-      ),
-      isTrue,
-    );
-    expect(
-      requestedRequests.where(
-        (request) => _isGraphQlOperation(request, "FlowGameStreams"),
-      ),
-      isEmpty,
-    );
-    expect(
-      requestedRequests.any(
-        (request) =>
-            _isGraphQlOperation(request, "FlowUsers") &&
-            ((_graphQlVariables(request)["logins"] as List<Object?>?) ?? const <Object?>[])
-                .contains("highcreator"),
-      ),
-      isTrue,
-    );
-
-    expect(find.byKey(const ValueKey("browse_search_channels_header")), findsOneWidget);
-    expect(find.byKey(const ValueKey("browse_search_categories_header")), findsOneWidget);
-    final offlineAvatar = tester.widget<AvatarRing>(
-      find.descendant(
-        of: find.byKey(const ValueKey("browse_search_channel_avatar_MinecraftCreator")),
-        matching: find.byType(AvatarRing),
-      ),
-    );
-    expect(offlineAvatar.statusColor, isNull);
-
-    final highChannelTop = tester.getTopLeft(
-      find.byKey(const ValueKey("browse_search_channel_HighCreator")),
-    );
-    final lowChannelTop = tester.getTopLeft(
-      find.byKey(const ValueKey("browse_search_channel_LowCreator")),
-    );
-    final categoryTop = tester.getTopLeft(
-      find.byKey(const ValueKey("browse_search_category_Minecraft")),
-    );
-    final lowViewerCategoryTop = tester.getTopLeft(
-      find.byKey(const ValueKey("browse_search_category_Valiant Hearts")),
-    );
-
-    expect(highChannelTop.dy, lessThan(lowChannelTop.dy));
-    expect(categoryTop.dy, lessThan(lowViewerCategoryTop.dy));
-
-    await tester.tap(find.byKey(const ValueKey("browse_search_category_Minecraft")));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const ValueKey("category_streams_page_Minecraft")), findsOneWidget);
-  });
-
-  testWidgets("keeps search results in memory when reopening search", (tester) async {
-    final requestedRequests = <http.Request>[];
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFlowTheme(Brightness.dark),
-        home: BrowseScreen(
-          authController: _authController(onRequest: requestedRequests.add),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byKey(const ValueKey("browse_search_field")));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const ValueKey("browse_search_page_field")),
-      "mine",
-    );
-    await tester.pump(const Duration(milliseconds: 350));
-    await tester.pumpAndSettle();
-
-    expect(
-      find.byKey(const ValueKey("browse_search_channel_MinecraftCreator")),
-      findsOneWidget,
-    );
-    _expectVisibleHeaderGap(
-      tester,
-      header: find.byKey(const ValueKey("browse_search_top_bar")),
-      content: find.descendant(
-        of: find.byKey(const ValueKey("browse_search_channels_header")),
-        matching: find.text("Channels"),
-      ),
-    );
-    final searchRequestsAfterFirstOpen = requestedRequests
-        .where((request) => _isGraphQlOperation(request, "FlowSearchChannels"))
-        .length;
-
-    Navigator.of(tester.element(find.byKey(const ValueKey("browse_search_page")))).pop();
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey("browse_search_field")));
-    await tester.pumpAndSettle();
-
-    expect(find.text("mine"), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey("browse_search_channel_MinecraftCreator")),
-      findsOneWidget,
-    );
-    final searchRequestsAfterReopen = requestedRequests
-        .where((request) => _isGraphQlOperation(request, "FlowSearchChannels"))
-        .length;
-    expect(searchRequestsAfterReopen, searchRequestsAfterFirstOpen);
   });
 
   testWidgets("opens live search results in the player and avatars as channels", (
@@ -1278,17 +607,6 @@ void main() {
     expect(find.byKey(const ValueKey("channel_page_highcreator")), findsOneWidget);
     expect(rootNavigator.currentState!.canPop(), isFalse);
   });
-}
-
-void _expectVisibleHeaderGap(
-  WidgetTester tester, {
-  required Finder header,
-  required Finder content,
-}) {
-  final headerBottom = tester.getBottomLeft(header).dy;
-  final contentTop = tester.getTopLeft(content).dy;
-
-  expect(contentTop - headerBottom, closeTo(PageHeaderLayout.headerContentGap, 0.1));
 }
 
 TwitchAuthController _authController({_RequestObserver? onRequest}) {

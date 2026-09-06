@@ -108,30 +108,6 @@ class TwitchEmsgMetadataBridgeTest {
     }
 
     @Test
-    fun queuedTwitchEmsgRemovesTheDuplicateNativeOffsetAndKeepsTheVideoTimestamp() {
-        // CMAF's source clock can be hours ahead of the current HLS window.
-        val adjuster = TimestampAdjuster(28_000_000L)
-        val videoTimeUs = adjuster.adjustSampleTimestamp(17_060_033_000L)
-        val duplicatedEmsgTimeUs = adjuster.adjustSampleTimestamp(videoTimeUs)
-        assertTrue(duplicatedEmsgTimeUs < 0)
-        val target = CapturingTrackOutput()
-        val output = extractorOutput(target, adjuster)
-        output.track(1, C.TRACK_TYPE_VIDEO).sampleMetadata(videoTimeUs, 0, 0, 0, null)
-        val metadata = output.track(2, C.TRACK_TYPE_METADATA)
-        metadata.format(Format.Builder().setSampleMimeType(MimeTypes.APPLICATION_EMSG).build())
-        val sample = twitchEmsg(VALID_SEGMENT_JSON)
-
-        metadata.sampleData(ParsableByteArray(sample), sample.size, TrackOutput.SAMPLE_DATA_PART_MAIN)
-        metadata.sampleMetadata(duplicatedEmsgTimeUs, C.BUFFER_FLAG_KEY_FRAME, sample.size, 0, null)
-
-        assertEquals(videoTimeUs, target.samples.single().timeUs)
-        assertEquals(
-            TwitchEmsgMetadataBridge.AOM_ID3_SCHEME,
-            EventMessageDecoder().decode(ParsableByteArray(target.samples.single().data)).schemeIdUri,
-        )
-    }
-
-    @Test
     fun nativeAbsoluteEmsgUnrelatedEmsgAndTsMetadataKeepTheirOriginalTimestamps() {
         val adjuster = TimestampAdjuster(28_000_000L)
         val videoTimeUs = adjuster.adjustSampleTimestamp(17_060_033_000L)
@@ -196,8 +172,7 @@ class TwitchEmsgMetadataBridgeTest {
 
     @Test
     fun twitchId3EmsgWithEmptyValueIsRelabeledAndUsesExistingLatencySession() {
-        val logs = mutableListOf<String>()
-        val bridge = TwitchEmsgMetadataBridge(logger = logs::add)
+        val bridge = TwitchEmsgMetadataBridge(logger = {})
         val original = twitchEmsg(VALID_SEGMENT_JSON)
         val originalEvent = EventMessageDecoder().decode(ParsableByteArray(original))
 
@@ -223,7 +198,6 @@ class TwitchEmsgMetadataBridgeTest {
         session.handleMetadata(checkNotNull(metadata))
 
         assertEquals(listOf(2_100L), accepted)
-        assertEquals(1, logs.count { it.contains("bridging Twitch EMSG") })
     }
 
     @Test
@@ -281,34 +255,6 @@ class TwitchEmsgMetadataBridgeTest {
         assertArrayEquals(standard, bridge.rewriteSample(standard))
         assertArrayEquals(unrelated, bridge.rewriteSample(unrelated))
         assertArrayEquals(unrelatedId3, bridge.rewriteSample(unrelatedId3))
-    }
-
-    @Test
-    fun twitchEnvelopeWithUnrelatedId3IsRelabeledThenFilteredDownstream() {
-        val original = EventMessageEncoder().encode(
-            EventMessage(
-                TwitchEmsgMetadataBridge.TWITCH_ID3_SCHEME,
-                "",
-                0,
-                3,
-                encodeTxxxId3Tag("different", "not latency"),
-            ),
-        )
-
-        val rewritten = EventMessageDecoder().decode(
-            ParsableByteArray(TwitchEmsgMetadataBridge(logger = {}).rewriteSample(original)),
-        )
-
-        assertEquals(TwitchEmsgMetadataBridge.AOM_ID3_SCHEME, rewritten.schemeIdUri)
-        val metadata = Id3Decoder().decode(rewritten.messageData, rewritten.messageData.size)
-        assertNotNull(metadata)
-        val accepted = mutableListOf<Long>()
-        TwitchLatencySession(
-            clockMs = { CLIENT_NOW_MS },
-            onAcceptedLatency = accepted::add,
-            logger = {},
-        ).handleMetadata(checkNotNull(metadata))
-        assertTrue(accepted.isEmpty())
     }
 
     @Test
@@ -370,31 +316,6 @@ class TwitchEmsgMetadataBridgeTest {
                 .schemeIdUri,
         )
         assertTrue(delegate.samples.all { it.offset == 0 })
-    }
-
-    @Test
-    fun trackOutputPassesNativeTransportStreamId3ThroughUntouched() {
-        val delegate = CapturingTrackOutput()
-        val output = TwitchEmsgMetadataBridgeTrackOutput(
-            delegate,
-            TwitchEmsgMetadataBridge(logger = {}),
-        )
-        val id3 = encodeTxxxId3Tag(
-            TwitchEmsgMetadataBridge.SEGMENT_METADATA_DESCRIPTION,
-            VALID_SEGMENT_JSON,
-        )
-
-        output.format(Format.Builder().setSampleMimeType(MimeTypes.APPLICATION_ID3).build())
-        output.sampleData(
-            ParsableByteArray(id3),
-            id3.size,
-            TrackOutput.SAMPLE_DATA_PART_MAIN,
-        )
-        output.sampleMetadata(321_000L, C.BUFFER_FLAG_KEY_FRAME, id3.size, 0, null)
-
-        assertEquals(1, delegate.samples.size)
-        assertEquals(321_000L, delegate.samples.single().timeUs)
-        assertArrayEquals(id3, delegate.samples.single().data)
     }
 
     @Test

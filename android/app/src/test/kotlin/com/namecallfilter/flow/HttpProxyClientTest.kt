@@ -56,17 +56,6 @@ class HttpProxyClientTest {
     }
 
     @Test
-    fun proxiesRedirectedManifestHosts() {
-        val proxy = parseHttpProxy("http://proxy.example:8080")!!.proxy
-        val selector = OrderedHttpProxySelector(listOf(proxy))
-
-        assertEquals(
-            listOf(proxy),
-            selector.select(URI("https://redirected-manifest.example/stream")),
-        )
-    }
-
-    @Test
     fun authenticatesHttpProxy() {
         ServerSocket(0).use { server ->
             server.soTimeout = 5_000

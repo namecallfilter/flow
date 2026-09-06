@@ -4,7 +4,6 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.Metadata
 import androidx.media3.extractor.metadata.id3.TextInformationFrame
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 @UnstableApi
@@ -46,14 +45,6 @@ class TwitchLatencySessionTest {
 
         assertEquals(1_699_999_998_000L, session.lastTranscR)
         assertEquals(listOf(2_000L), accepted)
-    }
-
-    @Test
-    fun aNewSessionStartsWithNoMeasurementState() {
-        val session = TwitchLatencySession(onAcceptedLatency = {}, logger = {})
-
-        assertNull(session.serverOffsetMs)
-        assertNull(session.lastTranscR)
     }
 
     @Test

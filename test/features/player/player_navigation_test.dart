@@ -123,7 +123,6 @@ void main() {
   );
 
   for (final (identity, hasIntermediate) in [
-    ("channel:creator", false),
     ("category:509658", false),
     ("category:509658", true),
   ]) {

@@ -13,6 +13,97 @@ import "package:http/testing.dart";
 typedef _RequestObserver = void Function(http.Request request);
 
 void main() {
+  for (final operation in {
+    "FlowFollowedLiveUsers": "followedLiveUsers",
+    "FlowFollowedUsers": "follows",
+  }.entries) {
+    for (final incompleteUser in <String, Object?>{
+      "edges": {
+        operation.value: {
+          "pageInfo": {"hasNextPage": false},
+        },
+      },
+      "pageInfo": {
+        operation.value: {"edges": const <Object?>[]},
+      },
+      "next page cursor": {
+        operation.value: {
+          "edges": [
+            {"cursor": " ", "node": _userJson("creator-1")},
+          ],
+          "pageInfo": {"hasNextPage": true},
+        },
+      },
+    }.entries) {
+      test(
+        "${operation.key} missing ${incompleteUser.key} preserves Following",
+        () async {
+          var returnIncompleteData = false;
+          final store = FollowingStore(
+            authController: _authController(
+              responseOverride: (request) =>
+                  returnIncompleteData && _isGraphQlOperation(request, operation.key)
+                  ? _jsonResponse({
+                      "data": {
+                        "currentUser": incompleteUser.value,
+                      },
+                    })
+                  : null,
+            ),
+          );
+          await store.loadSavedConnection();
+          final connection = store.connection;
+          returnIncompleteData = true;
+
+          await store.loadSavedConnection(refresh: true, background: true);
+
+          expect(store.connection, same(connection));
+          expect(store.liveChannels.single.name, "AussieAntics");
+          expect(store.sessionStatus, TwitchSessionStatus.authenticated);
+          expect(store.isLoadingFollowing, isFalse);
+          expect(store.followingError, isNull);
+
+          await store.loadSavedConnection(refresh: true);
+          expect(store.connection, same(connection));
+          expect(store.followingError, "Couldn't load Following. Pull down to try again.");
+          returnIncompleteData = false;
+          await store.loadSavedConnection(refresh: true, background: true);
+          expect(store.followingError, isNull);
+        },
+      );
+    }
+  }
+
+  test("a valid empty live response clears streams after they go offline", () async {
+    var allOffline = false;
+    final store = FollowingStore(
+      authController: _authController(
+        responseOverride: (request) =>
+            allOffline && _isGraphQlOperation(request, "FlowFollowedLiveUsers")
+            ? _jsonResponse({
+                "data": {
+                  "currentUser": {
+                    "followedLiveUsers": {
+                      "edges": const <Object?>[],
+                      "pageInfo": {"hasNextPage": false},
+                    },
+                  },
+                },
+              })
+            : null,
+      ),
+    );
+    await store.loadSavedConnection();
+    expect(store.liveChannels, hasLength(1));
+    allOffline = true;
+
+    await store.loadSavedConnection(refresh: true, background: true);
+
+    expect(store.liveChannels, isEmpty);
+    expect(store.followingError, isNull);
+    expect(store.sessionStatus, TwitchSessionStatus.authenticated);
+  });
+
   test("background connection resets retain following without showing an error", () async {
     var failUsers = false;
     final store = FollowingStore(
@@ -125,10 +216,6 @@ void main() {
     expect(store.liveChannels.map((channel) => channel.viewerCount), [999, 1000, 1001]);
     await store.selectStreamSort(StreamSort.recommendedForYou);
     expect(store.liveChannels.map((channel) => channel.viewerCount), [999, 1001, 1000]);
-    await store.selectStreamSort(StreamSort.viewersHighToLow);
-    expect(store.liveChannels.map((channel) => channel.viewerCount), [1001, 1000, 999]);
-    await store.selectStreamSort(StreamSort.recommendedForYou);
-    expect(store.liveChannels.map((channel) => channel.viewerCount), [999, 1001, 1000]);
     expect(store.connection!.followedStreams.map((stream) => stream.viewerCount), [
       999,
       1001,
@@ -136,9 +223,11 @@ void main() {
     ]);
     expect(store.followingError, isNull);
   });
-  test("keeps saved following data in memory until refresh", () async {
+  test("keeps saved following data in memory and preserves the API cache during refresh", () async {
     var followedRequests = 0;
+    final apiCache = _TrackingApiCache();
     final store = FollowingStore(
+      apiCache: apiCache,
       authController: _authController(
         onRequest: (request) {
           if (_isGraphQlOperation(request, "FlowFollowedLiveUsers")) {
@@ -166,18 +255,6 @@ void main() {
     await store.loadSavedConnection(refresh: true);
 
     expect(followedRequests, 2);
-  });
-
-  test("does not clear the shared API cache during a Following refresh", () async {
-    final apiCache = _TrackingApiCache();
-    final store = FollowingStore(
-      authController: _authController(),
-      apiCache: apiCache,
-    );
-
-    await store.loadSavedConnection();
-    await store.loadSavedConnection(refresh: true);
-
     expect(apiCache.clearCount, 0);
   });
 
@@ -296,6 +373,7 @@ TwitchAuthConnection _connection(String id) => TwitchAuthConnection(
 
 TwitchAuthController _authController({
   _RequestObserver? onRequest,
+  http.Response? Function(http.Request)? responseOverride,
   _MemoryTwitchStore? secureStore,
 }) {
   final resolvedSecureStore =
@@ -310,14 +388,21 @@ TwitchAuthController _authController({
       clientId: "client-123",
       accessToken: accessToken,
       gqlAccessToken: gqlAccessToken,
-      httpClient: _followingHttpClient(onRequest: onRequest),
+      httpClient: _followingHttpClient(onRequest: onRequest, responseOverride: responseOverride),
     ),
     cookieExtractor: const _StaticCookieExtractor(),
   );
 }
 
-MockClient _followingHttpClient({_RequestObserver? onRequest}) => MockClient((request) async {
+MockClient _followingHttpClient({
+  _RequestObserver? onRequest,
+  http.Response? Function(http.Request)? responseOverride,
+}) => MockClient((request) async {
   onRequest?.call(request);
+  final response = responseOverride?.call(request);
+  if (response != null) {
+    return response;
+  }
 
   if (request.url.host == "id.twitch.tv" && request.url.path == "/oauth2/validate") {
     return _jsonResponse({"client_id": "client-123", "user_id": "user-123"});

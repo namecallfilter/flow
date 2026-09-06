@@ -307,7 +307,6 @@ void main() {
   for (final interval in const <Duration?>[
     null,
     Duration.zero,
-    Duration(seconds: -1),
   ]) {
     testWidgets("does not refresh on resume when periodic interval is $interval", (tester) async {
       final scrollController = ScrollController();

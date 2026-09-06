@@ -256,6 +256,7 @@ class TwitchApiClient {
   static String? _webSessionDeviceId;
   static int _webSessionRevision = 0;
   static ({String authorization, String token, Map<String, String> headers})? _integrityGrant;
+  static ({String authorization, int revision, Future<bool> future})? _integrityRefresh;
   static final _recommendationRequestId = _requestId();
 
   static void restoreWebSessionDeviceId(String? deviceId) {
@@ -274,13 +275,10 @@ class TwitchApiClient {
   final http.Client _httpClient;
   final Future<Map<String, String>?> Function(String authorization) _integrityContextLoader;
 
-  late final graphql.GraphQLClient _graphQlClient = _graphQlClientWithHeaders(
-    _graphQlHeaders(includeToken: false),
+  late final graphql.GraphQLClient _graphQlClient = _graphQlClientWithHeaders(includeToken: false);
+  late final graphql.GraphQLClient _tokenGraphQlClient = _graphQlClientWithHeaders(
+    includeToken: true,
   );
-
-  graphql.GraphQLClient? _tokenClient;
-  graphql.GraphQLClient get _tokenGraphQlClient =>
-      _tokenClient ??= _graphQlClientWithHeaders(_graphQlHeaders(includeToken: true));
 
   Future<bool> validateAccessToken(String token) async {
     final uri = Uri.https("id.twitch.tv", "/oauth2/validate");
@@ -311,6 +309,7 @@ class TwitchApiClient {
         ),
       ),
       "FlowCurrentUser",
+      retryIntegrityChallenge: true,
     );
     final user = _mapValue(data.toJson()["currentUser"]);
     if (user == null) {
@@ -341,6 +340,7 @@ class TwitchApiClient {
       );
       final currentUser = _mapValue(data.toJson()["currentUser"]);
       final connection = _mapValue(currentUser?["followedLiveUsers"]);
+      _requireFollowingConnection(connection, "FlowFollowedLiveUsers");
 
       for (final edge in _edgeList(connection)) {
         final node = _mapValue(edge["node"]);
@@ -376,9 +376,11 @@ class TwitchApiClient {
           ),
         ),
         "FlowFollowedUsers",
+        retryIntegrityChallenge: true,
       );
       final currentUser = _mapValue(data.toJson()["currentUser"]);
       final connection = _mapValue(currentUser?["follows"]);
+      _requireFollowingConnection(connection, "FlowFollowedUsers");
 
       for (final edge in _edgeList(connection)) {
         final node = _mapValue(edge["node"]);
@@ -751,6 +753,7 @@ class TwitchApiClient {
         ),
       ),
       "FlowChannelSubscription",
+      retryIntegrityChallenge: true,
     );
     final user = _mapValue(data.toJson()["user"]);
     final self = _mapValue(user?["self"]);
@@ -852,6 +855,7 @@ class TwitchApiClient {
     bool retryIntegrityChallenge = false,
   }) async {
     final revision = _webSessionRevision;
+    final attemptedGrant = _integrityGrant;
     var result = await request();
     if (retryIntegrityChallenge &&
         revision == _webSessionRevision &&
@@ -859,9 +863,15 @@ class TwitchApiClient {
         result.exception?.graphqlErrors.any(
               (error) => error.message.toLowerCase().contains("failed integrity check"),
             ) ==
-            true &&
-        await _refreshIntegrityGrant()) {
-      result = await request();
+            true) {
+      final currentGrant = _integrityGrant;
+      final alreadyRefreshed =
+          currentGrant != null &&
+          currentGrant != attemptedGrant &&
+          currentGrant.authorization == _oauthAuthorizationHeader(gqlAccessToken!);
+      if ((alreadyRefreshed || await _refreshIntegrityGrant()) && revision == _webSessionRevision) {
+        result = await request();
+      }
     }
     final exception = result.exception;
     if (exception != null) {
@@ -881,10 +891,25 @@ class TwitchApiClient {
   }
 
   Future<bool> _refreshIntegrityGrant() async {
-    _integrityGrant = null;
-    _tokenClient = null;
     final revision = _webSessionRevision;
     final authorization = _oauthAuthorizationHeader(gqlAccessToken!);
+    final pending = _integrityRefresh;
+    if (pending != null && pending.revision == revision && pending.authorization == authorization) {
+      return pending.future;
+    }
+    final future = _loadIntegrityGrant(authorization, revision);
+    _integrityRefresh = (authorization: authorization, revision: revision, future: future);
+    try {
+      return await future;
+    } finally {
+      if (identical(_integrityRefresh?.future, future)) {
+        _integrityRefresh = null;
+      }
+    }
+  }
+
+  Future<bool> _loadIntegrityGrant(String authorization, int revision) async {
+    _integrityGrant = null;
     try {
       final observed = await _integrityContextLoader(authorization);
       const contextKeys = ["Client-Id", "X-Device-ID", "Client-Session-Id", "Client-Version"];
@@ -908,7 +933,6 @@ class TwitchApiClient {
           token: issuedToken,
           headers: sessionHeaders,
         );
-        _tokenClient = null;
         return true;
       }
       return false;
@@ -917,16 +941,17 @@ class TwitchApiClient {
     }
   }
 
-  graphql.GraphQLClient _graphQlClientWithHeaders(
-    Map<String, String> headers,
-  ) => graphql.GraphQLClient(
-    cache: graphql.GraphQLCache(store: graphql.InMemoryStore()),
-    link: graphql.HttpLink(
-      _gqlEndpoint,
-      defaultHeaders: headers,
-      httpClient: _httpClient,
-    ),
-  );
+  graphql.GraphQLClient _graphQlClientWithHeaders({required bool includeToken}) =>
+      graphql.GraphQLClient(
+        cache: graphql.GraphQLCache(store: graphql.InMemoryStore()),
+        link: graphql.Link.function(
+          (request, [forward]) => forward!(
+            request.updateContextEntry<graphql.HttpLinkHeaders>(
+              (_) => graphql.HttpLinkHeaders(headers: _graphQlHeaders(includeToken: includeToken)),
+            ),
+          ),
+        ).concat(graphql.HttpLink(_gqlEndpoint, httpClient: _httpClient)),
+      );
 
   graphql.GraphQLClient get _authenticatedGraphQlClient {
     if (_nonEmptyValue(gqlAccessToken) == null) {
@@ -963,6 +988,7 @@ class TwitchApiClient {
     Future<Query$FlowPlaybackAccessToken> query(graphql.GraphQLClient client) => _query(
       () => client.query$FlowPlaybackAccessToken(options),
       "FlowPlaybackAccessToken",
+      retryIntegrityChallenge: identical(client, _tokenGraphQlClient),
     );
 
     if (_nonEmptyValue(gqlAccessToken) == null) {
@@ -1034,6 +1060,18 @@ class TwitchApiClient {
   static List<Map<String, Object?>> _edgeList(
     Map<String, Object?>? connection,
   ) => _mapList(connection?["edges"]);
+
+  static void _requireFollowingConnection(Map<String, Object?>? connection, String operationName) {
+    final hasNextPage = _mapValue(connection?["pageInfo"])?["hasNextPage"];
+    if (connection?["edges"] is! List<Object?> ||
+        hasNextPage is! bool ||
+        (hasNextPage && _connectionCursor(connection) == null)) {
+      throw TwitchApiException(
+        "Twitch GraphQL $operationName returned incomplete Following data.",
+        isTransient: true,
+      );
+    }
+  }
 
   static String? _connectionCursor(Map<String, Object?>? connection, {int overlap = 0}) {
     final pageInfo = _mapValue(connection?["pageInfo"]);

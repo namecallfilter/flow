@@ -62,16 +62,16 @@ class MainActivity : FlutterActivity() {
             result.success(false)
         }
     }
+}
 
-    private fun extractTwitchCookie(name: String): String? {
-        val cookieManager = CookieManager.getInstance()
-        val cookies = cookieManager.getCookie("https://twitch.tv")
-            ?: cookieManager.getCookie("https://www.twitch.tv")
-
-        return cookies
+internal fun extractTwitchCookie(
+    name: String,
+    cookieForUrl: (String) -> String? = CookieManager.getInstance()::getCookie,
+): String? = sequenceOf("https://twitch.tv", "https://www.twitch.tv")
+    .firstNotNullOfOrNull { url ->
+        cookieForUrl(url)
             ?.split(";")
             ?.map { it.trim() }
             ?.firstOrNull { it.startsWith("$name=") }
             ?.substringAfter("$name=")
     }
-}

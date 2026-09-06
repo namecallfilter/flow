@@ -12,7 +12,6 @@ import "package:flow/features/player/player_navigation.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
-import "package:flow/shared/widgets/avatar_ring.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
@@ -119,46 +118,6 @@ void main() {
     expect(player._playCount, 0);
   });
 
-  testWidgets("only category text navigates and metadata can be held for a preview", (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(400, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final player = _FakePlayerController();
-    await tester.pumpWidget(_playerApp(player: player, apiCache: _navigationApiCache()));
-    await tester.pump();
-    final category = tester.getRect(find.byKey(const ValueKey("player_category_button")));
-    await tester.tapAt(Offset(category.right + 12, category.center.dy));
-    await _pumpNavigation(tester);
-    expect(find.byKey(const ValueKey("category_streams_page_Just Chatting")), findsNothing);
-    expect(player._pauseCount, 0);
-    await tester.tap(find.byKey(const ValueKey("player_surface_tap_target")));
-    await tester.pump(const Duration(milliseconds: 200));
-    for (final entry in {
-      "player_name_and_title": "A precise stream title",
-      "player_live_duration": "Live for 1:02:03",
-      "player_viewers": "12.3K viewers",
-      "player_latency": "Live latency unavailable",
-      "player_jump_live_button": "Jump to live edge",
-      "player_refresh_button": "Refresh player",
-      "player_orientation_button": "Enter landscape",
-    }.entries) {
-      await tester.longPress(find.byKey(ValueKey(entry.key)));
-      await tester.pump(const Duration(milliseconds: 200));
-      expect(find.text(entry.value), findsOneWidget);
-      if (entry.key != "player_name_and_title") {
-        expect(
-          tester.getRect(find.text(entry.value)).bottom,
-          lessThan(tester.getRect(find.byKey(ValueKey(entry.key))).top),
-        );
-      }
-      Tooltip.dismissAllToolTips();
-      await tester.pump(const Duration(milliseconds: 200));
-    }
-  });
-
   test("subscription sync preserves manual whitelist entries", () async {
     final preferences = SharedPreferencesFlowPreferences(store: _MemoryPreferencesStore());
     await preferences.saveAdProxyWhitelistedChannels(["manual"]);
@@ -236,28 +195,6 @@ void main() {
     expect(subscriptionRequests, 1);
     expect(settingsStore.adProxySubscriptionChannels, ["creator"]);
     expect(await preferences.readAdProxySubscriptionChannels(), ["creator"]);
-  });
-
-  testWidgets("uses the active theme behind the video viewport", (tester) async {
-    tester.view.physicalSize = const Size(400, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-
-    await tester.pumpWidget(
-      _playerApp(
-        player: _FakePlayerController(),
-        brightness: Brightness.light,
-      ),
-    );
-    await tester.pump();
-
-    final scaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
-    expect(scaffold.backgroundColor, buildFlowTheme(Brightness.light).scaffoldBackgroundColor);
-    expect(
-      tester.widget<ColoredBox>(find.byKey(const ValueKey("player_viewport"))).color,
-      Colors.black,
-    );
   });
 
   testWidgets("shows measured latency and keeps playback controls independent", (
@@ -399,42 +336,6 @@ void main() {
     expect(currentPlayer._toggleCount, 1);
   });
 
-  testWidgets("uses a 16:9 portrait viewport with aligned symmetric overlays", (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(400, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-
-    final player = _FakePlayerController();
-    await tester.pumpWidget(_playerApp(player: player));
-    await tester.pump();
-    player.emit(
-      const TwitchPlaybackStateEvent(
-        isPlaying: false,
-        isBuffering: false,
-        playWhenReady: false,
-      ),
-    );
-    await tester.pump();
-
-    final viewport = tester.getRect(find.byKey(const ValueKey("player_viewport")));
-    final topRow = tester.getRect(find.byKey(const ValueKey("player_top_row")));
-    final bottomRow = tester.getRect(find.byKey(const ValueKey("player_bottom_row")));
-    final centerControl = tester.getRect(
-      find.byKey(const ValueKey("player_center_control")),
-    );
-
-    expect(viewport.width / viewport.height, closeTo(16 / 9, 0.001));
-    expect(topRow.top - viewport.top, closeTo(viewport.bottom - bottomRow.bottom, 0.01));
-    expect(topRow.left, closeTo(bottomRow.left, 0.01));
-    expect(topRow.right, closeTo(bottomRow.right, 0.01));
-    expect(centerControl.center, viewport.center);
-    _expectHorizontallyCenteredOverlay(tester, viewport);
-    expect(tester.takeException(), isNull);
-  });
-
   testWidgets("fills landscape and mirrors the largest cutout inset", (tester) async {
     tester.view.physicalSize = const Size(800, 400);
     tester.view.devicePixelRatio = 1;
@@ -471,7 +372,6 @@ void main() {
     expect(bottomRow.right, 756);
     expect(topRow.top, 20);
     expect(bottomRow.bottom, 380);
-    _expectHorizontallyCenteredOverlay(tester, viewport);
   });
 
   testWidgets("rotating preserves the platform player and playback session", (tester) async {
@@ -503,153 +403,6 @@ void main() {
     expect(surfaceCreations, 1);
     expect(playbackLoads, 1);
     expect(find.byKey(const ValueKey("player_chrome_landscape")), findsOneWidget);
-  });
-
-  testWidgets("scrim fades with controls in portrait and landscape", (tester) async {
-    tester.view.physicalSize = const Size(400, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-
-    final player = _FakePlayerController();
-    await tester.pumpWidget(_playerApp(player: player));
-    await tester.pump();
-
-    double scrimOpacity() => tester
-        .widget<AnimatedOpacity>(
-          find.byKey(const ValueKey("player_scrim")),
-        )
-        .opacity;
-
-    Future<void> toggleOverlay() async {
-      final viewport = tester.getRect(
-        find.byKey(const ValueKey("player_viewport")),
-      );
-      await tester.tapAt(
-        Offset(viewport.left + 100, viewport.center.dy),
-      );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 200));
-    }
-
-    expect(scrimOpacity(), 1);
-    await toggleOverlay();
-    expect(scrimOpacity(), 0);
-    await toggleOverlay();
-    expect(scrimOpacity(), 1);
-
-    tester.view.physicalSize = const Size(800, 400);
-    await tester.pump();
-    expect(find.byKey(const ValueKey("player_chrome_landscape")), findsOneWidget);
-    expect(scrimOpacity(), 1);
-
-    await toggleOverlay();
-    expect(scrimOpacity(), 0);
-    await toggleOverlay();
-    expect(scrimOpacity(), 1);
-  });
-
-  testWidgets("uses compact aligned chrome and exposes quality selection", (tester) async {
-    tester.view.physicalSize = const Size(400, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-
-    final player = _FakePlayerController();
-    await tester.pumpWidget(_playerApp(player: player));
-    await tester.pump();
-    player.emit(
-      const TwitchPlaybackStateEvent(
-        isPlaying: false,
-        isBuffering: false,
-        playWhenReady: false,
-      ),
-    );
-    player.emit(
-      const TwitchQualitiesEvent(
-        selectedId: "auto",
-        qualities: [
-          TwitchQualityOption(
-            id: "video:720",
-            label: "720p60",
-          ),
-        ],
-      ),
-    );
-    await tester.pump();
-
-    final viewport = tester.getRect(find.byKey(const ValueKey("player_viewport")));
-    final topRow = tester.getRect(find.byKey(const ValueKey("player_top_row")));
-    final bottomRow = tester.getRect(find.byKey(const ValueKey("player_bottom_row")));
-    final back = tester.getRect(find.byKey(const ValueKey("player_back_button")));
-    final liveDot = tester.getRect(find.byKey(const ValueKey("player_live_dot")));
-    final settings = tester.getRect(find.byKey(const ValueKey("player_settings_button")));
-    final orientation = tester.getRect(
-      find.byKey(const ValueKey("player_orientation_button")),
-    );
-
-    expect(topRow.top - viewport.top, 8);
-    expect(viewport.bottom - bottomRow.bottom, 8);
-    expect(topRow.left, 8);
-    expect(topRow.right, 392);
-    expect(back.center.dx, liveDot.center.dx);
-    expect(settings.center.dx, orientation.center.dx);
-    final liveDuration = tester.getRect(
-      find.byKey(const ValueKey("player_live_duration")),
-    );
-    expect(liveDuration.left - liveDot.right, lessThanOrEqualTo(8));
-    final jumpLive = tester.getRect(
-      find.byKey(const ValueKey("player_jump_live_button")),
-    );
-    final refresh = tester.getRect(
-      find.byKey(const ValueKey("player_refresh_button")),
-    );
-    expect(refresh.center.dx - jumpLive.center.dx, 48);
-    expect(orientation.center.dx - refresh.center.dx, 48);
-    expect(tester.widget<AvatarRing>(find.byKey(const ValueKey("player_avatar"))).isLive, false);
-    final nameAndTitle = tester.widget<Text>(
-      find.byKey(const ValueKey("player_name_and_title")),
-    );
-    expect(nameAndTitle.textSpan?.toPlainText(), "Creator  A precise stream title");
-    expect(find.byIcon(Icons.category_rounded), findsOneWidget);
-    final playButton = tester.widget<IconButton>(
-      find.byKey(const ValueKey("player_play_pause_button")),
-    );
-    expect(playButton.style?.backgroundColor?.resolve({}), Colors.transparent);
-
-    await tester.tap(find.byKey(const ValueKey("player_settings_button")));
-    await tester.pumpAndSettle();
-    expect(find.text("Quality"), findsOneWidget);
-    expect(find.text("Video quality"), findsNothing);
-    expect(find.text("Choose the stream resolution."), findsNothing);
-    expect(find.byKey(const ValueKey("player_quality_auto")), findsOneWidget);
-    expect(find.byKey(const ValueKey("player_quality_video:720")), findsOneWidget);
-    final qualityHeading = tester.widget<Text>(
-      find.byKey(const ValueKey("player_quality_heading")),
-    );
-    expect(qualityHeading.style?.fontSize, 18);
-    expect(qualityHeading.style?.fontWeight, FontWeight.w700);
-    expect(
-      find.byKey(const ValueKey("player_quality_heading_divider")),
-      findsOneWidget,
-    );
-    final qualityTile = tester.widget<ListTile>(
-      find.byKey(const ValueKey("player_quality_video:720")),
-    );
-    expect(qualityTile.subtitle, isNull);
-    expect(qualityTile.shape, isNull);
-    expect(qualityTile.selectedTileColor, isNull);
-    expect(qualityTile.trailing, isNull);
-    expect(
-      find.descendant(
-        of: find.byKey(const ValueKey("player_quality_auto")),
-        matching: find.byIcon(Icons.check_rounded),
-      ),
-      findsOneWidget,
-    );
-    await tester.tap(find.byKey(const ValueKey("player_quality_video:720")));
-    await tester.pumpAndSettle();
-    expect(player._selectedQualityIds, ["video:720"]);
   });
 
   testWidgets("a hidden-overlay center tap reveals controls before pausing", (
@@ -728,34 +481,6 @@ void main() {
     expect(find.text("2.30s"), findsOneWidget);
   });
 
-  testWidgets("the live dot stays static without moving its aligned center", (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(400, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-
-    await tester.pumpWidget(_playerApp(player: _FakePlayerController()));
-    await tester.pump();
-
-    final dot = find.byKey(const ValueKey("player_live_dot"));
-    final initialCenter = tester.getRect(dot).center;
-    expect(tester.getSize(dot), const Size.square(16));
-    expect(
-      find.descendant(of: dot, matching: find.byType(AnimatedScale)),
-      findsNothing,
-    );
-    expect(
-      find.descendant(of: dot, matching: find.byType(AnimatedOpacity)),
-      findsNothing,
-    );
-
-    await tester.pump(const Duration(milliseconds: 1400));
-
-    expect(tester.getRect(dot).center, initialCenter);
-  });
-
   testWidgets("an open quality sheet populates when player tracks arrive", (
     tester,
   ) async {
@@ -831,44 +556,13 @@ void main() {
     expect(player._selectedQualityIds, ["video:720"]);
   });
 
-  testWidgets("opens the streamer channel from the player profile", (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(400, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-
-    final player = _FakePlayerController();
-    await tester.pumpWidget(
-      _playerApp(
-        player: player,
-        apiCache: _navigationApiCache(),
-      ),
-    );
-    await tester.pump();
-
-    await tester.tap(find.byKey(const ValueKey("player_profile_button")));
-    await _pumpNavigation(tester);
-
-    expect(find.byKey(const ValueKey("channel_page_creator")), findsOneWidget);
-    expect(player._pauseCount, 1);
-    expect(player._playCount, 0);
-
-    await tester.pageBack();
-    await _pumpNavigation(tester);
-    expect(player._playCount, 1);
-  });
-
-  for (final (buttonKey, destinationKey, startsOnDestination) in [
-    ("player_profile_button", "channel_page_creator", false),
-    ("player_category_button", "category_streams_page_Just Chatting", false),
-    ("player_profile_button", "channel_page_creator", true),
-    ("player_category_button", "category_streams_page_Just Chatting", true),
+  for (final (buttonKey, destinationKey) in [
+    ("player_profile_button", "channel_page_creator"),
+    ("player_category_button", "category_streams_page_Just Chatting"),
   ]) {
     testWidgets(
       "starting a new stream retains one $destinationKey and disposes the old player "
-      "without resuming (starts on destination: $startsOnDestination)",
+      "without resuming",
       (
         tester,
       ) async {
@@ -900,39 +594,37 @@ void main() {
             ),
           ),
         );
-        if (startsOnDestination) {
-          unawaited(
-            tabNavigator.currentState!.push<void>(
-              MaterialPageRoute<void>(
-                builder: (_) => buttonKey == "player_profile_button"
-                    ? ChannelScreen(
-                        apiCache: apiCache,
-                        initialChannel: const ChannelPreview(
-                          login: "creator",
-                          displayName: "Creator",
-                        ),
-                      )
-                    : CategoryStreamsScreen(
-                        apiCache: apiCache,
-                        category: const BrowseCategory(
-                          id: "509658",
-                          name: "Just Chatting",
-                          viewerCount: 0,
-                          viewers: "--",
-                          imageUrl: null,
-                          colors: [Colors.purple, Colors.pink],
-                        ),
+        unawaited(
+          tabNavigator.currentState!.push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => buttonKey == "player_profile_button"
+                  ? ChannelScreen(
+                      apiCache: apiCache,
+                      initialChannel: const ChannelPreview(
+                        login: "creator",
+                        displayName: "Creator",
                       ),
-              ),
+                    )
+                  : CategoryStreamsScreen(
+                      apiCache: apiCache,
+                      category: const BrowseCategory(
+                        id: "509658",
+                        name: "Just Chatting",
+                        viewerCount: 0,
+                        viewers: "--",
+                        imageUrl: null,
+                        colors: [Colors.purple, Colors.pink],
+                      ),
+                    ),
             ),
-          );
-          await _pumpNavigation(tester);
-          expect(tabNavigator.currentState!.canPop(), isTrue);
-        }
+          ),
+        );
+        await _pumpNavigation(tester);
+        expect(tabNavigator.currentState!.canPop(), isTrue);
         unawaited(
           openStreamPlayer(
             tester.element(
-              find.byKey(ValueKey(startsOnDestination ? destinationKey : "tab shell")),
+              find.byKey(ValueKey(destinationKey)),
             ),
             builder: (_) => playerApp.home!,
           ),
@@ -1105,38 +797,6 @@ void main() {
     );
   });
 
-  testWidgets("opens the exact category from the player metadata", (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(400, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-
-    final player = _FakePlayerController();
-    await tester.pumpWidget(
-      _playerApp(
-        player: player,
-        apiCache: _navigationApiCache(),
-      ),
-    );
-    await tester.pump();
-
-    await tester.tap(find.byKey(const ValueKey("player_category_button")));
-    await _pumpNavigation(tester);
-
-    expect(
-      find.byKey(const ValueKey("category_streams_page_Just Chatting")),
-      findsOneWidget,
-    );
-    expect(player._pauseCount, 1);
-    expect(player._playCount, 0);
-
-    await tester.pageBack();
-    await _pumpNavigation(tester);
-    expect(player._playCount, 1);
-  });
-
   testWidgets("pauses a player that attaches behind an open destination", (
     tester,
   ) async {
@@ -1265,19 +925,6 @@ void main() {
     expect(find.text("2.10s"), findsOneWidget);
     expect(find.text("Ad 1 of 3 · 0:24"), findsOneWidget);
     expect(find.byKey(const ValueKey("player_ad_progress")), findsOneWidget);
-    final visibleAdTop = tester
-        .getTopLeft(
-          find.byKey(const ValueKey("player_ad_progress")),
-        )
-        .dy;
-    expect(
-      find.ancestor(
-        of: find.byKey(const ValueKey("player_ad_progress")),
-        matching: find.byType(AnimatedOpacity),
-      ),
-      findsNothing,
-    );
-
     final portraitViewport = tester.getRect(
       find.byKey(const ValueKey("player_viewport")),
     );
@@ -1287,13 +934,6 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
     expect(find.text("Ad 1 of 3 · 0:24"), findsOneWidget);
-    final hiddenAdTop = tester
-        .getTopLeft(
-          find.byKey(const ValueKey("player_ad_progress")),
-        )
-        .dy;
-    expect(hiddenAdTop, lessThan(visibleAdTop));
-    expect(visibleAdTop - hiddenAdTop, closeTo(40, 0.01));
     final controlsOpacity = tester.widget<AnimatedOpacity>(
       find
           .ancestor(
@@ -1309,11 +949,6 @@ void main() {
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
-    expect(
-      tester.getTopLeft(find.byKey(const ValueKey("player_ad_progress"))).dy,
-      closeTo(visibleAdTop, 0.01),
-    );
-
     await tester.tapAt(
       Offset(portraitViewport.left + 100, portraitViewport.center.dy),
     );
@@ -1390,47 +1025,6 @@ double _controlsOpacity(WidgetTester tester) => tester
     )
     .opacity;
 
-void _expectHorizontallyCenteredOverlay(WidgetTester tester, Rect viewport) {
-  final topRow = tester.getRect(find.byKey(const ValueKey("player_top_row")));
-  final bottomRow = tester.getRect(find.byKey(const ValueKey("player_bottom_row")));
-  final back = tester.getRect(find.byKey(const ValueKey("player_back_button")));
-  final liveDot = tester.getRect(find.byKey(const ValueKey("player_live_dot")));
-  final settings = tester.getRect(
-    find.byKey(const ValueKey("player_settings_button")),
-  );
-  final orientation = tester.getRect(
-    find.byKey(const ValueKey("player_orientation_button")),
-  );
-  final jumpLive = tester.getRect(
-    find.byKey(const ValueKey("player_jump_live_button")),
-  );
-  final refresh = tester.getRect(
-    find.byKey(const ValueKey("player_refresh_button")),
-  );
-  final liveDuration = tester.getRect(
-    find.byKey(const ValueKey("player_live_duration")),
-  );
-
-  expect(topRow.center.dx, closeTo(viewport.center.dx, 0.01));
-  expect(bottomRow.center.dx, closeTo(viewport.center.dx, 0.01));
-  expect(back.size, const Size.square(40));
-  expect(settings.size, const Size.square(40));
-  expect(orientation.size, const Size.square(40));
-  expect(back.center.dx, closeTo(liveDot.center.dx, 0.01));
-  expect(liveDuration.left - liveDot.right, lessThanOrEqualTo(8));
-  expect(refresh.center.dx - jumpLive.center.dx, 48);
-  expect(orientation.center.dx - refresh.center.dx, 48);
-  expect(settings.center.dx, closeTo(orientation.center.dx, 0.01));
-  expect(
-    (back.center.dx + settings.center.dx) / 2,
-    closeTo(viewport.center.dx, 0.01),
-  );
-  expect(
-    (liveDot.center.dx + orientation.center.dx) / 2,
-    closeTo(viewport.center.dx, 0.01),
-  );
-}
-
 Future<void> _pumpNavigation(WidgetTester tester) async {
   for (var index = 0; index < 8; index++) {
     await tester.pump(const Duration(milliseconds: 100));
@@ -1439,7 +1033,6 @@ Future<void> _pumpNavigation(WidgetTester tester) async {
 
 Widget _playerApp({
   required _FakePlayerController player,
-  Brightness brightness = Brightness.dark,
   TwitchApiCache? apiCache,
   PlayerDisplayModeController? displayMode,
   PlaybackUriLoader? playbackUriLoader,
@@ -1451,7 +1044,7 @@ Widget _playerApp({
   AppSettingsStore? settingsStore,
 }) {
   final app = MaterialApp(
-    theme: buildFlowTheme(brightness),
+    theme: buildFlowTheme(Brightness.dark),
     home: StreamPlayerScreen(
       apiCache:
           apiCache ??

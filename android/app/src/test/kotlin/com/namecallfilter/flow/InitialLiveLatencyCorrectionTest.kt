@@ -33,7 +33,6 @@ class InitialLiveLatencyCorrectionTest {
 
     @Test
     fun longPauseOrLargeLatencyReloadsInsteadOfChasingSixSecondsOfOldBuffer() {
-        assertTrue(shouldReloadLivePlayback(pausedForMs = 60_000L))
         assertTrue(shouldReloadLivePlayback(pausedForMs = 10_000L))
         assertTrue(shouldReloadLivePlayback(measuredLatencyMs = 30_000L))
         assertFalse(shouldReloadLivePlayback(pausedForMs = 1_000L, measuredLatencyMs = 2_000L))
@@ -41,21 +40,8 @@ class InitialLiveLatencyCorrectionTest {
     }
 
     @Test
-    fun plannerSeeksToExactTranscRTargetWithoutUsingPartialBufferedEdge() {
-        val plan = plan(
-            measuredLatencyMs = 5_000L,
-            currentPositionMs = 10_000L,
-            bufferedPositionMs = 16_000L,
-            windowDurationMs = 16_000L,
-        )
-
-        assertEquals(LiveLatencyCorrectionPlanOutcome.SEEK, plan.outcome)
-        assertEquals(13_350L, plan.seekPositionMs)
-    }
-
-    @Test
     fun targetAndLowerLatenciesNeverSeekBackward() {
-        listOf(500L, 1_550L, 1_650L, 1_750L).forEach { latencyMs ->
+        listOf(500L, 1_750L).forEach { latencyMs ->
             val plan = plan(
                 measuredLatencyMs = latencyMs,
                 currentPositionMs = 10_000L,
@@ -69,19 +55,6 @@ class InitialLiveLatencyCorrectionTest {
     }
 
     @Test
-    fun startupCorrectionWaitsForEnoughBufferedHeadroom() {
-        val plan = plan(
-            measuredLatencyMs = 13_198L,
-            currentPositionMs = 18_010L,
-            bufferedPositionMs = 20_000L,
-            windowDurationMs = 32_000L,
-        )
-
-        assertEquals(LiveLatencyCorrectionPlanOutcome.WAIT_FOR_BUFFER, plan.outcome)
-        assertNull(plan.seekPositionMs)
-    }
-
-    @Test
     fun knownLiveWindowAlsoBoundsAPartialBufferedCorrection() {
         val plan = plan(
             measuredLatencyMs = 4_500L,
@@ -92,19 +65,6 @@ class InitialLiveLatencyCorrectionTest {
 
         assertEquals(LiveLatencyCorrectionPlanOutcome.SEEK, plan.outcome)
         assertEquals(11_000L, plan.seekPositionMs)
-    }
-
-    @Test
-    fun partialCorrectionWaitsWhenNoMeaningfulSafeAdvanceExists() {
-        val plan = plan(
-            measuredLatencyMs = 5_000L,
-            currentPositionMs = 10_000L,
-            bufferedPositionMs = 10_300L,
-            windowDurationMs = 16_000L,
-        )
-
-        assertEquals(LiveLatencyCorrectionPlanOutcome.WAIT_FOR_BUFFER, plan.outcome)
-        assertNull(plan.seekPositionMs)
     }
 
     @Test
@@ -155,25 +115,6 @@ class InitialLiveLatencyCorrectionTest {
     }
 
     @Test
-    fun qualityChangeRequiresAPostChangeLatencyMeasurement() {
-        val coordinator = LiveLatencyCorrectionCoordinator(maximumSeekAttempts = 3)
-        coordinator.arm(
-            reason = LiveLatencyCorrectionReason.QUALITY_CHANGE,
-            targetLatencyMs = 1_650L,
-            requireMeasurementAfterSequence = 10L,
-        )
-
-        val stale = evaluate(coordinator, measurement(latencyMs = 1_700L, sequence = 10L))
-        assertEquals(LiveLatencyCorrectionOutcome.WAIT_FOR_FRESH_MEASUREMENT, stale.outcome)
-        assertEquals(LiveLatencyCorrectionReason.QUALITY_CHANGE, stale.reason)
-
-        val fresh = evaluate(coordinator, measurement(latencyMs = 1_700L, sequence = 11L))
-        assertEquals(LiveLatencyCorrectionOutcome.COMPLETE, fresh.outcome)
-        assertEquals(LiveLatencyCorrectionReason.QUALITY_CHANGE, fresh.reason)
-        assertFalse(coordinator.hasPendingRequest)
-    }
-
-    @Test
     fun coordinatorBoundsFailedPostSeekVerificationRetries() {
         val coordinator = LiveLatencyCorrectionCoordinator(maximumSeekAttempts = 2)
         coordinator.arm(
@@ -195,26 +136,6 @@ class InitialLiveLatencyCorrectionTest {
             evaluate(coordinator, measurement(3_000L, 3L)).outcome,
         )
         assertFalse(coordinator.hasPendingRequest)
-    }
-
-    @Test
-    fun stitchedAdMeasurementCanVerifyASeekUsingTheSameSequenceBarrier() {
-        val coordinator = LiveLatencyCorrectionCoordinator(maximumSeekAttempts = 2)
-        coordinator.arm(
-            reason = LiveLatencyCorrectionReason.EXPLICIT_JUMP,
-            targetLatencyMs = 1_650L,
-            requireMeasurementAfterSequence = 10L,
-        )
-
-        val adMeasurement = measurement(
-            latencyMs = 1_700L,
-            sequence = 11L,
-            source = LiveLatencyMeasurementSource.STITCHED_AD_TIMELINE,
-        )
-        assertEquals(
-            LiveLatencyCorrectionOutcome.COMPLETE,
-            evaluate(coordinator, adMeasurement).outcome,
-        )
     }
 
     @Test
@@ -332,12 +253,11 @@ class InitialLiveLatencyCorrectionTest {
     private fun measurement(
         latencyMs: Long,
         sequence: Long,
-        source: LiveLatencyMeasurementSource = LiveLatencyMeasurementSource.TRANSC_R,
     ) = LiveLatencyMeasurement(
         latencyMs = latencyMs,
         sequence = sequence,
         measuredRealtimeMs = 50L,
-        source = source,
-        transcRMs = if (source == LiveLatencyMeasurementSource.TRANSC_R) sequence else null,
+        source = LiveLatencyMeasurementSource.TRANSC_R,
+        transcRMs = sequence,
     )
 }

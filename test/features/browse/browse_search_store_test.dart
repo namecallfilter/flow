@@ -5,7 +5,6 @@ import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/features/browse/browse_search_store.dart";
 import "package:flow/shared/preferences/preferences.dart";
-import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:http/http.dart" as http;
 import "package:http/testing.dart";
@@ -49,9 +48,6 @@ void main() {
                 },
               });
             }
-            if (query.contains("FlowTopStreams") || query.contains("FlowGameStreams")) {
-              return _topStreamsResponse(const <Map<String, Object?>>[]);
-            }
           }
 
           return http.Response("not found", 404);
@@ -60,7 +56,7 @@ void main() {
     );
     final store = BrowseSearchStore(
       apiCache: cache,
-      preferences: _MemoryFlowPreferences(),
+      preferences: MemoryFlowPreferences(),
     );
 
     final slowFuture = store.search("slow");
@@ -88,7 +84,7 @@ void main() {
 
   test("invalidates an in-flight search before the next debounce starts", () async {
     final slowSearch = Completer<http.Response>();
-    final preferences = _MemoryFlowPreferences();
+    final preferences = MemoryFlowPreferences();
     var followupRequests = 0;
     final cache = TwitchApiCache(
       clientLoader: () async => TwitchApiClient(
@@ -97,27 +93,10 @@ void main() {
         httpClient: MockClient((request) async {
           if (request.url.host == "gql.twitch.tv") {
             final query = _graphQlQuery(request);
-            final variables = _graphQlVariables(request);
             if (query.contains("FlowSearchChannels")) {
               return slowSearch.future;
             }
             followupRequests++;
-            if (query.contains("FlowSearchCategories")) {
-              return _searchCategoriesResponse(const <Map<String, Object?>>[]);
-            }
-            if (query.contains("FlowUsers")) {
-              final ids = (variables["ids"] as List<Object?>?)?.cast<String>() ?? const <String>[];
-              return _jsonResponse({
-                "data": {
-                  "users": [
-                    for (final id in ids) _userJson(id),
-                  ],
-                },
-              });
-            }
-            if (query.contains("FlowTopStreams") || query.contains("FlowGameStreams")) {
-              return _topStreamsResponse(const <Map<String, Object?>>[]);
-            }
           }
 
           return http.Response("not found", 404);
@@ -162,7 +141,7 @@ void main() {
 
     expect(store.channels.single.displayName, "CachedCreator");
     expect(store.errorMessage, isNull);
-    expect(preferences.searchHistory, isEmpty);
+    expect(await preferences.readBrowseSearchHistory(), isEmpty);
     expect(followupRequests, 0);
   });
 }
@@ -223,74 +202,8 @@ http.Response _searchCategoriesResponse(
   },
 });
 
-http.Response _topStreamsResponse(
-  List<Map<String, Object?>> streams,
-) => _jsonResponse({
-  "data": {
-    "streams": {
-      "edges": [
-        for (final stream in streams) {"cursor": null, "node": stream},
-      ],
-      "pageInfo": {"hasNextPage": false},
-    },
-  },
-});
-
 http.Response _jsonResponse(Map<String, Object?> body) => http.Response(
   jsonEncode(body),
   200,
   headers: {"content-type": "application/json"},
 );
-
-class _MemoryFlowPreferences extends MemoryFlowPreferences {
-  @override
-  Future<bool> readAdProxyEnabled() async => false;
-
-  @override
-  Future<List<String>> readAdProxyUrls() async => const [];
-
-  @override
-  Future<List<String>> readAdProxyWhitelistedChannels() async => const [];
-
-  @override
-  Future<List<String>> readAdProxySubscriptionChannels() async => const [];
-
-  @override
-  Future<void> saveAdProxyEnabled({required bool enabled}) async {}
-
-  @override
-  Future<void> saveAdProxyUrls(List<String> urls) async {}
-
-  @override
-  Future<void> saveAdProxyWhitelistedChannels(List<String> channels) async {}
-
-  @override
-  Future<void> saveAdProxySubscriptionChannels(List<String> channels) async {}
-
-  List<String> searchHistory = const <String>[];
-
-  @override
-  Future<void> clearBrowseSearchHistory() async {
-    searchHistory = const <String>[];
-  }
-
-  @override
-  Future<List<String>> readBrowseSearchHistory() async => searchHistory;
-
-  @override
-  Future<bool> readLoginOfferDismissed() async => false;
-
-  @override
-  Future<ThemeMode> readThemeMode() async => ThemeMode.system;
-
-  @override
-  Future<void> saveBrowseSearchHistory(List<String> history) async {
-    searchHistory = List<String>.of(history);
-  }
-
-  @override
-  Future<void> saveLoginOfferDismissed({required bool dismissed}) async {}
-
-  @override
-  Future<void> saveThemeMode(ThemeMode mode) async {}
-}

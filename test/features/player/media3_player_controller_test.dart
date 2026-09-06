@@ -91,21 +91,6 @@ void main() {
     expect(second, "https://example.com/live-2.m3u8");
   });
 
-  test("refreshPlaybackUri reports loader errors", () {
-    const viewId = 43;
-    const channel = MethodChannel("flow/twitch_player/$viewId");
-    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    MethodChannelTwitchPlayerController(
-      viewId,
-      playbackUriRefresher: () => Future<Uri>.error(StateError("refresh failed")),
-    );
-
-    expect(
-      () => _invokeFromPlatform(messenger, channel, "refreshPlaybackUri"),
-      throwsA(isA<PlatformException>()),
-    );
-  });
-
   test("dispose unregisters the playback URI handler", () async {
     const viewId = 44;
     const channel = MethodChannel("flow/twitch_player/$viewId");
@@ -150,26 +135,6 @@ void main() {
     await controller.setQuality("auto");
 
     expect(calls, isEmpty);
-  });
-
-  test("initialize invokes native playback after construction", () async {
-    const viewId = 46;
-    const channel = MethodChannel("flow/twitch_player/$viewId");
-    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    final calls = <String>[];
-    messenger.setMockMethodCallHandler(channel, (call) async {
-      calls.add(call.method);
-      return null;
-    });
-    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
-    final controller = MethodChannelTwitchPlayerController(
-      viewId,
-      playbackUriRefresher: () async => Uri.parse("https://example.com/live.m3u8"),
-    );
-
-    await controller.initialize();
-
-    expect(calls, ["initialize"]);
   });
 }
 

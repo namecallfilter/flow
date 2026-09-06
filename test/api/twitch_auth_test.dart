@@ -115,18 +115,6 @@ void main() {
     expect(store.webSessionToken, "saved-cookie");
   });
 
-  test("signs out by clearing saved credentials", () async {
-    final store = _MemoryTwitchStore()
-      ..accessToken = "token-123"
-      ..webSessionToken = "cookie-token-123";
-    final controller = _authController(secureStore: store);
-
-    await controller.signOut();
-
-    expect(store.accessToken, isNull);
-    expect(store.webSessionToken, isNull);
-  });
-
   test("a stale restore does not clear a newer OAuth state", () async {
     final store = _MemoryTwitchStore()
       ..accessToken = "expired-token"
@@ -194,8 +182,10 @@ void main() {
     expect(store.webSessionToken, isNull);
   });
 
-  test("sign-out wins over an in-flight login", () async {
-    final store = _MemoryTwitchStore();
+  test("sign-out clears saved credentials and wins over an in-flight login", () async {
+    final store = _MemoryTwitchStore()
+      ..accessToken = "saved-token"
+      ..webSessionToken = "saved-cookie";
     final validationStarted = Completer<void>();
     final validationResponse = Completer<http.Response>();
     final controller = _authController(

@@ -250,6 +250,7 @@ abstract class BrowseStoreBase with Store {
     required bool preserveTail,
   }) async {
     final revision = _categoriesRevision;
+    final prefetchNextPage = !categoriesLoaded && categorySort == CategorySort.recommendedForYou;
     isLoadingCategories = true;
     categoriesError = null;
     final preservedCursor = categoriesCursor;
@@ -288,6 +289,9 @@ abstract class BrowseStoreBase with Store {
       }
       categoriesCursor = hasPreservedTail ? preservedCursor : page.cursor;
       categoriesLoaded = true;
+      if (prefetchNextPage && page.cursor != null) {
+        apiCache.fetchTopCategoriesPage(sort: categorySort, cursor: page.cursor).ignore();
+      }
     } on Object catch (error) {
       if (revision == _categoriesRevision) {
         categoriesError = browseErrorMessage(error);
@@ -366,6 +370,7 @@ abstract class BrowseStoreBase with Store {
     required bool preserveTail,
   }) async {
     final revision = _liveChannelsRevision;
+    final prefetchNextPage = !liveChannelsLoaded && streamSort == StreamSort.recommendedForYou;
     isLoadingLiveChannels = true;
     liveChannelsError = null;
     final preservedCursor = liveChannelsCursor;
@@ -418,6 +423,9 @@ abstract class BrowseStoreBase with Store {
       liveChannels = sortedStreamChannels(liveChannels, streamSort);
       liveChannelsCursor = hasPreservedTail ? preservedCursor : page.cursor;
       liveChannelsLoaded = true;
+      if (prefetchNextPage && page.cursor != null) {
+        apiCache.fetchLiveStreamsPage(sort: streamSort, cursor: page.cursor).ignore();
+      }
     } on Object catch (error) {
       if (revision == _liveChannelsRevision) {
         liveChannelsError = browseErrorMessage(error);

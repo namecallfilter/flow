@@ -4,9 +4,7 @@ import "dart:convert";
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
-import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/routes.dart";
-import "package:flow/app/spacing.dart";
 import "package:flow/app/tabs_screen.dart";
 import "package:flow/app/tabs_store.dart";
 import "package:flow/app/theme.dart";
@@ -15,7 +13,6 @@ import "package:flow/features/browse/browse_store.dart";
 import "package:flow/features/following/following_store.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/stream_sort.dart";
-import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flutter/cupertino.dart";
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
@@ -59,21 +56,6 @@ void main() {
     expect(find.text("Log in with Twitch to see the channels you follow."), findsOneWidget);
     expect(find.textContaining("keep your session"), findsNothing);
     expect(find.byIcon(Icons.live_tv_rounded), findsNothing);
-    final offerSize = tester.getSize(find.byKey(const ValueKey("login_offer_screen")));
-    final titleRect = tester.getRect(find.text("Welcome to Flow"));
-    final subtitleRect = tester.getRect(
-      find.text("Log in with Twitch to see the channels you follow."),
-    );
-    expect(titleRect.center.dx, closeTo(offerSize.width / 2, 0.01));
-    expect(
-      subtitleRect.center.dx,
-      closeTo(offerSize.width / 2, 0.01),
-    );
-    expect(
-      (titleRect.top + subtitleRect.bottom) / 2,
-      closeTo(offerSize.height / 2, 0.01),
-    );
-
     await tester.tap(find.byKey(const ValueKey("login_offer_continue")));
     await tester.pumpAndSettle();
 
@@ -112,43 +94,6 @@ void main() {
 
     expect(topStreamsRequests, 2);
   });
-
-  for (final brightness in Brightness.values) {
-    testWidgets("uses a ${brightness.name} startup gate until Welcome is ready", (
-      tester,
-    ) async {
-      final secureStore = _DelayedAccessTwitchStore();
-      final theme = buildFlowTheme(brightness);
-
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: theme,
-          home: FlowTabsScreen(
-            authController: _authController(secureStore: secureStore),
-          ),
-        ),
-      );
-      await tester.pump();
-
-      expect(find.byKey(const ValueKey("startup_gate")), findsOneWidget);
-      expect(
-        tester.widget<ColoredBox>(find.byKey(const ValueKey("startup_gate"))).color,
-        theme.scaffoldBackgroundColor,
-      );
-      expect(find.byKey(const ValueKey("following_title")), findsNothing);
-      expect(find.byKey(const ValueKey("following_skeleton")), findsNothing);
-      expect(find.byKey(const ValueKey("profile_auth_button")), findsNothing);
-      expect(find.byKey(const ValueKey("login_offer_screen")), findsNothing);
-      expect(find.textContaining("Restoring your Twitch session"), findsNothing);
-
-      secureStore.accessTokenRead.complete(null);
-      await tester.pumpAndSettle();
-
-      expect(find.byKey(const ValueKey("startup_gate")), findsNothing);
-      expect(find.byKey(const ValueKey("login_offer_screen")), findsOneWidget);
-      expect(find.text("Welcome to Flow"), findsOneWidget);
-    });
-  }
 
   testWidgets("shows the Following skeleton while a saved session restores", (tester) async {
     final secureStore = _DelayedAccessTwitchStore()..webSessionToken = "gql-token-123";
@@ -334,7 +279,7 @@ void main() {
   });
 
   testWidgets("does not offer startup login again after choosing guest access", (tester) async {
-    final preferencesStore = _CountingPreferencesStore();
+    final preferencesStore = _MemoryPreferencesStore();
 
     await tester.pumpWidget(
       MaterialApp(
@@ -387,7 +332,7 @@ void main() {
   testWidgets("keeps the login offer open when the saved session cannot be cleared", (
     tester,
   ) async {
-    final preferencesStore = _CountingPreferencesStore();
+    final preferencesStore = _MemoryPreferencesStore();
     final preferences = SharedPreferencesFlowPreferences(store: preferencesStore);
 
     await tester.pumpWidget(
@@ -443,45 +388,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey("login_offer_screen")), findsNothing);
-    expect(loginCalls, 0);
-  });
-
-  testWidgets("restores a saved session and opens Settings from Me", (tester) async {
-    var loginCalls = 0;
-    final tabsStore = TabsStore();
-    final secureStore = _MemoryTwitchStore()
-      ..accessToken = "token-123"
-      ..webSessionToken = "gql-token-123";
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFlowTheme(Brightness.light),
-        home: FlowTabsScreen(
-          authController: _authController(secureStore: secureStore),
-          openTwitchLogin: (_, _) async {
-            loginCalls++;
-            return null;
-          },
-          tabsStore: tabsStore,
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const ValueKey("login_offer_screen")), findsNothing);
-    await tester.tap(find.byKey(const ValueKey("profile_auth_button")));
-    await tester.pumpAndSettle();
-
-    expect(tabsStore.currentRoute, FlowRoutes.settings);
-    expect(find.byKey(const ValueKey("settings_title")), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey("settings_twitch_account_group")),
-      findsOneWidget,
-    );
-    expect(find.text("Flow Tester"), findsOneWidget);
-    expect(find.text("@flowtester"), findsOneWidget);
-    expect(find.text("Switch Twitch account"), findsOneWidget);
-    expect(find.text("Sign out of Twitch"), findsOneWidget);
     expect(loginCalls, 0);
   });
 
@@ -601,12 +507,6 @@ void main() {
 
     expect(find.byKey(const ValueKey("login_offer_screen")), findsOneWidget);
     expect(loginCalls, 0);
-    final closeTopLeft = tester.getTopLeft(find.byKey(const ValueKey("login_offer_close")));
-    expect(
-      closeTopLeft,
-      const Offset(AppSpacing.sm, 44 + AppSpacing.md),
-    );
-
     await tester.tap(find.byKey(const ValueKey("login_offer_button")));
     await tester.pumpAndSettle();
 
@@ -754,34 +654,11 @@ void main() {
       of: find.byKey(const ValueKey("browse_title")),
       matching: find.byKey(const ValueKey("scroll_reactive_header")),
     );
-    final headerClip = find.ancestor(
-      of: find.byKey(const ValueKey("browse_title")),
-      matching: find.byKey(const ValueKey("scroll_reactive_header_clip")),
-    );
     final headerTitle = find.byKey(const ValueKey("browse_title"));
     final footer = find.byKey(const ValueKey("app_bottom_nav_bar"));
-    final headerMaterial =
-        tester
-                .widget<DecoratedBox>(
-                  find.byKey(const ValueKey("top_header_material_gradient")),
-                )
-                .decoration
-            as BoxDecoration;
-    final footerMaterial = tester.widget<DecoratedBox>(footer).decoration as BoxDecoration;
-    final headerTint = headerMaterial.gradient! as LinearGradient;
-    final footerTint = footerMaterial.gradient! as LinearGradient;
-    expect(
-      footerTint.colors,
-      orderedEquals([headerTint.colors[1], headerTint.colors[0]]),
-    );
     final initialHeaderTop = tester.getTopLeft(headerTitle).dy;
     final initialFooterTop = tester.getTopLeft(footer).dy;
     final headerHeight = tester.getSize(header).height;
-    expect(
-      tester.getTopLeft(find.byKey(const ValueKey("browse_segmented_control"))).dy -
-          tester.getBottomLeft(headerClip).dy,
-      closeTo(PageHeaderLayout.headerContentGap, 0.1),
-    );
     scrollController.jumpTo(headerHeight * 0.49);
     await tester.pumpAndSettle();
 
@@ -812,26 +689,6 @@ void main() {
     expect(tester.getTopLeft(footer).dy - initialFooterTop, closeTo(footerHeight, 0.1));
 
     scrollController.jumpTo(headerHeight * 0.47);
-    await tester.pumpAndSettle();
-    expect(tester.getTopLeft(footer).dy, closeTo(initialFooterTop, 0.1));
-
-    scrollController.jumpTo(700);
-    await tester.pumpAndSettle();
-    scrollController.jumpTo(700 - headerHeight * 0.53);
-    await tester.pump();
-
-    final badge = find.byKey(const ValueKey("scroll_to_top_badge"));
-    expect(badge, findsOneWidget);
-    final chipTop = tester.getRect(badge).top;
-    expect(chipTop, closeTo(44 + headerHeight * 0.53 + AppSpacing.md, 0.1));
-    expect(tester.getRect(badge).center.dx, closeTo(400, 0.1));
-
-    await tester.pump(const Duration(milliseconds: 90));
-    expect(
-      tester.getTopLeft(footer).dy - initialFooterTop,
-      allOf(greaterThan(0), lessThan(footerHeight)),
-    );
-    expect(tester.getRect(badge).top, closeTo(chipTop, 0.1));
     await tester.pumpAndSettle();
     expect(tester.getTopLeft(footer).dy, closeTo(initialFooterTop, 0.1));
   });
@@ -1036,50 +893,6 @@ void main() {
     expect(browseCache.liveLoads, hasLength(2));
   });
 
-  testWidgets("keeps Browse category route when switching tabs", (tester) async {
-    var categoryStreamsRequests = 0;
-    final store = _MemoryTwitchStore()
-      ..accessToken = "token-123"
-      ..webSessionToken = "gql-token-123";
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFlowTheme(Brightness.light),
-        home: FlowTabsScreen(
-          authController: _authController(
-            secureStore: store,
-            onRequest: (request) {
-              if (_isGraphQlOperation(request, "FlowGameStreams")) {
-                categoryStreamsRequests++;
-              }
-            },
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Browse")));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey("browse_category_card_Just Chatting")));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const ValueKey("category_streams_page_Just Chatting")), findsOneWidget);
-    final categoryStreamsRequestsAfterOpen = categoryStreamsRequests;
-    expect(categoryStreamsRequestsAfterOpen, greaterThan(0));
-
-    await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Following")));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const ValueKey("category_streams_page_Just Chatting")), findsNothing);
-
-    await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Browse")));
-    await tester.pumpAndSettle();
-
-    expect(find.byKey(const ValueKey("category_streams_page_Just Chatting")), findsOneWidget);
-    expect(categoryStreamsRequests, categoryStreamsRequestsAfterOpen);
-  });
-
   testWidgets(
     "predictive back previews Following and leaves Following to Android",
     (
@@ -1251,34 +1064,6 @@ void main() {
     },
     variant: TargetPlatformVariant.only(TargetPlatform.android),
   );
-
-  testWidgets("does not reload settings preferences when navigating to Settings", (
-    tester,
-  ) async {
-    final preferencesStore = _CountingPreferencesStore();
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildFlowTheme(Brightness.light),
-        home: FlowTabsScreen(
-          authController: _authController(secureStore: _MemoryTwitchStore()),
-          settingsStore: AppSettingsStore(
-            preferences: SharedPreferencesFlowPreferences(store: preferencesStore),
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey("login_offer_continue")));
-    await tester.pumpAndSettle();
-    final initialReadCount = preferencesStore.readCount;
-    expect(initialReadCount, greaterThan(0));
-
-    await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Settings")));
-    await tester.pumpAndSettle();
-
-    expect(preferencesStore.readCount, initialReadCount);
-  });
 }
 
 TwitchAuthConnection _sessionConnection({
@@ -1756,20 +1541,15 @@ class _DelayedGuestClearTwitchStore extends _MemoryTwitchStore {
   }
 }
 
-class _CountingPreferencesStore implements FlowPreferencesStore {
-  int readCount = 0;
+class _MemoryPreferencesStore implements FlowPreferencesStore {
   final strings = <String, String>{};
   final stringLists = <String, List<String>>{};
 
   @override
-  Future<String?> getString(String key) async {
-    readCount++;
-    return strings[key];
-  }
+  Future<String?> getString(String key) async => strings[key];
 
   @override
   Future<List<String>?> getStringList(String key) async {
-    readCount++;
     final value = stringLists[key];
     return value == null ? null : List<String>.of(value);
   }

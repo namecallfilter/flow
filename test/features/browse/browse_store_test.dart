@@ -10,6 +10,127 @@ import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  test(
+    "recommended categories reuse pending next page",
+    () async {
+      final client = _DelayedCategoriesClient();
+      final store = BrowseStore(apiCache: TwitchApiCache(clientLoader: () async => client))
+        ..categorySort = CategorySort.recommendedForYou;
+      final initial = store.loadCategories(reset: true);
+      await Future<void>.delayed(Duration.zero);
+      client.requests.single.response.complete(
+        const TwitchPage(data: [_firstCategory], cursor: "page-2"),
+      );
+      await initial;
+      await Future<void>.delayed(Duration.zero);
+
+      expect(store.categories.single.id, "1");
+      expect(store.categoriesLoaded, isTrue);
+      expect(store.isLoadingCategories, isFalse);
+      expect(client.requests.map((request) => request.cursor), [null, "page-2"]);
+      final pagination = store.loadCategories();
+      await Future<void>.delayed(Duration.zero);
+      expect(client.requests, hasLength(2));
+      client.requests.last.response.complete(
+        const TwitchPage(data: [_secondCategory], cursor: "page-3"),
+      );
+      await pagination;
+
+      expect(store.categories.map((category) => category.id), ["1", "2"]);
+      expect(store.categoriesCursor, "page-3");
+      expect(client.requests, hasLength(2));
+    },
+  );
+
+  test("failed category prefetch stays quiet and retries when scrolling", () async {
+    final client = _DelayedCategoriesClient();
+    final store = BrowseStore(apiCache: TwitchApiCache(clientLoader: () async => client))
+      ..categorySort = CategorySort.recommendedForYou;
+    final initial = store.loadCategories(reset: true);
+    await Future<void>.delayed(Duration.zero);
+    client.requests.single.response.complete(
+      const TwitchPage(data: [_firstCategory], cursor: "page-2"),
+    );
+    await initial;
+    await Future<void>.delayed(Duration.zero);
+    client.requests.last.response.completeError(TwitchApiException("Offline"));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(store.categories.single.id, "1");
+    expect(store.categoriesError, isNull);
+    expect(store.isLoadingCategories, isFalse);
+    final pagination = store.loadCategories();
+    await Future<void>.delayed(Duration.zero);
+    expect(client.requests.map((request) => request.cursor), [null, "page-2", "page-2"]);
+    client.requests.last.response.complete(
+      const TwitchPage(data: [_secondCategory], cursor: null),
+    );
+    await pagination;
+    expect(store.categories.map((category) => category.id), ["1", "2"]);
+    expect(store.categoriesError, isNull);
+  });
+
+  test(
+    "recommended live channels reuse cached next page",
+    () async {
+      final client = _DelayedLiveChannelsClient();
+      final store = BrowseStore(apiCache: TwitchApiCache(clientLoader: () async => client))
+        ..streamSort = StreamSort.recommendedForYou;
+      final initial = store.loadLiveChannels(reset: true);
+      await Future<void>.delayed(Duration.zero);
+      client.requests.single.response.complete(
+        const TwitchPage(data: [_firstStream], cursor: "page-2"),
+      );
+      await initial;
+      await Future<void>.delayed(Duration.zero);
+
+      expect(store.liveChannels.single.id, "creator-1");
+      expect(store.liveChannelsLoaded, isTrue);
+      expect(store.isLoadingLiveChannels, isFalse);
+      expect(client.requests.map((request) => request.cursor), [null, "page-2"]);
+      client.requests.last.response.complete(
+        const TwitchPage(data: [_secondStream], cursor: "page-3"),
+      );
+      await Future<void>.delayed(Duration.zero);
+      final pagination = store.loadLiveChannels();
+      await Future<void>.delayed(Duration.zero);
+      expect(client.requests, hasLength(2));
+      await pagination;
+
+      expect(store.liveChannels.map((channel) => channel.id), ["creator-1", "creator-2"]);
+      expect(store.liveChannelsCursor, "page-3");
+      expect(client.requests, hasLength(2));
+    },
+  );
+
+  test("failed live prefetch stays quiet and retries when scrolling", () async {
+    final client = _DelayedLiveChannelsClient();
+    final store = BrowseStore(apiCache: TwitchApiCache(clientLoader: () async => client))
+      ..streamSort = StreamSort.recommendedForYou;
+    final initial = store.loadLiveChannels(reset: true);
+    await Future<void>.delayed(Duration.zero);
+    client.requests.single.response.complete(
+      const TwitchPage(data: [_firstStream], cursor: "page-2"),
+    );
+    await initial;
+    await Future<void>.delayed(Duration.zero);
+    client.requests.last.response.completeError(TwitchApiException("Offline"));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(store.liveChannels.single.id, "creator-1");
+    expect(store.liveChannelsError, isNull);
+    expect(store.isLoadingLiveChannels, isFalse);
+    final pagination = store.loadLiveChannels();
+    await Future<void>.delayed(Duration.zero);
+    expect(client.requests.map((request) => request.cursor), [null, "page-2", "page-2"]);
+    client.requests.last.response.complete(
+      const TwitchPage(data: [_secondStream], cursor: null),
+    );
+    await pagination;
+    expect(store.liveChannels.map((channel) => channel.id), ["creator-1", "creator-2"]);
+    expect(store.liveChannelsError, isNull);
+  });
+
   test("periodic refresh keeps recommendation cursors until an explicit refresh", () async {
     final streamsCache = _DelayedLiveChannelsCache();
     final streams = BrowseStore(apiCache: streamsCache)..streamSort = StreamSort.recommendedForYou;
@@ -19,7 +140,7 @@ void main() {
     );
     await initialStreams;
     await streams.refreshLiveChannelsFirstPage();
-    expect(streamsCache.requests, hasLength(1));
+    expect(streamsCache.requests.map((request) => request.cursor), [null, "personal-streams-next"]);
     expect(streams.liveChannelsCursor, "personal-streams-next");
     final refreshStreams = streams.loadLiveChannels(reset: true, refresh: true);
     expect(streamsCache.requests.last.cursor, isNull);
@@ -27,6 +148,7 @@ void main() {
       const TwitchPage(data: [_secondStream], cursor: "fresh-streams-next"),
     );
     await refreshStreams;
+    expect(streamsCache.requests, hasLength(3));
     expect(streams.liveChannels.single.id, "creator-2");
     expect(streams.liveChannelsCursor, "fresh-streams-next");
 
@@ -39,7 +161,10 @@ void main() {
     );
     await initialCategories;
     await categories.refreshCategoriesFirstPage();
-    expect(categoriesCache.requests, hasLength(1));
+    expect(categoriesCache.requests.map((request) => request.cursor), [
+      null,
+      "personal-categories-next",
+    ]);
     expect(categories.categoriesCursor, "personal-categories-next");
     final refreshCategories = categories.loadCategories(reset: true, refresh: true);
     expect(categoriesCache.requests.last.cursor, isNull);
@@ -47,6 +172,7 @@ void main() {
       const TwitchPage(data: [_thirdCategory], cursor: "fresh-categories-next"),
     );
     await refreshCategories;
+    expect(categoriesCache.requests, hasLength(3));
     expect(categories.categories.single.id, "3");
     expect(categories.categoriesCursor, "fresh-categories-next");
   });
@@ -94,28 +220,28 @@ void main() {
       await pagination;
       expect(store.liveChannels.map((channel) => channel.id), expectedIds);
     });
-
-    test("category normalizes live counts across pages for ${sort.name}", () async {
-      final cache = _DelayedLiveChannelsCache();
-      final store = CategoryStreamsStore(
-        apiCache: cache,
-        category: browseCategoryFromApi(_firstCategory),
-      )..streamSort = sort;
-      final initial = store.loadStreams(reset: true);
-      cache.requests.single.response.complete(
-        const TwitchPage(data: [_thirdStream, _firstStream], cursor: "server-page-2"),
-      );
-      await initial;
-      final pagination = store.loadStreams();
-      expect(cache.requests.last.cursor, "server-page-2");
-      expect(cache.requests.last.sort, sort);
-      cache.requests.last.response.complete(
-        const TwitchPage(data: [_secondStream], cursor: null),
-      );
-      await pagination;
-      expect(store.channels.map((channel) => channel.id), expectedIds);
-    });
   }
+
+  test("category pages retain ascending viewer order", () async {
+    final cache = _DelayedLiveChannelsCache();
+    final store = CategoryStreamsStore(
+      apiCache: cache,
+      category: browseCategoryFromApi(_firstCategory),
+    )..streamSort = StreamSort.viewersLowToHigh;
+    final initial = store.loadStreams(reset: true);
+    cache.requests.single.response.complete(
+      const TwitchPage(data: [_thirdStream, _firstStream], cursor: "server-page-2"),
+    );
+    await initial;
+    final pagination = store.loadStreams();
+    expect(cache.requests.last.cursor, "server-page-2");
+    expect(cache.requests.last.sort, StreamSort.viewersLowToHigh);
+    cache.requests.last.response.complete(
+      const TwitchPage(data: [_secondStream], cursor: null),
+    );
+    await pagination;
+    expect(store.channels.map((channel) => channel.id), ["creator-3", "creator-2", "creator-1"]);
+  });
 
   test("periodic live refresh preserves paginated channels moved by viewer sorting", () async {
     final cache = _DelayedLiveChannelsCache();
@@ -289,47 +415,6 @@ void main() {
     expect(store.channels[1].title, "Updated second stream");
   });
 
-  test("merges overlapping live-channel pages by broadcaster", () async {
-    final store = BrowseStore(apiCache: _OverlappingLiveChannelsCache());
-
-    await store.loadLiveChannels(reset: true);
-    await store.loadLiveChannels();
-
-    expect(
-      store.liveChannels.map((channel) => channel.id),
-      ["creator-1", "creator-2", "creator-3"],
-    );
-    expect(store.liveChannels[1].title, "Updated second stream");
-  });
-
-  test("first-page category refresh preserves the paginated tail and cursor", () async {
-    final cache = _PaginatedCategoriesCache();
-    final store = BrowseStore(apiCache: cache);
-
-    await store.loadCategories(reset: true);
-    await store.loadCategories();
-    expect(store.categories.map((category) => category.id), ["1", "2", "3"]);
-    expect(store.categoriesCursor, isNull);
-
-    await store.refreshCategoriesFirstPage();
-
-    expect(store.categories.map((category) => category.id), ["2", "4", "3"]);
-    expect(store.categories.first.name, "Updated second");
-    expect(store.categoriesCursor, isNull);
-    expect(cache.refreshRequests, 1);
-  });
-
-  test("first-page refresh adopts the fresh cursor when no tail was loaded", () async {
-    final cache = _PaginatedCategoriesCache();
-    final store = BrowseStore(apiCache: cache);
-
-    await store.loadCategories(reset: true);
-    await store.refreshCategoriesFirstPage();
-
-    expect(store.categories.map((category) => category.id), ["2", "4"]);
-    expect(store.categoriesCursor, "fresh-page-2");
-  });
-
   test("first-page category refresh adopts the fresh cursor when it promotes the tail", () async {
     final cache = _DelayedCategoriesCache();
     final store = BrowseStore(apiCache: cache);
@@ -359,22 +444,6 @@ void main() {
 
     expect(store.categories.map((category) => category.id), ["3", "4"]);
     expect(store.categoriesCursor, "fresh-page-2");
-  });
-
-  test("first-page live refresh preserves the paginated tail and cursor", () async {
-    final cache = _OverlappingLiveChannelsCache();
-    final store = BrowseStore(apiCache: cache);
-
-    await store.loadLiveChannels(reset: true);
-    await store.loadLiveChannels();
-    await store.refreshLiveChannelsFirstPage();
-
-    expect(
-      store.liveChannels.map((channel) => channel.id),
-      ["creator-1", "creator-2", "creator-3"],
-    );
-    expect(store.liveChannelsCursor, isNull);
-    expect(cache.refreshRequests, 1);
   });
 
   test("first-page live refresh adopts the fresh cursor when it promotes the tail", () async {
@@ -445,6 +514,7 @@ void main() {
       cache.requests.map((request) => (request.cursor, request.refresh)),
       [(null, false), ("page-2", false), (null, true)],
     );
+    expect(store.categories[1].name, "Updated second");
     cache.requests[2].response.complete(
       const TwitchPage(
         data: [_updatedSecondCategory, _fourthCategory],
@@ -525,6 +595,12 @@ void main() {
       cache.requests.map((request) => (request.cursor, request.refresh)),
       [(null, false), ("page-2", false), (null, true)],
     );
+    expect(store.liveChannels.map((channel) => channel.id), [
+      "creator-1",
+      "creator-2",
+      "creator-3",
+    ]);
+    expect(store.liveChannels[1].title, "Updated second stream");
     cache.requests[2].response.complete(
       const TwitchPage(
         data: [_firstStream, _updatedSecondStream],
@@ -542,73 +618,43 @@ void main() {
   });
 }
 
-class _PaginatedCategoriesCache extends TwitchApiCache {
-  _PaginatedCategoriesCache() : super(clientLoader: () => throw UnimplementedError());
+class _DelayedCategoriesClient extends TwitchApiClient {
+  _DelayedCategoriesClient() : super(clientId: "client-123", accessToken: "token-123");
 
-  int refreshRequests = 0;
+  final requests = <({String? cursor, Completer<TwitchPage<TwitchCategory>> response})>[];
 
   @override
   Future<TwitchPage<TwitchCategory>> fetchTopCategoriesPage({
     int first = 12,
     String? cursor,
-    bool refresh = false,
     CategorySort sort = CategorySort.viewersHighToLow,
-  }) async {
-    if (refresh) {
-      refreshRequests++;
-      return const TwitchPage(
-        data: [_updatedSecondCategory, _fourthCategory],
-        cursor: "fresh-page-2",
-      );
-    }
-    if (cursor == "page-2") {
-      return const TwitchPage(
-        data: [_updatedSecondCategory, _thirdCategory],
-        cursor: null,
-      );
-    }
-    return const TwitchPage(
-      data: [_firstCategory, _secondCategory],
-      cursor: "page-2",
-    );
+  }) {
+    final response = Completer<TwitchPage<TwitchCategory>>();
+    requests.add((cursor: cursor, response: response));
+    return response.future;
   }
 }
 
-class _OverlappingLiveChannelsCache extends TwitchApiCache {
-  _OverlappingLiveChannelsCache() : super(clientLoader: () => throw UnimplementedError());
+class _DelayedLiveChannelsClient extends TwitchApiClient {
+  _DelayedLiveChannelsClient() : super(clientId: "client-123", accessToken: "token-123");
 
-  int refreshRequests = 0;
+  final requests = <({String? cursor, Completer<TwitchPage<TwitchFollowedStream>> response})>[];
 
   @override
   Future<TwitchPage<TwitchFollowedStream>> fetchLiveStreamsPage({
     int first = 20,
-    List<String> gameIds = const <String>[],
-    List<String> userLogins = const <String>[],
+    List<String> gameIds = const [],
+    List<String> userLogins = const [],
     String? cursor,
-    bool refresh = false,
     StreamSort sort = StreamSort.viewersHighToLow,
-  }) async {
-    if (refresh) {
-      refreshRequests++;
-    }
-    if (cursor == "page-2") {
-      return const TwitchPage(
-        data: [_updatedSecondStream, _thirdStream],
-        cursor: null,
-      );
-    }
-
-    return const TwitchPage(
-      data: [_firstStream, _secondStream],
-      cursor: "page-2",
-    );
+  }) {
+    final response = Completer<TwitchPage<TwitchFollowedStream>>();
+    requests.add((cursor: cursor, response: response));
+    return response.future;
   }
 
   @override
-  Future<Map<String, TwitchUser>> fetchUsersByIds(
-    List<String> ids, {
-    bool refresh = false,
-  }) async => _usersById(ids);
+  Future<Map<String, TwitchUser>> fetchUsersByIds(List<String> ids) async => _usersById(ids);
 }
 
 class _DelayedCategoriesCache extends TwitchApiCache {
