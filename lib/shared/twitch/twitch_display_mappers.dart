@@ -40,10 +40,24 @@ List<OfflineChannel> offlineChannelsFromConnection(
   final liveUserIds = {
     for (final stream in connection.followedStreams) stream.userId,
   };
-  final offlineFollowedChannels = [
-    for (final channel in connection.followedChannels)
-      if (!liveUserIds.contains(channel.broadcasterId)) channel,
-  ]..sort(_compareFollowedAtDescending);
+  final offlineFollowedChannels =
+      [
+        for (final channel in connection.followedChannels)
+          if (!liveUserIds.contains(channel.broadcasterId)) channel,
+      ]..sort((left, right) {
+        final leftStartedAt =
+            connection.channelInfoByBroadcasterId[left.broadcasterId]?.lastBroadcastStartedAt;
+        final rightStartedAt =
+            connection.channelInfoByBroadcasterId[right.broadcasterId]?.lastBroadcastStartedAt;
+        if (leftStartedAt == null) {
+          return rightStartedAt == null ? _compareFollowedAtDescending(left, right) : 1;
+        }
+        if (rightStartedAt == null) {
+          return -1;
+        }
+        final comparison = rightStartedAt.compareTo(leftStartedAt);
+        return comparison != 0 ? comparison : _compareFollowedAtDescending(left, right);
+      });
 
   return [
     for (final channel in offlineFollowedChannels)

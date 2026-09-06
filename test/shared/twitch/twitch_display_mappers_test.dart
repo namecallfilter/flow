@@ -58,7 +58,7 @@ void main() {
       expect(byId["missing-name"]?.categoryId, isEmpty);
     });
 
-    test("sorts offline channels by most recent follow first", () {
+    test("sorts offline channels by most recent broadcast with unknown times last", () {
       final channels = offlineChannelsFromConnection(
         TwitchAuthConnection(
           user: const TwitchUser(
@@ -96,18 +96,35 @@ void main() {
               broadcasterName: "Newest",
               followedAt: DateTime(2025),
             ),
-            const TwitchFollowedChannel(
+            TwitchFollowedChannel(
               broadcasterId: "unknown",
               broadcasterLogin: "unknown",
               broadcasterName: "Unknown",
+              followedAt: DateTime(2026),
             ),
           ],
+          channelInfoByBroadcasterId: {
+            "oldest": TwitchChannelInfo(
+              broadcasterId: "oldest",
+              broadcasterName: "Oldest",
+              gameName: "Just Chatting",
+              title: "Back later",
+              lastBroadcastStartedAt: DateTime(2026, 9, 6),
+            ),
+            "newest": TwitchChannelInfo(
+              broadcasterId: "newest",
+              broadcasterName: "Newest",
+              gameName: "Just Chatting",
+              title: "Back later",
+              lastBroadcastStartedAt: DateTime(2026, 9, 4),
+            ),
+          },
         ),
       );
 
       expect(
         channels.map((channel) => channel.name),
-        ["Newest", "Oldest", "Unknown"],
+        ["Oldest", "Newest", "Unknown"],
       );
     });
   });
