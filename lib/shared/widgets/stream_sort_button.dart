@@ -109,6 +109,7 @@ class _SortMenu<T> extends StatelessWidget {
     child: PopupMenuButton<T>(
       tooltip: tooltip,
       initialValue: sort,
+      constraints: const BoxConstraints(maxWidth: 240),
       onSelected: (value) {
         if (value != sort) {
           unawaited(HapticFeedback.selectionClick());
