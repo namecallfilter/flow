@@ -5,6 +5,8 @@ import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/theme.dart";
+import "package:flow/features/browse/browse_screen.dart";
+import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/player/media3_player_controller.dart";
 import "package:flow/features/player/player_navigation.dart";
 import "package:flow/features/player/player_screen.dart";
@@ -858,12 +860,15 @@ void main() {
     expect(player._playCount, 1);
   });
 
-  for (final (buttonKey, destinationKey) in [
-    ("player_profile_button", "channel_page_creator"),
-    ("player_category_button", "category_streams_page_Just Chatting"),
+  for (final (buttonKey, destinationKey, startsOnDestination) in [
+    ("player_profile_button", "channel_page_creator", false),
+    ("player_category_button", "category_streams_page_Just Chatting", false),
+    ("player_profile_button", "channel_page_creator", true),
+    ("player_category_button", "category_streams_page_Just Chatting", true),
   ]) {
     testWidgets(
-      "starting a new stream retains $destinationKey and disposes the old player without resuming",
+      "starting a new stream retains one $destinationKey and disposes the old player "
+      "without resuming (starts on destination: $startsOnDestination)",
       (
         tester,
       ) async {
@@ -873,24 +878,62 @@ void main() {
         addTearDown(tester.view.resetDevicePixelRatio);
         final player = _FakePlayerController();
         final displayMode = _FakeDisplayModeController();
+        final apiCache = _navigationApiCache();
         final playerApp =
             _playerApp(
                   player: player,
                   displayMode: displayMode,
-                  apiCache: _navigationApiCache(),
+                  apiCache: apiCache,
                 )
                 as MaterialApp;
         final rootNavigator = GlobalKey<NavigatorState>();
+        final tabNavigator = GlobalKey<NavigatorState>();
         await tester.pumpWidget(
           MaterialApp(
             navigatorKey: rootNavigator,
             theme: playerApp.theme,
-            home: const Scaffold(key: ValueKey("tab shell")),
+            home: Navigator(
+              key: tabNavigator,
+              onGenerateRoute: (_) => MaterialPageRoute<void>(
+                builder: (_) => const Scaffold(key: ValueKey("tab shell")),
+              ),
+            ),
           ),
         );
+        if (startsOnDestination) {
+          unawaited(
+            tabNavigator.currentState!.push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) => buttonKey == "player_profile_button"
+                    ? ChannelScreen(
+                        apiCache: apiCache,
+                        initialChannel: const ChannelPreview(
+                          login: "creator",
+                          displayName: "Creator",
+                        ),
+                      )
+                    : CategoryStreamsScreen(
+                        apiCache: apiCache,
+                        category: const BrowseCategory(
+                          id: "509658",
+                          name: "Just Chatting",
+                          viewerCount: 0,
+                          viewers: "--",
+                          imageUrl: null,
+                          colors: [Colors.purple, Colors.pink],
+                        ),
+                      ),
+              ),
+            ),
+          );
+          await _pumpNavigation(tester);
+          expect(tabNavigator.currentState!.canPop(), isTrue);
+        }
         unawaited(
           openStreamPlayer(
-            tester.element(find.byKey(const ValueKey("tab shell"))),
+            tester.element(
+              find.byKey(ValueKey(startsOnDestination ? destinationKey : "tab shell")),
+            ),
             builder: (_) => playerApp.home!,
           ),
         );
@@ -914,6 +957,8 @@ void main() {
         await _pumpNavigation(tester);
         expect(player._disposeCount, 1);
         expect(displayMode._landscapeRequests, [true]);
+        expect(tabNavigator.currentState!.canPop(), isFalse);
+        expect(find.byKey(ValueKey(destinationKey), skipOffstage: false), findsOneWidget);
         expect(
           find.byKey(const ValueKey("player_page_creator"), skipOffstage: false),
           findsNothing,

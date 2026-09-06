@@ -77,6 +77,15 @@ class _ChannelScreenState extends State<ChannelScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final login = widget.initialChannel.login.trim().toLowerCase();
+    if (login.isNotEmpty) {
+      registerPlayerDestination(context, "channel:$login");
+    }
+  }
+
+  @override
   void dispose() {
     _scrollController.dispose();
     super.dispose();

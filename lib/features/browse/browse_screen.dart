@@ -1422,6 +1422,15 @@ class _CategoryStreamsScreenState extends State<CategoryStreamsScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final categoryId = widget.category.id.trim();
+    if (categoryId.isNotEmpty) {
+      registerPlayerDestination(context, "category:$categoryId");
+    }
+  }
+
+  @override
   void dispose() {
     _scrollController.dispose();
     super.dispose();

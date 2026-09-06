@@ -121,4 +121,119 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  for (final (identity, hasIntermediate) in [
+    ("channel:creator", false),
+    ("category:509658", false),
+    ("category:509658", true),
+  ]) {
+    testWidgets(
+      "retained $identity replaces its original tab route with intermediate=$hasIntermediate",
+      (tester) async {
+        final rootNavigator = GlobalKey<NavigatorState>();
+        final tabNavigator = GlobalKey<NavigatorState>();
+        final otherTabNavigator = GlobalKey<NavigatorState>();
+        Widget page(String name) => Scaffold(key: ValueKey(name), body: Text(name));
+        Route<void> destination(String name, String identity) => MaterialPageRoute<void>(
+          builder: (context) {
+            registerPlayerDestination(context, identity);
+            return page(name);
+          },
+        );
+
+        await tester.pumpWidget(
+          MaterialApp(
+            navigatorKey: rootNavigator,
+            home: Scaffold(
+              body: IndexedStack(
+                children: [
+                  Navigator(
+                    key: tabNavigator,
+                    onGenerateRoute: (_) => MaterialPageRoute<void>(
+                      builder: (_) => page("tab root"),
+                    ),
+                  ),
+                  Navigator(
+                    key: otherTabNavigator,
+                    onGenerateRoute: (_) => MaterialPageRoute<void>(
+                      builder: (_) => page("other tab root"),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        unawaited(otherTabNavigator.currentState!.push<void>(destination("other tab", identity)));
+        var originalCompleted = false;
+        unawaited(
+          tabNavigator.currentState!
+              .push<void>(destination("original", identity))
+              .then((_) => originalCompleted = true),
+        );
+        await tester.pumpAndSettle();
+        final otherTab = tester.element(
+          find.byKey(const ValueKey("other tab"), skipOffstage: false),
+        );
+        if (hasIntermediate) {
+          unawaited(
+            tabNavigator.currentState!.push<void>(
+              destination("unrelated channel", "channel:another"),
+            ),
+          );
+          await tester.pumpAndSettle();
+        }
+        final source = tester.element(
+          find.byKey(ValueKey(hasIntermediate ? "unrelated channel" : "original")),
+        );
+        unawaited(openStreamPlayer(source, builder: (_) => page("stream A")));
+        await tester.pumpAndSettle();
+        unawaited(rootNavigator.currentState!.push<void>(destination("retained", identity)));
+        await tester.pumpAndSettle();
+        final retained = tester.element(find.byKey(const ValueKey("retained")));
+        unawaited(openStreamPlayer(retained, builder: (_) => page("stream B")));
+        await tester.pumpAndSettle();
+
+        expect(originalCompleted, isTrue);
+        expect(find.byKey(const ValueKey("original"), skipOffstage: false), findsNothing);
+        expect(find.byKey(const ValueKey("stream A"), skipOffstage: false), findsNothing);
+        expect(
+          tester.element(find.byKey(const ValueKey("other tab"), skipOffstage: false)),
+          same(otherTab),
+        );
+        rootNavigator.currentState!.pop();
+        await tester.pumpAndSettle();
+        expect(tester.element(find.byKey(const ValueKey("retained"))), same(retained));
+        rootNavigator.currentState!.pop();
+        await tester.pumpAndSettle();
+        expect(rootNavigator.currentState!.canPop(), isFalse);
+        if (hasIntermediate) {
+          expect(tester.element(find.byKey(const ValueKey("unrelated channel"))), same(source));
+          expect(tabNavigator.currentState!.canPop(), isTrue);
+          tabNavigator.currentState!.pop();
+          await tester.pumpAndSettle();
+        }
+        expect(find.byKey(const ValueKey("tab root")), findsOneWidget);
+        expect(tabNavigator.currentState!.canPop(), isFalse);
+
+        // A fresh journey from another tab replaces the previous origin.
+        unawaited(tabNavigator.currentState!.push<void>(destination("new original", identity)));
+        await tester.pumpAndSettle();
+        unawaited(openStreamPlayer(otherTab, builder: (_) => page("stream C")));
+        await tester.pumpAndSettle();
+        unawaited(rootNavigator.currentState!.push<void>(destination("new retained", identity)));
+        await tester.pumpAndSettle();
+        unawaited(
+          openStreamPlayer(
+            tester.element(find.byKey(const ValueKey("new retained"))),
+            builder: (_) => page("stream D"),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey("other tab"), skipOffstage: false), findsNothing);
+        expect(find.byKey(const ValueKey("new original"), skipOffstage: false), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 }
