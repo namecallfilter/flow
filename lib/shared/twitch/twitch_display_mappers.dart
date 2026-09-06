@@ -6,7 +6,14 @@ import "package:flutter/material.dart";
 
 List<StreamChannel> sortedStreamChannels(Iterable<StreamChannel> channels, StreamSort sort) {
   final sorted = channels.toList();
-  if (sort != StreamSort.recommended) {
+  if (sort == StreamSort.recentlyStarted) {
+    sorted.sort((left, right) {
+      final started = (right.startedAt ?? DateTime.fromMillisecondsSinceEpoch(0)).compareTo(
+        left.startedAt ?? DateTime.fromMillisecondsSinceEpoch(0),
+      );
+      return started != 0 ? started : left.login.compareTo(right.login);
+    });
+  } else if (sort != StreamSort.recommendedForYou) {
     sorted.sort((left, right) {
       final viewers = sort == StreamSort.viewersLowToHigh
           ? left.viewerCount.compareTo(right.viewerCount)
@@ -95,6 +102,7 @@ StreamChannel streamChannelFromStream(
     initials: initialsForName(name),
     title: stream.title.isEmpty ? "Live now" : stream.title,
     category: stream.gameName.isEmpty ? "Live" : stream.gameName,
+    categoryId: stream.gameId,
     viewers: formatCompactCount(stream.viewerCount),
     viewerCount: stream.viewerCount,
     avatarColors: colorsForText(stream.userId),

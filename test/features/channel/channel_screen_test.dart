@@ -3,11 +3,14 @@ import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
+import "package:flow/api/twitch_auth.dart";
 import "package:flow/app/routes.dart";
 import "package:flow/app/spacing.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/channel/channel_store.dart";
+import "package:flow/features/following/following_screen.dart";
+import "package:flow/features/following/following_store.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/widgets/app_bottom_nav.dart";
 import "package:flow/shared/widgets/avatar_ring.dart";
@@ -18,6 +21,116 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  testWidgets("opens channel after player return and live Following reorder", (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final rootNavigatorKey = GlobalKey<NavigatorState>();
+    final tabNavigatorKey = GlobalKey<NavigatorState>();
+    final response = Completer<http.Response>();
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+        httpClient: MockClient((request) async {
+          final body = jsonDecode(request.body) as Map<String, Object?>;
+          if (body["query"].toString().contains("FlowChannelDetails")) {
+            return response.future;
+          }
+          return http.Response('{"data":{}}', 200);
+        }),
+      ),
+    );
+    TwitchAuthConnection connection(int viewers) => TwitchAuthConnection(
+      user: const TwitchUser(id: "viewer", login: "viewer", displayName: "Viewer"),
+      followedStreams: [
+        TwitchFollowedStream(
+          id: "live-1",
+          userId: "creator-1",
+          userLogin: "jason",
+          userName: "Jason",
+          title: "Live with chat",
+          gameName: "Just Chatting",
+          viewerCount: viewers,
+        ),
+        const TwitchFollowedStream(
+          id: "live-2",
+          userId: "creator-2",
+          userLogin: "other",
+          userName: "Other",
+          title: "Another live stream",
+          gameName: "Minecraft",
+          viewerCount: 100,
+        ),
+      ],
+      followedChannels: const [],
+    );
+    final followingStore = FollowingStore(
+      authController: TwitchAuthController(
+        config: const TwitchAuthConfig(clientId: "client-123"),
+        secureStore: const SecureTwitchStore(),
+        cookieExtractor: const MethodChannelTwitchCookieExtractor(),
+        apiClientFactory: (token, {gqlAccessToken}) => TwitchApiClient(
+          clientId: "client-123",
+          accessToken: token,
+        ),
+      ),
+      apiCache: apiCache,
+    )..connection = connection(200);
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: rootNavigatorKey,
+        theme: buildFlowTheme(Brightness.dark),
+        home: Scaffold(
+          body: Navigator(
+            key: tabNavigatorKey,
+            onGenerateRoute: (_) => MaterialPageRoute<void>(
+              builder: (_) => FollowingScreen(
+                followingStore: followingStore,
+                apiCache: apiCache,
+              ),
+            ),
+          ),
+          bottomNavigationBar: const AppBottomNav(currentRoute: FlowRoutes.following),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.longPress(find.byKey(const ValueKey("stream_title_Jason")));
+    await tester.pumpAndSettle();
+    expect(find.text("Live with chat"), findsNWidgets(2));
+    await tester.tap(find.byKey(const ValueKey("stream_thumbnail_Jason")));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("player_page_jason")), findsOneWidget);
+
+    followingStore.connection = connection(50);
+    await tester.pump();
+    rootNavigatorKey.currentState!.pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 550));
+    await tester.tap(find.byKey(const ValueKey("stream_channel_identity_Jason")));
+    await tester.pump();
+    response.complete(
+      _channelDetailsResponse(videoTitles: List.generate(20, (index) => "Broadcast $index")),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("channel_page_jason")), findsOneWidget);
+    expect(find.byKey(const ValueKey("past_broadcast_vod-1")), findsOneWidget);
+    expect(rootNavigatorKey.currentState!.canPop(), isFalse);
+    expect(tabNavigatorKey.currentState!.canPop(), isTrue);
+    expect(tester.takeException(), isNull);
+
+    await tester.longPress(find.byKey(const ValueKey("past_broadcast_title_preview_vod-1")));
+    await tester.pumpAndSettle();
+    tabNavigatorKey.currentState!.pop();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey("stream_channel_identity_Jason")));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("past_broadcast_vod-1")), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets("renders channel identity and past broadcasts", (tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -76,7 +189,7 @@ void main() {
     expect(find.text("2025 Japan Trip"), findsOneWidget);
     expect(find.text("4:59:59"), findsOneWidget);
     expect(find.text("91.2K views"), findsOneWidget);
-    expect(find.text("2 days ago | "), findsOneWidget);
+    expect(find.text("2 days ago · "), findsOneWidget);
     final thumbnailRect = tester.getRect(
       find.byKey(const ValueKey("past_broadcast_thumbnail_vod-1")),
     );
@@ -85,6 +198,43 @@ void main() {
     final durationBadgeRect = tester.getRect(durationBadgeFinder);
     expect(durationBadgeRect.left, closeTo(thumbnailRect.left + 6, 1));
     expect(durationBadgeRect.bottom, closeTo(thumbnailRect.bottom - 5, 1));
+    _expectPastBroadcastImageAlignment(tester);
+  });
+
+  testWidgets("broadcast thumbnails align with title and views at larger text sizes", (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 1000);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(2)),
+          child: child!,
+        ),
+        home: ChannelScreen(
+          apiCache: TwitchApiCache(
+            clientLoader: () async => TwitchApiClient(
+              clientId: "client-123",
+              accessToken: "token-123",
+              httpClient: MockClient(
+                (_) async => _channelDetailsResponse(
+                  videoTitle: "A long past broadcast title that needs both available lines",
+                ),
+              ),
+            ),
+          ),
+          initialChannel: const ChannelPreview(login: "jason", displayName: "Jason"),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    _expectPastBroadcastImageAlignment(tester);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets("updates the active broadcast duration locally every second", (
@@ -578,7 +728,7 @@ void main() {
     expect(find.byKey(const ValueKey("channel_broadcast_skeleton_9")), findsOneWidget);
     expect(find.byKey(const ValueKey("channel_broadcast_skeleton_10")), findsNothing);
     expect(headerSkeletonRect.height, 174);
-    expect(tester.getSize(firstSkeletonThumbnail), const Size(132, 74.25));
+    expect(tester.getSize(firstSkeletonThumbnail), const Size(148, 83.25));
     expect(tester.getSize(firstSkeletonDuration), const Size(49, 17));
     expect(
       tester.getTopLeft(firstSkeletonDuration).dx - tester.getTopLeft(firstSkeletonThumbnail).dx,
@@ -589,12 +739,12 @@ void main() {
           tester.getBottomRight(firstSkeletonDuration).dy,
       5,
     );
-    expect(tester.getSize(firstSkeletonText).height, 82);
+    expect(tester.getSize(firstSkeletonText).height, 83.25);
     expect(
       tester.getTopLeft(firstSkeletonText).dx - tester.getTopRight(firstSkeletonThumbnail).dx,
       AppSpacing.md,
     );
-    expect(skeletonRowStride, 94);
+    expect(skeletonRowStride, 95.25);
     for (final key in const [
       "channel_broadcast_skeleton_title_1_0",
       "channel_broadcast_skeleton_title_2_0",
@@ -728,6 +878,16 @@ void main() {
     expect(find.byKey(const ValueKey("past_broadcast_vod-2")), findsOneWidget);
     expect(find.text("Second Stream"), findsOneWidget);
   });
+}
+
+void _expectPastBroadcastImageAlignment(WidgetTester tester) {
+  final thumbnail = tester.getRect(find.byKey(const ValueKey("past_broadcast_thumbnail_vod-1")));
+  final title = tester.getRect(find.byKey(const ValueKey("past_broadcast_title_preview_vod-1")));
+  final views = tester.getRect(find.byKey(const ValueKey("past_broadcast_views_vod-1")));
+  expect(thumbnail.width, 148);
+  expect(thumbnail.height, greaterThanOrEqualTo(83.25));
+  expect(thumbnail.top, closeTo(title.top, 0.1));
+  expect(thumbnail.bottom, closeTo(views.bottom, 0.1));
 }
 
 void _expectVisibleHeaderGap(

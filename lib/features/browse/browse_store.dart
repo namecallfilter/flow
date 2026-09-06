@@ -20,6 +20,8 @@ abstract class BrowseStoreBase with Store {
   final TwitchApiCache apiCache;
   final FlowPreferences? preferences;
   Future<void>? _sortRestore;
+  Future<void>? _categorySortRestore;
+  int _categoriesRevision = 0;
   int _liveChannelsRevision = 0;
   int _categoriesFirstPageLength = 0;
   Set<String> _liveChannelsFirstPageIds = {};
@@ -41,6 +43,48 @@ abstract class BrowseStoreBase with Store {
 
   @observable
   StreamSort streamSort = StreamSort.viewersHighToLow;
+
+  @observable
+  CategorySort categorySort = CategorySort.viewersHighToLow;
+
+  Future<void> restoreCategorySort() => _categorySortRestore ??= _restoreCategorySort();
+
+  Future<void> _restoreCategorySort() async {
+    final revision = _categoriesRevision;
+    try {
+      final saved = await preferences?.readCategorySort();
+      if (saved != null && revision == _categoriesRevision) {
+        runInAction(() => categorySort = saved);
+      }
+    } on Object {
+      // An unavailable preference store must not block browsing.
+    }
+  }
+
+  @action
+  Future<void> selectCategorySort(CategorySort sort) async {
+    if (sort == categorySort) {
+      return;
+    }
+    _categoriesRevision++;
+    _categorySortRestore = Future<void>.value();
+    categorySort = sort;
+    _categoriesLoad = null;
+    _categoriesRefreshQueued = false;
+    isLoadingCategories = false;
+    categoriesLoaded = false;
+    categories = const [];
+    categoriesCursor = null;
+    categoriesScrollOffset = 0;
+    _categoriesFirstPageLength = 0;
+    final load = loadCategories(reset: true);
+    try {
+      await preferences?.saveCategorySort(sort);
+    } on Object {
+      // Keep the selected order for this session if saving fails.
+    }
+    await load;
+  }
 
   Future<void> restoreStreamSort() => _sortRestore ??= _restoreStreamSort();
 
@@ -152,6 +196,9 @@ abstract class BrowseStoreBase with Store {
     bool refresh = false,
     bool preserveTail = false,
   }) async {
+    if (preferences != null) {
+      await restoreCategorySort();
+    }
     final activeLoad = _categoriesLoad;
     if (activeLoad != null) {
       if (refresh) {
@@ -167,6 +214,7 @@ abstract class BrowseStoreBase with Store {
     final operation = Completer<void>();
     final operationFuture = operation.future;
     _categoriesLoad = operationFuture;
+    final revision = _categoriesRevision;
     var nextReset = reset;
     var nextRefresh = refresh;
     var nextPreserveTail = preserveTail;
@@ -178,7 +226,7 @@ abstract class BrowseStoreBase with Store {
           refresh: nextRefresh,
           preserveTail: nextPreserveTail,
         );
-        if (!_categoriesRefreshQueued) {
+        if (revision != _categoriesRevision || !_categoriesRefreshQueued) {
           break;
         }
 
@@ -201,6 +249,7 @@ abstract class BrowseStoreBase with Store {
     required bool refresh,
     required bool preserveTail,
   }) async {
+    final revision = _categoriesRevision;
     isLoadingCategories = true;
     categoriesError = null;
     final preservedCursor = categoriesCursor;
@@ -212,9 +261,13 @@ abstract class BrowseStoreBase with Store {
         : const <BrowseCategory>[];
     try {
       final page = await apiCache.fetchTopCategoriesPage(
+        sort: categorySort,
         cursor: reset ? null : categoriesCursor,
         refresh: refresh,
       );
+      if (revision != _categoriesRevision) {
+        return;
+      }
       final nextCategories = [
         for (final category in page.data) browseCategoryFromApi(category),
       ];
@@ -236,9 +289,13 @@ abstract class BrowseStoreBase with Store {
       categoriesCursor = hasPreservedTail ? preservedCursor : page.cursor;
       categoriesLoaded = true;
     } on Object catch (error) {
-      categoriesError = browseErrorMessage(error);
+      if (revision == _categoriesRevision) {
+        categoriesError = browseErrorMessage(error);
+      }
     } finally {
-      isLoadingCategories = false;
+      if (revision == _categoriesRevision) {
+        isLoadingCategories = false;
+      }
     }
   }
 
@@ -386,11 +443,20 @@ abstract class BrowseStoreBase with Store {
     return loadLiveChannels(reset: true, refresh: true);
   }
 
-  Future<void> refreshCategoriesFirstPage() =>
-      loadCategories(reset: true, refresh: true, preserveTail: true);
+  Future<void> refreshCategoriesFirstPage() {
+    if (categorySort == CategorySort.recommendedForYou && categoriesLoaded) {
+      return Future<void>.value();
+    }
+    return loadCategories(reset: true, refresh: true, preserveTail: true);
+  }
 
-  Future<void> refreshLiveChannelsFirstPage() =>
-      loadLiveChannels(reset: true, refresh: true, preserveTail: true);
+  Future<void> refreshLiveChannelsFirstPage() {
+    // Keep a recommendation feed's continuation snapshot until an explicit refresh.
+    if (streamSort == StreamSort.recommendedForYou && liveChannelsLoaded) {
+      return Future<void>.value();
+    }
+    return loadLiveChannels(reset: true, refresh: true, preserveTail: true);
+  }
 }
 
 List<BrowseCategory> _prependUniqueCategories(

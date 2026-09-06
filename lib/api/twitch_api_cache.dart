@@ -25,12 +25,14 @@ class TwitchApiCache {
     int first = 12,
     String? cursor,
     bool refresh = false,
+    CategorySort sort = CategorySort.viewersHighToLow,
   }) => _cached(
     _cacheKey("topCategories", {
       "first": first,
       "cursor": cursor,
+      "sort": sort.name,
     }),
-    (client) => client.fetchTopCategoriesPage(first: first, cursor: cursor),
+    (client) => client.fetchTopCategoriesPage(first: first, cursor: cursor, sort: sort),
     refresh: refresh,
   );
 

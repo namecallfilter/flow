@@ -6,11 +6,31 @@ import "package:flutter_test/flutter_test.dart";
 void main() {
   test("stream orders persist independently for each section", () async {
     final preferences = MemoryFlowPreferences();
-    await preferences.saveStreamSort("browse", StreamSort.recommended);
+    await preferences.saveStreamSort("browse", StreamSort.recommendedForYou);
     await preferences.saveStreamSort("following", StreamSort.viewersLowToHigh);
-    expect(await preferences.readStreamSort("browse"), StreamSort.recommended);
+    expect(await preferences.readStreamSort("browse"), StreamSort.recommendedForYou);
     expect(await preferences.readStreamSort("following"), StreamSort.viewersLowToHigh);
     expect(await preferences.readStreamSort("category"), StreamSort.viewersHighToLow);
+    expect(await preferences.readCategorySort(), CategorySort.viewersHighToLow);
+    await preferences.saveCategorySort(CategorySort.recommendedForYou);
+    expect(await preferences.readCategorySort(), CategorySort.recommendedForYou);
+  });
+  test("migrates saved sort names without changing their selected order", () async {
+    final store = _MemoryPreferencesStore()
+      ..strings["category_sort"] = "viewers"
+      ..strings["stream_sort_following"] = "recommended";
+    final preferences = SharedPreferencesFlowPreferences(store: store);
+
+    final sort = await preferences.readCategorySort();
+    expect(sort, CategorySort.viewersHighToLow);
+    expect(sort.label, "Viewers: High to Low");
+    await preferences.saveCategorySort(sort);
+    expect(store.strings["category_sort"], "viewersHighToLow");
+    final streamSort = await preferences.readStreamSort("following");
+    expect(streamSort, StreamSort.recommendedForYou);
+    expect(streamSort.label, "Recommended For You");
+    await preferences.saveStreamSort("following", streamSort);
+    expect(store.strings["stream_sort_following"], "recommendedForYou");
   });
   test("memory preferences use the same normalization and keep independent snapshots", () async {
     final preferences = MemoryFlowPreferences(themeMode: ThemeMode.dark);

@@ -1,11 +1,97 @@
 package com.namecallfilter.flow
 
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSpec
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+@UnstableApi
 class ServerTimePlaylistParserFactoryTest {
+    @Test
+    fun everyLoadStartsAtLastCompletedSegmentBeforePrefetchAndAnchorsOnlyOnce() {
+        val factory = ServerTimePlaylistParserFactory(
+            latencySession = TwitchLatencySession(onAcceptedLatency = {}),
+        )
+        val master = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000000\nindex.m3u8"
+        assertEquals(master, factory.rewritePlaylist(master))
+        val playlist = """
+            #EXTM3U
+            #EXT-X-TARGETDURATION:2
+            #EXT-X-START:TIME-OFFSET=-1.65,PRECISE=NO
+            #EXT-X-MEDIA-SEQUENCE:40
+            #EXT-X-PROGRAM-DATE-TIME:2026-09-05T12:00:00.000Z
+            #EXTINF:2.010,
+            segment-40.ts
+            #EXTINF:1.990,
+            segment-41.ts
+            #EXT-X-TWITCH-PREFETCH:segment-42.ts
+            #EXT-X-TWITCH-PREFETCH:segment-43.ts
+        """.trimIndent()
+
+        val first = factory.rewritePlaylist(playlist)
+
+        assertEquals(1, first.lineSequence().count { it.startsWith("#EXT-X-START:") })
+        assertTrue(first.contains("#EXT-X-START:TIME-OFFSET=2.01,PRECISE=NO"))
+        assertTrue(first.contains("#EXT-X-PROGRAM-DATE-TIME:2026-09-05T12:00:00.000Z"))
+        assertEquals(40L, mediaSequence(first))
+        assertEquals(41L, segmentSequence(first, "segment-41.ts"))
+        assertEquals(42L, segmentSequence(first, "segment-42.ts"))
+        // The anchor is a completed transfer, while promoted prefetch stays excluded.
+        val segments = TwitchPrefetchSegments()
+        val base = "https://example.com/live/index.m3u8"
+        segments.update(base, playlist)
+        assertEquals(0, segments.flagsFor("https://example.com/live/segment-41.ts", 0))
+        assertEquals(DataSpec.FLAG_MIGHT_NOT_USE_FULL_NETWORK_SPEED,
+            segments.flagsFor("https://example.com/live/segment-42.ts", 0))
+        // Future refreshes and variant switches use native live-edge positioning.
+        val refreshed = playlist.replace("#EXT-X-START:TIME-OFFSET=-1.65,PRECISE=NO\n", "")
+        assertEquals(rewriteTwitchLowLatencyPlaylist(refreshed), factory.rewritePlaylist(refreshed))
+        assertFalse(factory.rewritePlaylist(refreshed).contains("#EXT-X-START:"))
+    }
+
+    @Test
+    fun vodKeepsItsOriginalStartAndEmptyPlaylistsDoNotConsumeAnchor() {
+        val live = "#EXTM3U\n#EXTINF:2.0,\ncomplete.ts\n#EXT-X-TWITCH-PREFETCH:next.ts"
+        val factory = ServerTimePlaylistParserFactory(
+            latencySession = TwitchLatencySession(onAcceptedLatency = {}),
+        )
+        val vod = "$live\n#EXT-X-ENDLIST"
+        assertEquals(vod, factory.rewritePlaylist(vod))
+        val noComplete = "#EXTM3U\n#EXT-X-TWITCH-PREFETCH:next.ts"
+        assertEquals(rewriteTwitchLowLatencyPlaylist(noComplete), factory.rewritePlaylist(noComplete))
+        assertTrue(factory.rewritePlaylist(live).contains("#EXT-X-START:TIME-OFFSET=0.0,PRECISE=NO"))
+    }
+
+    @Test
+    fun prefetchTransfersAreExcludedFromBandwidthUntilTheSegmentIsPublished() {
+        val segments = TwitchPrefetchSegments()
+        val base = "https://example.com/live/index.m3u8"
+        val pacedFlag = DataSpec.FLAG_MIGHT_NOT_USE_FULL_NETWORK_SPEED
+        val existingFlag = DataSpec.FLAG_ALLOW_GZIP
+        segments.update(base, """
+            #EXTM3U
+            #EXTINF:2.0,
+            complete.ts
+            #EXT-X-TWITCH-PREFETCH:prefetch.ts
+            #EXT-X-TWITCH-PREFETCH:https://cdn.example.com/next.ts
+        """.trimIndent())
+
+        assertEquals(existingFlag, segments.flagsFor("https://example.com/live/complete.ts", existingFlag))
+        assertEquals(existingFlag or pacedFlag, segments.flagsFor("https://example.com/live/prefetch.ts", existingFlag))
+        assertEquals(pacedFlag, segments.flagsFor("https://cdn.example.com/next.ts", 0))
+        segments.update(base, "#EXTM3U\n#EXTINF:2.0,\nprefetch.ts")
+        assertEquals(existingFlag, segments.flagsFor("https://example.com/live/prefetch.ts", existingFlag))
+
+        // Disappearing playlists cannot retain unbounded URIs across quality switches.
+        for (index in 0..256) {
+            segments.update(base, "#EXT-X-TWITCH-PREFETCH:$index.ts")
+        }
+        assertEquals(0, segments.flagsFor("https://example.com/live/0.ts", 0))
+        assertEquals(pacedFlag, segments.flagsFor("https://example.com/live/256.ts", 0))
+    }
+
     @Test
     fun recognizesBothCurrentTwitchServerTimeTagForms() {
         assertEquals(

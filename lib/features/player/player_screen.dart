@@ -1644,6 +1644,7 @@ class _OverlayMetric extends StatelessWidget {
   Widget build(BuildContext context) => Tooltip(
     message: tooltip,
     enableFeedback: true,
+    preferBelow: MediaQuery.orientationOf(context) == Orientation.portrait ? false : null,
     child: Text(
       text,
       maxLines: 1,

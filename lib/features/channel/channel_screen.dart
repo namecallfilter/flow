@@ -244,7 +244,9 @@ class _ChannelScreenState extends State<ChannelScreen> {
 }
 
 const _channelHeaderSkeletonExtent = 174.0;
-const _pastBroadcastSkeletonExtent = 94.0;
+const _pastBroadcastThumbnailWidth = 148.0;
+const _pastBroadcastThumbnailMinHeight = _pastBroadcastThumbnailWidth * 9 / 16;
+const _pastBroadcastSkeletonExtent = _pastBroadcastThumbnailMinHeight + AppSpacing.md;
 const _channelSkeletonFixedContentExtent =
     _channelHeaderSkeletonExtent + AppSpacing.xxl + 32 + AppSpacing.sm;
 
@@ -397,8 +399,8 @@ class _PastBroadcastSkeleton extends StatelessWidget {
       children: [
         SizedBox(
           key: ValueKey("channel_broadcast_skeleton_thumbnail_$index"),
-          width: 132,
-          height: 74.25,
+          width: _pastBroadcastThumbnailWidth,
+          height: _pastBroadcastThumbnailMinHeight,
           child: Stack(
             children: [
               const Positioned.fill(child: SkeletonBox(height: 1)),
@@ -418,8 +420,9 @@ class _PastBroadcastSkeleton extends StatelessWidget {
         Expanded(
           child: SizedBox(
             key: ValueKey("channel_broadcast_skeleton_text_$index"),
-            height: 82,
+            height: _pastBroadcastThumbnailMinHeight,
             child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _PastBroadcastSkeletonLine(
@@ -833,119 +836,129 @@ class _PastBroadcastCard extends StatelessWidget {
 
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.md),
-      child: Row(
+      child: Table(
         key: ValueKey("past_broadcast_${broadcast.id}"),
-        crossAxisAlignment: CrossAxisAlignment.start,
+        columnWidths: const {
+          0: FixedColumnWidth(_pastBroadcastThumbnailWidth),
+          1: FixedColumnWidth(AppSpacing.md),
+          2: FlexColumnWidth(),
+        },
         children: [
-          SizedBox(
-            key: ValueKey("past_broadcast_thumbnail_${broadcast.id}"),
-            width: 132,
-            child: AspectRatio(
-              aspectRatio: 16 / 9,
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(AppRadius.sm),
-                      child: _BroadcastThumbnail(broadcast: broadcast),
+          TableRow(
+            children: [
+              TableCell(
+                verticalAlignment: TableCellVerticalAlignment.fill,
+                child: Stack(
+                  key: ValueKey("past_broadcast_thumbnail_${broadcast.id}"),
+                  children: [
+                    Positioned.fill(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(AppRadius.sm),
+                        child: _BroadcastThumbnail(broadcast: broadcast),
+                      ),
                     ),
-                  ),
-                  Positioned(
-                    left: 6,
-                    bottom: 5,
-                    child: _DurationBadge(
-                      key: ValueKey("past_broadcast_duration_${broadcast.id}"),
-                      duration: broadcast.duration,
-                      startedAt: !isLive
-                          ? null
-                          : startedAt != null && startedAt.isBefore(snapshotStart)
-                          ? startedAt
-                          : snapshotStart,
-                      now: now,
+                    Positioned(
+                      left: 6,
+                      bottom: 5,
+                      child: _DurationBadge(
+                        key: ValueKey("past_broadcast_duration_${broadcast.id}"),
+                        duration: broadcast.duration,
+                        startedAt: !isLive
+                            ? null
+                            : startedAt != null && startedAt.isBefore(snapshotStart)
+                            ? startedAt
+                            : snapshotStart,
+                        now: now,
+                      ),
                     ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: AppSpacing.md),
-          Expanded(
-            child: Column(
-              key: ValueKey("past_broadcast_text_${broadcast.id}"),
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Tooltip(
-                  key: ValueKey("past_broadcast_title_preview_${broadcast.id}"),
-                  message: broadcast.title,
-                  triggerMode: TooltipTriggerMode.longPress,
-                  enableFeedback: true,
-                  child: Text(
-                    broadcast.title,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      color: theme.colorScheme.onSurface,
-                      fontWeight: FontWeight.w900,
-                      height: 1.15,
-                    ),
-                  ),
+                  ],
                 ),
-                const SizedBox(height: AppSpacing.xs),
-                LayoutBuilder(
-                  builder: (context, constraints) => Row(
-                    key: ValueKey("past_broadcast_metadata_${broadcast.id}"),
-                    children: [
-                      if (ageText != null)
-                        ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: category.isEmpty
-                                ? constraints.maxWidth
-                                : constraints.maxWidth * 0.65,
-                          ),
-                          child: Text(
-                            category.isEmpty ? ageText : "$ageText | ",
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: metadataStyle,
-                          ),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: _pastBroadcastThumbnailMinHeight),
+                child: Column(
+                  key: ValueKey("past_broadcast_text_${broadcast.id}"),
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Tooltip(
+                      key: ValueKey("past_broadcast_title_preview_${broadcast.id}"),
+                      message: broadcast.title,
+                      triggerMode: TooltipTriggerMode.longPress,
+                      enableFeedback: true,
+                      child: Text(
+                        broadcast.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          color: theme.colorScheme.onSurface,
+                          fontWeight: FontWeight.w900,
+                          height: 1.15,
                         ),
-                      if (category.isNotEmpty)
-                        Expanded(
-                          child: Semantics(
-                            button: onCategoryTap != null,
-                            label: "Open $category category",
-                            child: GestureDetector(
-                              key: ValueKey(
-                                "past_broadcast_category_button_${broadcast.id}",
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    LayoutBuilder(
+                      builder: (context, constraints) => Row(
+                        key: ValueKey("past_broadcast_metadata_${broadcast.id}"),
+                        children: [
+                          if (ageText != null)
+                            ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxWidth: category.isEmpty
+                                    ? constraints.maxWidth
+                                    : constraints.maxWidth * 0.65,
                               ),
-                              behavior: HitTestBehavior.opaque,
-                              onTap: onCategoryTap,
                               child: Text(
-                                category,
+                                category.isEmpty ? ageText : "$ageText · ",
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: metadataStyle?.copyWith(
-                                  color: onCategoryTap == null ? null : theme.colorScheme.primary,
+                                style: metadataStyle,
+                              ),
+                            ),
+                          if (category.isNotEmpty)
+                            Expanded(
+                              child: Semantics(
+                                button: onCategoryTap != null,
+                                label: "Open $category category",
+                                child: GestureDetector(
+                                  key: ValueKey(
+                                    "past_broadcast_category_button_${broadcast.id}",
+                                  ),
+                                  behavior: HitTestBehavior.opaque,
+                                  onTap: onCategoryTap,
+                                  child: Text(
+                                    category,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: metadataStyle?.copyWith(
+                                      color: onCategoryTap == null
+                                          ? null
+                                          : theme.colorScheme.primary,
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                        ),
-                    ],
-                  ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      "${formatCompactCount(broadcast.viewCount)} views",
+                      key: ValueKey("past_broadcast_views_${broadcast.id}"),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: mutedColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  "${formatCompactCount(broadcast.viewCount)} views",
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: mutedColor,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ],
       ),

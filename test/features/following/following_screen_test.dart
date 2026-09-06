@@ -419,12 +419,14 @@ void main() {
   ) async {
     var channelSelections = 0;
     var streamSelections = 0;
+    var categorySelections = 0;
     const channel = StreamChannel(
       login: "liveone",
       name: "LiveOne",
       initials: "LO",
       title: "Building with chat",
       category: "Minecraft",
+      categoryId: "27471",
       viewers: "321",
       avatarColors: [Colors.purple, Colors.pink],
       thumbnailColors: [Colors.blue, Colors.indigo],
@@ -443,6 +445,9 @@ void main() {
               },
               onStreamSelected: (_) {
                 streamSelections += 1;
+              },
+              onCategorySelected: (_) {
+                categorySelections += 1;
               },
             ),
           ),
@@ -476,6 +481,18 @@ void main() {
 
     expect(channelSelections, 3);
     expect(streamSelections, 1);
+    await tester.tap(find.byKey(const ValueKey("stream_category_LiveOne")));
+    await tester.pump();
+    expect(categorySelections, 1);
+    expect(streamSelections, 1);
+    final category = tester.widget<Text>(find.byKey(const ValueKey("stream_category_LiveOne")));
+    expect(category.style?.color, buildFlowTheme(Brightness.dark).colorScheme.primary);
+
+    await tester.longPress(find.byKey(const ValueKey("stream_title_LiveOne")));
+    await tester.pumpAndSettle();
+    expect(find.text(channel.title), findsNWidgets(2));
+    expect(streamSelections, 1);
+    await tester.pump(const Duration(seconds: 6));
   });
 
   testWidgets("uses category metadata space for a second title line", (tester) async {
@@ -599,11 +616,12 @@ void main() {
         .getTopLeft(find.byKey(const ValueKey("stream_card_content_padding_LiveOne")))
         .dy;
 
-    final sortHeight = tester.getSize(find.byKey(const ValueKey("following_stream_sort"))).height;
+    final sortContent = find.byKey(const ValueKey("sort_button_content"));
     expect(
-      firstCardTop - headerBottom - sortHeight,
+      tester.getTopLeft(sortContent).dy - headerBottom,
       closeTo(PageHeaderLayout.headerContentGap, 0.1),
     );
+    expect(firstCardTop - tester.getBottomLeft(sortContent).dy, closeTo(12, 0.1));
     expect(
       find.descendant(
         of: find.byKey(const ValueKey("frosted_top_bar")),
@@ -743,7 +761,7 @@ class _DelayedGuestRefreshAuthController extends TwitchAuthController {
   }
 }
 
-class _StaticCookieExtractor implements TwitchCookieExtractor {
+class _StaticCookieExtractor extends TwitchCookieExtractor {
   const _StaticCookieExtractor();
 
   @override

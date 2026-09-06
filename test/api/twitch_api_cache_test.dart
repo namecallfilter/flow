@@ -18,7 +18,7 @@ void main() {
       httpClient: MockClient((request) async {
         final body = jsonDecode(request.body) as Map<String, Object?>;
         requests.add(body["variables"]! as Map<String, Object?>);
-        expect(request.headers["Authorization"], "OAuth web-token-123");
+        expect(request.headers["Authorization"], isNull);
         return _jsonResponse({
           "data": {
             "streams": {
@@ -30,15 +30,15 @@ void main() {
       }),
     );
     final cache = TwitchApiCache(clientLoader: () async => client);
-    for (final sort in StreamSort.values) {
+    for (final sort in StreamSort.values.where((sort) => sort != StreamSort.recommendedForYou)) {
       await cache.fetchLiveStreamsPage(sort: sort);
       await cache.fetchLiveStreamsPage(sort: sort);
     }
     await cache.fetchLiveStreamsPage(sort: StreamSort.viewersLowToHigh, cursor: "ascending-page-2");
     expect(requests.map((variables) => (variables["options"]! as Map<String, Object?>)["sort"]), [
-      "RELEVANCE",
       "VIEWER_COUNT",
       "VIEWER_COUNT_ASC",
+      "RECENT",
       "VIEWER_COUNT_ASC",
     ]);
     expect(requests.last["after"], "ascending-page-2");

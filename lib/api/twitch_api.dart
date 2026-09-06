@@ -1,5 +1,6 @@
 import "dart:math" as math;
 
+import "package:flow/api/twitch_cookie_extractor.dart";
 import "package:flow/graphql/FlowChannelDetails.graphql.dart";
 import "package:flow/graphql/FlowChannelSubscription.graphql.dart";
 import "package:flow/graphql/FlowCurrentUser.graphql.dart";
@@ -49,6 +50,7 @@ class TwitchFollowedStream {
     required this.gameName,
     required this.title,
     required this.viewerCount,
+    this.gameId = "",
     this.thumbnailUrl,
     this.profileImageUrl,
     this.startedAt,
@@ -60,6 +62,7 @@ class TwitchFollowedStream {
   final String userLogin;
   final String userName;
   final String gameName;
+  final String gameId;
   final String title;
   final int viewerCount;
   final String? thumbnailUrl;
@@ -229,27 +232,49 @@ class TwitchApiClient {
     String? graphQlClientId,
     this.gqlAccessToken,
     http.Client? httpClient,
+    Future<Map<String, String>?> Function(String authorization)? integrityContextLoader,
   }) : graphQlClientId = _nonEmptyValue(graphQlClientId) ?? defaultGraphQlClientId,
-       _httpClient = httpClient ?? http.Client();
+       _httpClient = httpClient ?? http.Client(),
+       _integrityContextLoader =
+           integrityContextLoader ??
+           const MethodChannelTwitchCookieExtractor().getTwitchIntegrityContext;
 
   static const _gqlEndpoint = "https://gql.twitch.tv/gql";
   static const _maxPageSize = 100;
   static const _maxTopStreamsPageSize = 30;
   static const defaultGraphQlClientId = "ue6666qo983tsx6so1t0vnawi233wa";
+  // auth-token cookies are issued to Twitch's web client.
+  static const _webSessionGraphQlClientId = "kimne78kx3ncx6brgo4mv6wki5h1ko";
+  // Directory cursors and recommendation context share this identity across API clients.
+  static final _deviceId = _requestId().replaceAll("-", "");
+  static String? _webSessionDeviceId;
+  static int _webSessionRevision = 0;
+  static ({String authorization, String token, Map<String, String> headers})? _integrityGrant;
+  static final _recommendationRequestId = _requestId();
+
+  static void restoreWebSessionDeviceId(String? deviceId) {
+    final normalized = _nonEmptyValue(deviceId);
+    if (normalized == null || normalized != _webSessionDeviceId) {
+      _webSessionRevision++;
+      _integrityGrant = null;
+    }
+    _webSessionDeviceId = normalized;
+  }
 
   final String clientId;
   final String graphQlClientId;
   final String accessToken;
   final String? gqlAccessToken;
   final http.Client _httpClient;
+  final Future<Map<String, String>?> Function(String authorization) _integrityContextLoader;
 
   late final graphql.GraphQLClient _graphQlClient = _graphQlClientWithHeaders(
     _graphQlHeaders(includeToken: false),
   );
 
-  late final graphql.GraphQLClient _tokenGraphQlClient = _graphQlClientWithHeaders(
-    _graphQlHeaders(includeToken: true),
-  );
+  graphql.GraphQLClient? _tokenClient;
+  graphql.GraphQLClient get _tokenGraphQlClient =>
+      _tokenClient ??= _graphQlClientWithHeaders(_graphQlHeaders(includeToken: true));
 
   Future<bool> validateAccessToken(String token) async {
     final uri = Uri.https("id.twitch.tv", "/oauth2/validate");
@@ -305,6 +330,7 @@ class TwitchApiClient {
           ),
         ),
         "FlowFollowedLiveUsers",
+        retryIntegrityChallenge: true,
       );
       final currentUser = _mapValue(data.toJson()["currentUser"]);
       final connection = _mapValue(currentUser?["followedLiveUsers"]);
@@ -424,21 +450,40 @@ class TwitchApiClient {
   Future<TwitchPage<TwitchCategory>> fetchTopCategoriesPage({
     int first = 12,
     String? cursor,
+    CategorySort sort = CategorySort.viewersHighToLow,
   }) async {
     final data = await _query(
-      () => _graphQlClient.query$FlowTopGames(
-        Options$Query$FlowTopGames(
-          variables: Variables$Query$FlowTopGames(
-            first: _boundedFirst(first),
-            after: _nonEmptyValue(cursor),
-          ),
-          fetchPolicy: graphql.FetchPolicy.noCache,
-        ),
-      ),
+      () =>
+          (sort == CategorySort.recommendedForYou && _nonEmptyValue(gqlAccessToken) != null
+                  ? _tokenGraphQlClient
+                  : _graphQlClient)
+              .query$FlowTopGames(
+                Options$Query$FlowTopGames(
+                  variables: Variables$Query$FlowTopGames(
+                    first: sort == CategorySort.recommendedForYou
+                        ? (cursor == null ? 12 : 36)
+                        : _boundedFirst(first),
+                    after: _nonEmptyValue(cursor),
+                    options: sort == CategorySort.recommendedForYou
+                        ? Input$GameOptions(
+                            sort: Enum$GameSort.RELEVANCE,
+                            recommendationsContext: Input$RecommendationsContext(
+                              platform: "mobile_web",
+                            ),
+                          )
+                        : Input$GameOptions(sort: Enum$GameSort.VIEWER_COUNT),
+                  ),
+                  fetchPolicy: graphql.FetchPolicy.noCache,
+                ),
+              ),
       "FlowTopGames",
+      retryIntegrityChallenge: sort == CategorySort.recommendedForYou,
     );
 
-    return _categoryPageFromConnection(_mapValue(data.toJson()["games"]));
+    return _categoryPageFromConnection(
+      _mapValue(data.toJson()["games"]),
+      cursorOverlap: sort == CategorySort.recommendedForYou ? 4 : 0,
+    );
   }
 
   Future<List<TwitchCategory>> searchCategories(
@@ -518,20 +563,42 @@ class TwitchApiClient {
     }
 
     final data = await _query(
-      () => _directoryGraphQlClient.query$FlowTopStreams(
-        Options$Query$FlowTopStreams(
-          variables: Variables$Query$FlowTopStreams(
-            first: _boundedFirst(first, max: _maxTopStreamsPageSize),
-            after: _nonEmptyValue(cursor),
-            options: Input$StreamOptions(sort: _graphQlStreamSort(sort)),
-          ),
-          fetchPolicy: graphql.FetchPolicy.noCache,
-        ),
-      ),
+      () =>
+          (sort == StreamSort.recommendedForYou && _nonEmptyValue(gqlAccessToken) != null
+                  ? _tokenGraphQlClient
+                  : _graphQlClient)
+              .query$FlowTopStreams(
+                Options$Query$FlowTopStreams(
+                  variables: Variables$Query$FlowTopStreams(
+                    first: sort == StreamSort.recommendedForYou
+                        ? (cursor == null ? 8 : 24)
+                        : _boundedFirst(first, max: _maxTopStreamsPageSize),
+                    after: _nonEmptyValue(cursor),
+                    options: sort == StreamSort.recommendedForYou
+                        ? Input$StreamOptions(
+                            sort: Enum$StreamSort.RELEVANCE,
+                            broadcasterLanguages: const [],
+                            includeRestricted: _nonEmptyValue(gqlAccessToken) != null
+                                ? const [Enum$StreamRestrictionType.SUB_ONLY_LIVE]
+                                : null,
+                            recommendationsContext: Input$RecommendationsContext(
+                              platform: "mobile_web",
+                            ),
+                          )
+                        : Input$StreamOptions(sort: _graphQlStreamSort(sort)),
+                  ),
+                  fetchPolicy: graphql.FetchPolicy.noCache,
+                ),
+              ),
       "FlowTopStreams",
+      retryIntegrityChallenge: sort == StreamSort.recommendedForYou,
     );
 
-    return _streamPageFromConnection(_mapValue(data.toJson()["streams"]));
+    final page = _streamPageFromConnection(
+      _mapValue(data.toJson()["streams"]),
+      cursorOverlap: sort == StreamSort.recommendedForYou ? 4 : 0,
+    );
+    return page;
   }
 
   Future<List<TwitchSearchChannel>> searchLiveChannels(
@@ -689,18 +756,31 @@ class TwitchApiClient {
     required StreamSort sort,
   }) async {
     final data = await _query(
-      () => _directoryGraphQlClient.query$FlowGameStreams(
-        Options$Query$FlowGameStreams(
-          variables: Variables$Query$FlowGameStreams(
-            id: gameId,
-            first: _boundedFirst(first),
-            after: _nonEmptyValue(cursor),
-            options: Input$GameStreamOptions(sort: _graphQlStreamSort(sort)),
-          ),
-          fetchPolicy: graphql.FetchPolicy.noCache,
-        ),
-      ),
+      () =>
+          (sort == StreamSort.recommendedForYou && _nonEmptyValue(gqlAccessToken) != null
+                  ? _tokenGraphQlClient
+                  : _graphQlClient)
+              .query$FlowGameStreams(
+                Options$Query$FlowGameStreams(
+                  variables: Variables$Query$FlowGameStreams(
+                    id: gameId,
+                    first: _boundedFirst(first),
+                    after: _nonEmptyValue(cursor),
+                    options: Input$GameStreamOptions(
+                      sort: _graphQlStreamSort(sort),
+                      recommendationsContext: sort == StreamSort.recommendedForYou
+                          ? Input$RecommendationsContext(platform: "mobile_web")
+                          : null,
+                      requestID: sort == StreamSort.recommendedForYou
+                          ? _recommendationRequestId
+                          : null,
+                    ),
+                  ),
+                  fetchPolicy: graphql.FetchPolicy.noCache,
+                ),
+              ),
       "FlowGameStreams",
+      retryIntegrityChallenge: sort == StreamSort.recommendedForYou,
     );
     final game = _mapValue(data.toJson()["game"]);
     final page = _streamPageFromConnection(_mapValue(game?["streams"]));
@@ -741,7 +821,13 @@ class TwitchApiClient {
       }
     }
 
-    if (sort != StreamSort.recommended) {
+    if (sort == StreamSort.recentlyStarted) {
+      streams.sort(
+        (left, right) => (right.startedAt ?? DateTime.fromMillisecondsSinceEpoch(0)).compareTo(
+          left.startedAt ?? DateTime.fromMillisecondsSinceEpoch(0),
+        ),
+      );
+    } else if (sort != StreamSort.recommendedForYou) {
       streams.sort(
         (left, right) => sort == StreamSort.viewersLowToHigh
             ? left.viewerCount.compareTo(right.viewerCount)
@@ -753,9 +839,21 @@ class TwitchApiClient {
 
   Future<T> _query<T>(
     Future<graphql.QueryResult<T>> Function() request,
-    String operationName,
-  ) async {
-    final result = await request();
+    String operationName, {
+    bool retryIntegrityChallenge = false,
+  }) async {
+    final revision = _webSessionRevision;
+    var result = await request();
+    if (retryIntegrityChallenge &&
+        revision == _webSessionRevision &&
+        _nonEmptyValue(gqlAccessToken) != null &&
+        result.exception?.graphqlErrors.any(
+              (error) => error.message.toLowerCase().contains("failed integrity check"),
+            ) ==
+            true &&
+        await _refreshIntegrityGrant()) {
+      result = await request();
+    }
     final exception = result.exception;
     if (exception != null) {
       throw TwitchApiException(
@@ -770,6 +868,43 @@ class TwitchApiClient {
       );
     }
     return data;
+  }
+
+  Future<bool> _refreshIntegrityGrant() async {
+    _integrityGrant = null;
+    _tokenClient = null;
+    final revision = _webSessionRevision;
+    final authorization = _oauthAuthorizationHeader(gqlAccessToken!);
+    try {
+      final observed = await _integrityContextLoader(authorization);
+      const contextKeys = ["Client-Id", "X-Device-ID", "Client-Session-Id", "Client-Version"];
+      if (revision != _webSessionRevision ||
+          observed == null ||
+          contextKeys.any((key) => _nonEmptyValue(observed[key]) == null) ||
+          observed["Client-Id"] != _webSessionGraphQlClientId) {
+        return false;
+      }
+      final sessionHeaders = {
+        for (final key in contextKeys) key: observed[key]!,
+      };
+      for (final key in ["User-Agent", "Origin", "Referer"]) {
+        if (_nonEmptyValue(observed[key]) case final value?) {
+          sessionHeaders[key] = value;
+        }
+      }
+      if (_nonEmptyValue(observed["Client-Integrity"]) case final issuedToken?) {
+        _integrityGrant = (
+          authorization: authorization,
+          token: issuedToken,
+          headers: sessionHeaders,
+        );
+        _tokenClient = null;
+        return true;
+      }
+      return false;
+    } on Object {
+      return false;
+    }
   }
 
   graphql.GraphQLClient _graphQlClientWithHeaders(
@@ -790,14 +925,21 @@ class TwitchApiClient {
     return _tokenGraphQlClient;
   }
 
-  graphql.GraphQLClient get _directoryGraphQlClient =>
-      _nonEmptyValue(gqlAccessToken) == null ? _graphQlClient : _tokenGraphQlClient;
-
   static Enum$StreamSort _graphQlStreamSort(StreamSort sort) => switch (sort) {
-    StreamSort.recommended => Enum$StreamSort.RELEVANCE,
+    StreamSort.recommendedForYou => Enum$StreamSort.RELEVANCE,
     StreamSort.viewersHighToLow => Enum$StreamSort.VIEWER_COUNT,
     StreamSort.viewersLowToHigh => Enum$StreamSort.VIEWER_COUNT_ASC,
+    StreamSort.recentlyStarted => Enum$StreamSort.RECENT,
   };
+
+  static String _requestId() {
+    final random = math.Random();
+    final hex = List.generate(
+      4,
+      (_) => random.nextInt(1 << 32).toRadixString(16).padLeft(8, "0"),
+    ).join();
+    return "${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}";
+  }
 
   Future<Query$FlowPlaybackAccessToken> _fetchPlaybackAccessToken(String login) async {
     final options = Options$Query$FlowPlaybackAccessToken(
@@ -827,10 +969,18 @@ class TwitchApiClient {
     final headers = {
       "Client-Id": graphQlClientId,
       "Content-Type": "application/json",
+      "X-Device-ID": _deviceId,
     };
     final token = _nonEmptyValue(gqlAccessToken);
     if (includeToken && token != null) {
+      headers["Client-Id"] = _webSessionGraphQlClientId;
+      headers["X-Device-ID"] = _webSessionDeviceId ?? _deviceId;
       headers["Authorization"] = _oauthAuthorizationHeader(token);
+      final grant = _integrityGrant;
+      if (grant != null && grant.authorization == headers["Authorization"]) {
+        headers.addAll(grant.headers);
+        headers["Client-Integrity"] = grant.token;
+      }
     }
     return headers;
   }
@@ -844,8 +994,9 @@ class TwitchApiClient {
   }
 
   static TwitchPage<TwitchCategory> _categoryPageFromConnection(
-    Map<String, Object?>? connection,
-  ) => TwitchPage<TwitchCategory>(
+    Map<String, Object?>? connection, {
+    int cursorOverlap = 0,
+  }) => TwitchPage<TwitchCategory>(
     data: [
       for (final edge in _edgeList(connection))
         if (_mapValue(edge["node"]) case final node?)
@@ -856,24 +1007,25 @@ class TwitchApiClient {
             viewerCount: _intValue(node["viewersCount"]),
           ),
     ],
-    cursor: _connectionCursor(connection),
+    cursor: _connectionCursor(connection, overlap: cursorOverlap),
   );
 
   static TwitchPage<TwitchFollowedStream> _streamPageFromConnection(
-    Map<String, Object?>? connection,
-  ) => TwitchPage<TwitchFollowedStream>(
+    Map<String, Object?>? connection, {
+    int cursorOverlap = 0,
+  }) => TwitchPage<TwitchFollowedStream>(
     data: [
       for (final edge in _edgeList(connection))
         if (_mapValue(edge["node"]) case final node?) _streamFromGraphQlStream(node),
     ],
-    cursor: _connectionCursor(connection),
+    cursor: _connectionCursor(connection, overlap: cursorOverlap),
   );
 
   static List<Map<String, Object?>> _edgeList(
     Map<String, Object?>? connection,
   ) => _mapList(connection?["edges"]);
 
-  static String? _connectionCursor(Map<String, Object?>? connection) {
+  static String? _connectionCursor(Map<String, Object?>? connection, {int overlap = 0}) {
     final pageInfo = _mapValue(connection?["pageInfo"]);
     if (pageInfo?["hasNextPage"] != true) {
       return null;
@@ -883,7 +1035,8 @@ class TwitchApiClient {
     if (edges.isEmpty) {
       return null;
     }
-    return _nonEmptyValue(edges.last["cursor"]?.toString());
+    final edge = edges.length > overlap ? edges[edges.length - 1 - overlap] : edges.last;
+    return _nonEmptyValue(edge["cursor"]?.toString());
   }
 
   static TwitchUser _userFromGraphQlUser(Map<String, Object?> user) => TwitchUser(
@@ -918,6 +1071,7 @@ class TwitchApiClient {
       userLogin: _stringValue(broadcaster["login"]),
       userName: _stringValue(broadcaster["displayName"]),
       gameName: _stringValue(game?["displayName"]),
+      gameId: _stringValue(game?["id"]),
       title: _stringValue(broadcastSettings?["title"]),
       viewerCount: _intValue(stream["viewersCount"]),
       thumbnailUrl: stream["previewImageURL"] as String?,

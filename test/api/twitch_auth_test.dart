@@ -8,6 +8,7 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  tearDown(() => TwitchApiClient.restoreWebSessionDeviceId(null));
   test("rejects OAuth callbacks with mismatched state", () {
     expect(
       () => TwitchAuthCallback.parse(
@@ -21,10 +22,16 @@ void main() {
   test("completes Twitch auth and loads following data", () async {
     final store = _MemoryTwitchStore();
     final gqlAuthorizationHeaders = <String, String?>{};
+    final authenticatedDeviceIds = <String?>[];
     final controller = _authController(
       secureStore: store,
-      cookieExtractor: const _StaticCookieExtractor("cookie-token-123"),
+      cookieExtractor: const _StaticCookieExtractor("cookie-token-123", "browser-device-123"),
       gqlAuthorizationHeaders: gqlAuthorizationHeaders,
+      onRequest: (request) {
+        if (request.url.host == "gql.twitch.tv" && request.headers["Authorization"] != null) {
+          authenticatedDeviceIds.add(request.headers["X-Device-ID"]);
+        }
+      },
     );
 
     await controller.createAuthorizationUri();
@@ -45,6 +52,8 @@ void main() {
     expect(gqlAuthorizationHeaders["FlowFollowedLiveUsers"], "OAuth cookie-token-123");
     expect(gqlAuthorizationHeaders["FlowFollowedUsers"], "OAuth cookie-token-123");
     expect(gqlAuthorizationHeaders["FlowUsers"], isNull);
+    expect(authenticatedDeviceIds, isNotEmpty);
+    expect(authenticatedDeviceIds, everyElement("browser-device-123"));
   });
 
   test("clears an invalid saved session", () async {
@@ -224,6 +233,7 @@ TwitchAuthController _authController({
   required _MemoryTwitchStore secureStore,
   TwitchCookieExtractor cookieExtractor = const _StaticCookieExtractor(),
   Map<String, String?>? gqlAuthorizationHeaders,
+  void Function(http.Request)? onRequest,
   bool validateToken = true,
   Completer<void>? validationStarted,
   Future<http.Response>? validationResponse,
@@ -237,6 +247,7 @@ TwitchAuthController _authController({
     gqlAccessToken: gqlAccessToken,
     httpClient: _authHttpClient(
       gqlAuthorizationHeaders: gqlAuthorizationHeaders,
+      onRequest: onRequest,
       validateToken: validateToken,
       validationStarted: validationStarted,
       validationResponse: validationResponse,
@@ -247,10 +258,12 @@ TwitchAuthController _authController({
 
 MockClient _authHttpClient({
   Map<String, String?>? gqlAuthorizationHeaders,
+  void Function(http.Request)? onRequest,
   bool validateToken = true,
   Completer<void>? validationStarted,
   Future<http.Response>? validationResponse,
 }) => MockClient((request) async {
+  onRequest?.call(request);
   if (request.url.host == "id.twitch.tv" && request.url.path == "/oauth2/validate") {
     if (validationStarted != null && !validationStarted.isCompleted) {
       validationStarted.complete();
@@ -469,11 +482,15 @@ class _FailingNewSessionStore extends _MemoryTwitchStore {
   }
 }
 
-class _StaticCookieExtractor implements TwitchCookieExtractor {
-  const _StaticCookieExtractor([this.token]);
+class _StaticCookieExtractor extends TwitchCookieExtractor {
+  const _StaticCookieExtractor([this.token, this.deviceId]);
 
   final String? token;
+  final String? deviceId;
 
   @override
   Future<String?> extractTwitchAuthToken() async => token;
+
+  @override
+  Future<String?> extractTwitchDeviceId() async => deviceId;
 }

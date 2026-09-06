@@ -17,6 +17,7 @@ import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flow/shared/widgets/avatar_ring.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
+import "package:flow/shared/widgets/pull_to_refresh.dart";
 import "package:flow/shared/widgets/skeleton.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
@@ -26,7 +27,85 @@ import "package:http/testing.dart";
 typedef _RequestObserver = void Function(http.Request request);
 
 void main() {
-  testWidgets("live sort picker saves the choice and sends a new server order", (tester) async {
+  testWidgets("recommendation paging stops after an error and resumes after refresh", (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 800);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final requests = <http.Request>[];
+    var rejectContinuation = true;
+    final apiCache = TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+        gqlAccessToken: "web-token-123",
+        httpClient: MockClient((request) async {
+          requests.add(request);
+          final isFirstPage = _graphQlVariables(request)["after"] == null;
+          if (!isFirstPage && rejectContinuation) {
+            return _jsonResponse({
+              "errors": [
+                {"message": "Connection lost"},
+              ],
+            });
+          }
+          return _streamConnectionResponse(
+            [
+              for (var index = isFirstPage ? 0 : 4; index < (isFirstPage ? 8 : 28); index++)
+                {
+                  "id": "stream-$index",
+                  "broadcaster": {
+                    "id": "creator-$index",
+                    "login": "streamer$index",
+                    "displayName": "Streamer $index",
+                    "profileImageURL": "",
+                  },
+                  "viewersCount": 100,
+                },
+            ],
+            cursor: isFirstPage ? "personal-next-page" : null,
+          );
+        }),
+      ),
+    );
+    final store = BrowseStore(apiCache: apiCache)
+      ..categoriesLoaded = true
+      ..selectedSection = BrowseSection.liveChannels
+      ..streamSort = StreamSort.recommendedForYou;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: BrowseScreen(apiCache: apiCache, browseStore: store, periodicRefreshInterval: null),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(store.liveChannels, hasLength(8));
+    expect(requests, hasLength(1));
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -650));
+    await tester.pumpAndSettle();
+    expect(requests, hasLength(2));
+    expect(store.liveChannelsError, contains("Connection lost"));
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -100));
+    await tester.pumpAndSettle();
+    expect(requests, hasLength(2));
+
+    rejectContinuation = false;
+    tester.widget<CustomScrollView>(find.byType(CustomScrollView)).controller!.jumpTo(0);
+    await tester.widget<FlowPullToRefresh>(find.byType(FlowPullToRefresh)).onRefresh();
+    await tester.pumpAndSettle();
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -650));
+    await tester.pumpAndSettle();
+    expect(requests, hasLength(4));
+    expect(_graphQlVariables(requests.last)["after"], "personal-next-page");
+    expect(_graphQlVariables(requests.last)["first"], 24);
+    expect(store.liveChannels, hasLength(28));
+    expect(store.liveChannelsError, isNull);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets("live sort picker saves Recently Started and sends its server order", (tester) async {
     final requests = <http.Request>[];
     final preferences = MemoryFlowPreferences();
     await tester.pumpWidget(
@@ -49,12 +128,12 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text("Viewers: High to Low"));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(CheckedPopupMenuItem<StreamSort>, "Recommended"));
+    await tester.tap(find.widgetWithText(CheckedPopupMenuItem<StreamSort>, "Recently Started"));
     await tester.pumpAndSettle();
     final request = requests.lastWhere((request) => _isGraphQlOperation(request, "FlowTopStreams"));
-    expect(_graphQlVariables(request)["options"], {"sort": "RELEVANCE"});
+    expect(_graphQlVariables(request)["options"], containsPair("sort", "RECENT"));
     expect(_graphQlVariables(request)["after"], isNull);
-    expect(await preferences.readStreamSort("browse"), StreamSort.recommended);
+    expect(await preferences.readStreamSort("browse"), StreamSort.recentlyStarted);
     expect(tester.takeException(), isNull);
   });
 
@@ -284,7 +363,7 @@ void main() {
     expect(find.byKey(const ValueKey("bottom_nav_item_Live Channels")), findsOneWidget);
   });
 
-  testWidgets("leaves room for the live sort picker after the section selector", (tester) async {
+  testWidgets("uses the same visible gap above and below both Browse sort pickers", (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(390, 1200);
     tester.view.padding = const FakeViewPadding(top: 59);
@@ -303,18 +382,28 @@ void main() {
     await tester.pumpAndSettle();
 
     final selector = find.byKey(const ValueKey("browse_segmented_control"));
-    final categoryGap =
-        tester.getTopLeft(find.byKey(const ValueKey("browse_category_card_Just Chatting"))).dy -
-        tester.getBottomLeft(selector).dy;
+    final sortContent = find.byKey(const ValueKey("sort_button_content"));
+    expect(
+      tester.getTopLeft(sortContent).dy - tester.getBottomLeft(selector).dy,
+      closeTo(AppSpacing.md, 0.1),
+    );
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey("browse_category_card_Just Chatting"))).dy -
+          tester.getBottomLeft(sortContent).dy,
+      closeTo(AppSpacing.md, 0.1),
+    );
 
     await tester.tap(find.byKey(const ValueKey("browse_segment_live_channels")));
     await tester.pumpAndSettle();
 
-    final liveGap =
-        tester.getTopLeft(find.byType(StreamCard).first).dy - tester.getBottomLeft(selector).dy;
-    expect(categoryGap, closeTo(AppSpacing.md, 0.1));
-    final sortHeight = tester.getSize(find.byKey(const ValueKey("browse_stream_sort"))).height;
-    expect(liveGap, closeTo(categoryGap + sortHeight, 0.1));
+    expect(
+      tester.getTopLeft(sortContent).dy - tester.getBottomLeft(selector).dy,
+      closeTo(AppSpacing.md, 0.1),
+    );
+    expect(
+      tester.getTopLeft(find.byType(StreamCard).first).dy - tester.getBottomLeft(sortContent).dy,
+      closeTo(AppSpacing.md, 0.1),
+    );
   });
 
   testWidgets("matches stream skeleton geometry in Browse Live Channels", (tester) async {
@@ -662,7 +751,7 @@ void main() {
         of: find.byKey(const ValueKey("category_streams_title_Just Chatting")),
         matching: find.byKey(const ValueKey("scroll_reactive_header_clip")),
       ),
-      content: find.byKey(const ValueKey("category_stream_sort")),
+      content: find.byKey(const ValueKey("sort_button_content")),
     );
     expect(
       requestedRequests.any(
@@ -1653,7 +1742,7 @@ class _MemoryTwitchStore implements TwitchSecureStore {
   }
 }
 
-class _StaticCookieExtractor implements TwitchCookieExtractor {
+class _StaticCookieExtractor extends TwitchCookieExtractor {
   const _StaticCookieExtractor();
 
   @override

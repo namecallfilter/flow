@@ -190,6 +190,13 @@ class _BrowseScreenState extends State<BrowseScreen> {
     unawaited(_store.selectStreamSort(sort));
   }
 
+  void _selectCategorySort(CategorySort sort) {
+    if (_scrollController.hasClients) {
+      _scrollController.jumpTo(0);
+    }
+    unawaited(_store.selectCategorySort(sort));
+  }
+
   void _persistScrollOffset() {
     if (!_scrollController.hasClients) {
       return;
@@ -240,12 +247,16 @@ class _BrowseScreenState extends State<BrowseScreen> {
     }
 
     if (_visibleSection == BrowseSection.categories) {
-      if (!_store.categoriesLoaded || _store.categoriesCursor == null) {
+      if (!_store.categoriesLoaded ||
+          _store.categoriesCursor == null ||
+          _store.categoriesError != null) {
         return;
       }
       unawaited(_store.loadCategories());
     } else {
-      if (!_store.liveChannelsLoaded || _store.liveChannelsCursor == null) {
+      if (!_store.liveChannelsLoaded ||
+          _store.liveChannelsCursor == null ||
+          _store.liveChannelsError != null) {
         return;
       }
       unawaited(_store.loadLiveChannels());
@@ -289,6 +300,22 @@ class _BrowseScreenState extends State<BrowseScreen> {
             initialChannel: _channelPreviewFromStreamChannel(channel),
           ),
         ),
+      ),
+    );
+  }
+
+  void _openStreamCategory(StreamChannel channel) {
+    if (channel.categoryId.isEmpty) {
+      return;
+    }
+    _openCategory(
+      BrowseCategory(
+        id: channel.categoryId,
+        name: channel.category,
+        viewerCount: 0,
+        viewers: "--",
+        imageUrl: null,
+        colors: colorsForText(channel.categoryId),
       ),
     );
   }
@@ -353,7 +380,10 @@ class _BrowseScreenState extends State<BrowseScreen> {
                   SliverPadding(
                     padding: EdgeInsets.fromLTRB(
                       AppSpacing.lg,
-                      topScrollPadding,
+                      topScrollPadding -
+                          (widget.showLiveChannelsSection
+                              ? 0
+                              : StreamSortButton.contentVerticalPadding),
                       AppSpacing.lg,
                       0,
                     ).copyWith(bottom: bottomScrollPadding),
@@ -366,14 +396,22 @@ class _BrowseScreenState extends State<BrowseScreen> {
                               onSectionSelected: _selectSection,
                             ),
                           ),
-                          const SliverToBoxAdapter(child: SizedBox(height: AppSpacing.md)),
                         ],
                         if (selectedSection == BrowseSection.liveChannels)
                           SliverToBoxAdapter(
                             child: StreamSortButton(
                               key: const ValueKey("browse_stream_sort"),
                               sort: _store.streamSort,
+                              options: StreamSort.values,
                               onSelected: _selectStreamSort,
+                            ),
+                          )
+                        else
+                          SliverToBoxAdapter(
+                            child: CategorySortButton(
+                              key: const ValueKey("browse_category_sort"),
+                              sort: _store.categorySort,
+                              onSelected: _selectCategorySort,
                             ),
                           ),
                         SliverOffstage(
@@ -407,6 +445,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
                               channels: _store.liveChannels,
                               onChannelSelected: _openLiveChannel,
                               onStreamSelected: _openPlayer,
+                              onCategorySelected: _openStreamCategory,
                             ),
                           ),
                         ),
@@ -1391,7 +1430,7 @@ class _CategoryStreamsScreenState extends State<CategoryStreamsScreen> {
     if (!_scrollController.hasClients || _scrollController.position.extentAfter > 420) {
       return;
     }
-    if (!_store.loaded || _store.cursor == null) {
+    if (!_store.loaded || _store.cursor == null || _store.errorMessage != null) {
       return;
     }
     unawaited(_store.loadStreams());
@@ -1441,7 +1480,10 @@ class _CategoryStreamsScreenState extends State<CategoryStreamsScreen> {
               slivers: [
                 SliverPadding(
                   padding: PageHeaderLayout.scrollPadding(
-                    top: PageHeaderLayout.backButtonContentTopPadding + topSafeAreaInset,
+                    top:
+                        PageHeaderLayout.backButtonContentTopPadding +
+                        topSafeAreaInset -
+                        StreamSortButton.contentVerticalPadding,
                     bottom: bottomScrollPadding,
                   ),
                   sliver: SliverMainAxisGroup(
@@ -1723,11 +1765,13 @@ class _LiveChannelsList extends StatelessWidget {
     required this.onStreamSelected,
     super.key,
     this.showCategories = true,
+    this.onCategorySelected,
   });
 
   final List<StreamChannel> channels;
   final ValueChanged<StreamChannel> onChannelSelected;
   final ValueChanged<StreamChannel> onStreamSelected;
+  final ValueChanged<StreamChannel>? onCategorySelected;
   final bool showCategories;
 
   @override
@@ -1748,6 +1792,7 @@ class _LiveChannelsList extends StatelessWidget {
           channel: channel,
           onChannelSelected: onChannelSelected,
           onStreamSelected: onStreamSelected,
+          onCategorySelected: onCategorySelected,
           showCategory: showCategories,
         );
       },
@@ -1771,6 +1816,12 @@ class _LiveChannelsList extends StatelessWidget {
       ),
     );
     properties.add(DiagnosticsProperty<bool>("showCategories", showCategories));
+    properties.add(
+      ObjectFlagProperty<ValueChanged<StreamChannel>?>.has(
+        "onCategorySelected",
+        onCategorySelected,
+      ),
+    );
   }
 }
 

@@ -19,10 +19,20 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "flow/cookie_extractor")
             .setMethodCallHandler { call, result ->
-                if (call.method == "extractTwitchAuthToken") {
-                    result.success(extractTwitchAuthToken())
-                } else {
-                    result.notImplemented()
+                when (call.method) {
+                    "extractTwitchAuthToken" -> result.success(extractTwitchCookie("auth-token"))
+                    "extractTwitchDeviceId" -> result.success(extractTwitchCookie("unique_id"))
+                    "getTwitchIntegrityContext" -> {
+                        val authorization = call.argument<String>("authorization")
+                        if (authorization.isNullOrBlank()) {
+                            result.success(null)
+                        } else {
+                            TwitchIntegritySession(this).start(authorization) { headers ->
+                                result.success(headers)
+                            }
+                        }
+                    }
+                    else -> result.notImplemented()
                 }
             }
 
@@ -53,7 +63,7 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun extractTwitchAuthToken(): String? {
+    private fun extractTwitchCookie(name: String): String? {
         val cookieManager = CookieManager.getInstance()
         val cookies = cookieManager.getCookie("https://twitch.tv")
             ?: cookieManager.getCookie("https://www.twitch.tv")
@@ -61,7 +71,7 @@ class MainActivity : FlutterActivity() {
         return cookies
             ?.split(";")
             ?.map { it.trim() }
-            ?.firstOrNull { it.startsWith("auth-token=") }
-            ?.substringAfter("auth-token=")
+            ?.firstOrNull { it.startsWith("$name=") }
+            ?.substringAfter("$name=")
     }
 }

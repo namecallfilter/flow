@@ -13,8 +13,8 @@ import "package:http/testing.dart";
 typedef _RequestObserver = void Function(http.Request request);
 
 void main() {
-  test("following sorts exact viewer counts and preserves recommendation order", () async {
-    final store = FollowingStore(authController: _authController());
+  test("viewer sorts preserve the followed-query recommendation snapshot", () async {
+    final store = FollowingStore(authController: _authController(), apiCache: _TrackingApiCache());
     store.applyConnection(
       TwitchAuthConnection(
         user: const TwitchUser(id: "viewer", login: "viewer", displayName: "Viewer"),
@@ -36,8 +36,18 @@ void main() {
     expect(store.liveChannels.map((channel) => channel.viewerCount), [1001, 1000, 999]);
     await store.selectStreamSort(StreamSort.viewersLowToHigh);
     expect(store.liveChannels.map((channel) => channel.viewerCount), [999, 1000, 1001]);
-    await store.selectStreamSort(StreamSort.recommended);
+    await store.selectStreamSort(StreamSort.recommendedForYou);
     expect(store.liveChannels.map((channel) => channel.viewerCount), [999, 1001, 1000]);
+    await store.selectStreamSort(StreamSort.viewersHighToLow);
+    expect(store.liveChannels.map((channel) => channel.viewerCount), [1001, 1000, 999]);
+    await store.selectStreamSort(StreamSort.recommendedForYou);
+    expect(store.liveChannels.map((channel) => channel.viewerCount), [999, 1001, 1000]);
+    expect(store.connection!.followedStreams.map((stream) => stream.viewerCount), [
+      999,
+      1001,
+      1000,
+    ]);
+    expect(store.followingError, isNull);
   });
   test("keeps saved following data in memory until refresh", () async {
     var followedRequests = 0;
@@ -58,6 +68,13 @@ void main() {
     expect(store.sessionStatus, TwitchSessionStatus.authenticated);
     expect(store.liveChannels.single.name, "AussieAntics");
     expect(followedRequests, 1);
+
+    await store.selectStreamSort(StreamSort.recommendedForYou);
+    await store.selectStreamSort(StreamSort.viewersLowToHigh);
+    await store.selectStreamSort(StreamSort.recommendedForYou);
+    expect(store.liveChannels.single.name, "AussieAntics");
+    expect(followedRequests, 1);
+    expect(store.followingError, isNull);
 
     await store.loadSavedConnection(refresh: true);
 
@@ -400,7 +417,7 @@ class _FailingClearTwitchStore extends _MemoryTwitchStore {
   );
 }
 
-class _StaticCookieExtractor implements TwitchCookieExtractor {
+class _StaticCookieExtractor extends TwitchCookieExtractor {
   const _StaticCookieExtractor();
 
   @override

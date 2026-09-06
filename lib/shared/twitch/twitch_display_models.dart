@@ -12,6 +12,7 @@ class StreamChannel {
     required this.thumbnailColors,
     this.id = "",
     this.viewerCount = 0,
+    this.categoryId = "",
     this.avatarImageUrl,
     this.thumbnailUrl,
     this.startedAt,
@@ -23,6 +24,7 @@ class StreamChannel {
   final String initials;
   final String title;
   final String category;
+  final String categoryId;
   final String viewers;
   final int viewerCount;
   final List<Color> avatarColors;

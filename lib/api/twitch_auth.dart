@@ -208,6 +208,7 @@ class TwitchAuthController {
     }
 
     final revision = ++_sessionRevision;
+    TwitchApiClient.restoreWebSessionDeviceId(null);
     final state = _stateGenerator();
     _pendingAuthRevision = revision;
     _pendingAuthState = state;
@@ -252,6 +253,8 @@ class TwitchAuthController {
     if (gqlAccessToken == null || gqlAccessToken.isEmpty) {
       throw TwitchAuthException("Twitch web session token is missing.");
     }
+    await _restoreWebSessionDeviceId();
+    _ensurePendingAuthCurrent(revision);
     final apiClient = apiClientFactory(
       callback.accessToken,
       gqlAccessToken: gqlAccessToken,
@@ -343,6 +346,10 @@ class TwitchAuthController {
     if (credentials == null) {
       return null;
     }
+    await _restoreWebSessionDeviceId();
+    if (revision != _sessionRevision) {
+      return null;
+    }
     final apiClient = apiClientFactory(
       credentials.accessToken,
       gqlAccessToken: credentials.gqlAccessToken,
@@ -378,22 +385,33 @@ class TwitchAuthController {
     _sessionRevision++;
     _pendingAuthRevision = null;
     _pendingAuthState = null;
-    return _withSessionStorageLock(secureStore.clearSession);
+    return _withSessionStorageLock(() async {
+      await secureStore.clearSession();
+      TwitchApiClient.restoreWebSessionDeviceId(null);
+    });
   }
 
   Future<({String? accessToken, String? webSessionToken})> readSavedTokens() =>
       _withSessionStorageLock(() async {
         final accessToken = await secureStore.readAccessToken();
         final webSessionToken = await secureStore.readWebSessionToken();
+        if (webSessionToken != null) {
+          await _restoreWebSessionDeviceId();
+        }
         return (
           accessToken: accessToken,
           webSessionToken: webSessionToken,
         );
       });
 
+  Future<void> _restoreWebSessionDeviceId() async {
+    TwitchApiClient.restoreWebSessionDeviceId(await cookieExtractor.extractTwitchDeviceId());
+  }
+
   Future<void> _clearSessionIfCurrent(int revision) => _withSessionStorageLock(() async {
     if (revision == _sessionRevision) {
       await secureStore.clearSession();
+      TwitchApiClient.restoreWebSessionDeviceId(null);
     }
   });
 

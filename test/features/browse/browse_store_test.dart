@@ -10,11 +10,72 @@ import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  test("periodic refresh keeps recommendation cursors until an explicit refresh", () async {
+    final streamsCache = _DelayedLiveChannelsCache();
+    final streams = BrowseStore(apiCache: streamsCache)..streamSort = StreamSort.recommendedForYou;
+    final initialStreams = streams.loadLiveChannels(reset: true);
+    streamsCache.requests.single.response.complete(
+      const TwitchPage(data: [_firstStream], cursor: "personal-streams-next"),
+    );
+    await initialStreams;
+    await streams.refreshLiveChannelsFirstPage();
+    expect(streamsCache.requests, hasLength(1));
+    expect(streams.liveChannelsCursor, "personal-streams-next");
+    final refreshStreams = streams.loadLiveChannels(reset: true, refresh: true);
+    expect(streamsCache.requests.last.cursor, isNull);
+    streamsCache.requests.last.response.complete(
+      const TwitchPage(data: [_secondStream], cursor: "fresh-streams-next"),
+    );
+    await refreshStreams;
+    expect(streams.liveChannels.single.id, "creator-2");
+    expect(streams.liveChannelsCursor, "fresh-streams-next");
+
+    final categoriesCache = _DelayedCategoriesCache();
+    final categories = BrowseStore(apiCache: categoriesCache)
+      ..categorySort = CategorySort.recommendedForYou;
+    final initialCategories = categories.loadCategories(reset: true);
+    categoriesCache.requests.single.response.complete(
+      const TwitchPage(data: [_firstCategory], cursor: "personal-categories-next"),
+    );
+    await initialCategories;
+    await categories.refreshCategoriesFirstPage();
+    expect(categoriesCache.requests, hasLength(1));
+    expect(categories.categoriesCursor, "personal-categories-next");
+    final refreshCategories = categories.loadCategories(reset: true, refresh: true);
+    expect(categoriesCache.requests.last.cursor, isNull);
+    categoriesCache.requests.last.response.complete(
+      const TwitchPage(data: [_thirdCategory], cursor: "fresh-categories-next"),
+    );
+    await refreshCategories;
+    expect(categories.categories.single.id, "3");
+    expect(categories.categoriesCursor, "fresh-categories-next");
+  });
+
+  test("changing category mode discards the previous mode's in-flight page", () async {
+    final cache = _DelayedCategoriesCache();
+    final store = BrowseStore(apiCache: cache);
+    final oldLoad = store.loadCategories(reset: true);
+    final recommendedLoad = store.selectCategorySort(CategorySort.recommendedForYou);
+    expect(cache.requests.last.cursor, isNull);
+    cache.requests.last.response.complete(
+      const TwitchPage(data: [_thirdCategory], cursor: "recommended-page-2"),
+    );
+    await recommendedLoad;
+    cache.requests.first.response.complete(
+      const TwitchPage(data: [_firstCategory], cursor: "viewers-page-2"),
+    );
+    await oldLoad;
+    expect(store.categories.single.id, "3");
+    expect(store.categoriesCursor, "recommended-page-2");
+    expect(store.categorySort, CategorySort.recommendedForYou);
+  });
+
   for (final sort in StreamSort.values) {
     final expectedIds = switch (sort) {
       StreamSort.viewersHighToLow => ["creator-1", "creator-2", "creator-3"],
       StreamSort.viewersLowToHigh => ["creator-3", "creator-2", "creator-1"],
-      StreamSort.recommended => ["creator-3", "creator-1", "creator-2"],
+      StreamSort.recommendedForYou => ["creator-3", "creator-1", "creator-2"],
+      StreamSort.recentlyStarted => ["creator-1", "creator-2", "creator-3"],
     };
     test("Browse normalizes live counts across pages for ${sort.name}", () async {
       final cache = _DelayedLiveChannelsCache();
@@ -105,8 +166,8 @@ void main() {
       category: browseCategoryFromApi(_firstCategory),
     );
     final oldLoad = store.loadStreams(reset: true);
-    final newLoad = store.selectStreamSort(StreamSort.recommended);
-    expect(cache.requests.last.sort, StreamSort.recommended);
+    final newLoad = store.selectStreamSort(StreamSort.recommendedForYou);
+    expect(cache.requests.last.sort, StreamSort.recommendedForYou);
     cache.requests.first.response.completeError(TwitchApiException("Old request failed"));
     await oldLoad;
     expect(store.isLoading, isTrue);
@@ -147,13 +208,13 @@ void main() {
 
   test("live prefetch restores the saved order before its first request", () async {
     final preferences = MemoryFlowPreferences();
-    await preferences.saveStreamSort("browse", StreamSort.recommended);
+    await preferences.saveStreamSort("browse", StreamSort.recommendedForYou);
     final cache = _DelayedLiveChannelsCache();
     final store = BrowseStore(apiCache: cache, preferences: preferences);
     final prefetch = store.loadLiveChannels(reset: true);
     final duplicate = store.loadLiveChannels(reset: true);
     await Future<void>.delayed(Duration.zero);
-    expect(cache.requests.single.sort, StreamSort.recommended);
+    expect(cache.requests.single.sort, StreamSort.recommendedForYou);
     cache.requests.single.response.complete(const TwitchPage(data: [], cursor: null));
     await Future.wait([prefetch, duplicate]);
     expect(store.liveChannelsLoaded, isTrue);
@@ -491,6 +552,7 @@ class _PaginatedCategoriesCache extends TwitchApiCache {
     int first = 12,
     String? cursor,
     bool refresh = false,
+    CategorySort sort = CategorySort.viewersHighToLow,
   }) async {
     if (refresh) {
       refreshRequests++;
@@ -569,6 +631,7 @@ class _DelayedCategoriesCache extends TwitchApiCache {
     int first = 12,
     String? cursor,
     bool refresh = false,
+    CategorySort sort = CategorySort.viewersHighToLow,
   }) {
     final response = Completer<TwitchPage<TwitchCategory>>();
     requests.add((cursor: cursor, refresh: refresh, response: response));

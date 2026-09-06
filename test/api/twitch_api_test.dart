@@ -1,11 +1,258 @@
+import "dart:async";
 import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
+import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  tearDown(() => TwitchApiClient.restoreWebSessionDeviceId(null));
+
+  for (final clearDuring in ["initial request", "session observation"]) {
+    test("clearing the web session cancels recovery during $clearDuring", () async {
+      final requestStarted = Completer<void>();
+      final response = Completer<http.Response>();
+      final observationStarted = Completer<void>();
+      final observed = Completer<Map<String, String>?>();
+      var requests = 0;
+      final client = TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+        gqlAccessToken: "web-token-123",
+        integrityContextLoader: (_) {
+          observationStarted.complete();
+          return observed.future;
+        },
+        httpClient: MockClient((_) {
+          requests++;
+          requestStarted.complete();
+          return response.future;
+        }),
+      );
+      final load = client.fetchLiveStreamsPage(
+        sort: StreamSort.recommendedForYou,
+        cursor: "personal-next",
+      );
+      final failure = expectLater(load, throwsA(isA<TwitchApiException>()));
+      await requestStarted.future;
+      if (clearDuring == "initial request") {
+        TwitchApiClient.restoreWebSessionDeviceId(null);
+      }
+      response.complete(
+        _jsonResponse({
+          "errors": [
+            {"message": "failed integrity check"},
+          ],
+        }),
+      );
+      if (clearDuring == "session observation") {
+        await observationStarted.future;
+        TwitchApiClient.restoreWebSessionDeviceId(null);
+        observed.complete({
+          "Client-Id": "kimne78kx3ncx6brgo4mv6wki5h1ko",
+          "X-Device-ID": "browser-device",
+          "Client-Session-Id": "page-session",
+          "Client-Version": "page-build",
+          "Client-Integrity": "issued-before-sign-out",
+        });
+      }
+      await failure;
+      expect(requests, 1);
+      expect(observationStarted.isCompleted, clearDuring == "session observation");
+    });
+  }
+
+  for (final directory in ["global", "category"]) {
+    for (final outcome in ["success", "challenge again", "no observed token"]) {
+      test("authenticated $directory integrity recovery retries at most once: $outcome", () async {
+        final gqlRequests = <http.Request>[];
+        var observedSessions = 0;
+        final client = TwitchApiClient(
+          clientId: "client-123",
+          accessToken: "token-123",
+          gqlAccessToken: "web-token-123",
+          integrityContextLoader: (authorization) async {
+            observedSessions++;
+            expect(authorization, "OAuth web-token-123");
+            return {
+              "Client-Id": "kimne78kx3ncx6brgo4mv6wki5h1ko",
+              "X-Device-ID": "observed-browser-device",
+              "Client-Session-Id": "observed-page-session",
+              "Client-Version": "observed-page-build",
+              if (outcome != "no observed token")
+                "Client-Integrity": "server-issued-integrity-token",
+            };
+          },
+          httpClient: MockClient((request) async {
+            expect(request.headers["Authorization"], "OAuth web-token-123");
+            expect(request.headers["Client-Id"], "kimne78kx3ncx6brgo4mv6wki5h1ko");
+            expect(request.url.path, "/gql");
+            gqlRequests.add(request);
+            if (gqlRequests.length == 1 || outcome == "challenge again") {
+              return _jsonResponse({
+                "errors": [
+                  {"message": "failed integrity check"},
+                ],
+              });
+            }
+            expect(request.body, gqlRequests.first.body);
+            expect(request.headers["Client-Integrity"], "server-issued-integrity-token");
+            expect(request.headers["Client-Session-Id"], "observed-page-session");
+            return _jsonResponse({
+              "data": {
+                "streams": {
+                  "edges": <Object?>[],
+                  "pageInfo": {"hasNextPage": false},
+                },
+              },
+            });
+          }),
+        );
+        final load = client.fetchLiveStreamsPage(
+          sort: StreamSort.recommendedForYou,
+          gameIds: directory == "category" ? ["category-id"] : const [],
+          cursor: "personal-page-2",
+        );
+        if (outcome == "success") {
+          await load;
+        } else {
+          await expectLater(load, throwsA(isA<TwitchApiException>()));
+        }
+        expect(observedSessions, 1);
+        expect(gqlRequests, hasLength(outcome == "no observed token" ? 1 : 2));
+      });
+    }
+  }
+
+  test("personalized recommendations use mobile context and retain auth across pages", () async {
+    final requests = <http.Request>[];
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      gqlAccessToken: "web-token-123",
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        return _jsonResponse({
+          "data": {
+            "streams": {
+              "edges": <Object?>[],
+              "pageInfo": {"hasNextPage": false},
+            },
+            "games": {
+              "edges": <Object?>[],
+              "pageInfo": {"hasNextPage": false},
+            },
+          },
+        });
+      }),
+    );
+    await client.fetchLiveStreamsPage(sort: StreamSort.recommendedForYou);
+    await client.fetchLiveStreamsPage(
+      sort: StreamSort.recommendedForYou,
+      cursor: "personal-page-2",
+    );
+    await client.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
+    await client.fetchTopCategoriesPage(
+      sort: CategorySort.recommendedForYou,
+      cursor: "game-page-2",
+    );
+    final options = requests.map((request) {
+      expect(request.headers["Authorization"], "OAuth web-token-123");
+      expect(request.headers["Client-Id"], "kimne78kx3ncx6brgo4mv6wki5h1ko");
+      expect(request.headers["X-Device-ID"], matches(RegExp(r"^[0-9a-f]{32}$")));
+      final variables =
+          (jsonDecode(request.body) as Map<String, Object?>)["variables"]! as Map<String, Object?>;
+      return variables["options"]! as Map<String, Object?>;
+    }).toList();
+    for (final option in options) {
+      expect(option["sort"], "RELEVANCE");
+      expect(option["recommendationsContext"], {"platform": "mobile_web"});
+      expect(option["requestID"], isNull);
+    }
+    for (final option in options.take(2)) {
+      expect(option["broadcasterLanguages"], isEmpty);
+      expect(option["includeRestricted"], ["SUB_ONLY_LIVE"]);
+    }
+    expect(
+      requests.map(
+        (request) =>
+            ((jsonDecode(request.body) as Map<String, Object?>)["variables"]!
+                as Map<String, Object?>)["first"],
+      ),
+      [8, 24, 12, 36],
+    );
+    final secondVariables =
+        (jsonDecode(requests[1].body) as Map<String, Object?>)["variables"]!
+            as Map<String, Object?>;
+    expect(secondVariables["after"], "personal-page-2");
+    expect(requests.map((request) => request.headers["X-Device-ID"]).toSet(), hasLength(1));
+    final nextClient = TwitchApiClient(
+      clientId: "client-123",
+      graphQlClientId: "public-client-override",
+      accessToken: "token-123",
+      httpClient: MockClient((request) async {
+        expect(request.headers["X-Device-ID"], requests.first.headers["X-Device-ID"]);
+        expect(request.headers["Authorization"], isNull);
+        expect(request.headers["Client-Id"], "public-client-override");
+        return _jsonResponse({
+          "data": {
+            "streams": {
+              "edges": <Object?>[],
+              "pageInfo": {"hasNextPage": false},
+            },
+          },
+        });
+      }),
+    );
+    await nextClient.fetchLiveStreamsPage();
+  });
+
+  test("mobile recommendation pagination overlaps the last four results", () async {
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      httpClient: MockClient(
+        (_) async => _jsonResponse({
+          "data": {
+            "streams": {
+              "edges": [
+                for (var index = 0; index < 8; index++)
+                  {
+                    "cursor": "stream-$index",
+                    "node": {
+                      "id": "$index",
+                      "broadcaster": {"id": "$index"},
+                    },
+                  },
+              ],
+              "pageInfo": {"hasNextPage": true},
+            },
+            "games": {
+              "edges": [
+                for (var index = 0; index < 12; index++)
+                  {
+                    "cursor": "game-$index",
+                    "node": {"id": "$index", "displayName": "Game $index"},
+                  },
+              ],
+              "pageInfo": {"hasNextPage": true},
+            },
+          },
+        }),
+      ),
+    );
+    final streams = await client.fetchLiveStreamsPage(sort: StreamSort.recommendedForYou);
+    final games = await client.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
+    expect(streams.data, hasLength(8));
+    expect(streams.cursor, "stream-3");
+    expect(games.data, hasLength(12));
+    expect(games.cursor, "game-7");
+    expect((await client.fetchLiveStreamsPage()).cursor, "stream-7");
+    expect((await client.fetchTopCategoriesPage()).cursor, "game-11");
+  });
+
   test("following pagination stops repeated cursors and merges duplicate channels", () async {
     var requests = 0;
     final client = TwitchApiClient(

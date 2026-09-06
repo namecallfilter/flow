@@ -24,6 +24,7 @@ import androidx.media3.common.util.Clock
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
@@ -33,6 +34,7 @@ import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.exoplayer.upstream.experimental.ExperimentalBandwidthMeter
 import androidx.media3.ui.PlayerView
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
@@ -165,14 +167,7 @@ internal class TwitchPlayerView(
     init {
         val trackSelector = DefaultTrackSelector(
             context,
-            AdaptiveTrackSelection.Factory(
-                AUTO_QUALITY_MIN_DURATION_FOR_INCREASE_MS,
-                AUTO_QUALITY_MAX_DURATION_FOR_DECREASE_MS,
-                AUTO_QUALITY_MIN_DURATION_TO_RETAIN_MS,
-                AUTO_QUALITY_BANDWIDTH_FRACTION,
-                AUTO_QUALITY_BUFFERED_FRACTION_TO_LIVE_EDGE,
-                Clock.DEFAULT,
-            ),
+            adaptiveTrackSelectionFactory(),
         )
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
@@ -183,9 +178,14 @@ internal class TwitchPlayerView(
             )
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
+        // Live startup may fetch only one completed segment before reaching
+        // server-paced prefetch. Use Media3's first-sample estimator instead of
+        // waiting for DefaultBandwidthMeter's 512 KiB / two-second threshold.
+        val bandwidthMeter = ExperimentalBandwidthMeter.Builder(context).build()
         player = ExoPlayer.Builder(context)
             .setTrackSelector(trackSelector)
             .setLoadControl(loadControl)
+            .setBandwidthMeter(bandwidthMeter)
             .setLivePlaybackSpeedControl(liveSpeedControl)
             .build()
         player.setAudioAttributes(AudioAttributes.DEFAULT, true)
@@ -201,6 +201,12 @@ internal class TwitchPlayerView(
                 val label = qualityLabel(format)
                 if (currentQualityLabel != label) {
                     currentQualityLabel = label
+                    Log.d(
+                        LOG_TAG,
+                        "video quality=$label mode=$selectedQualityId " +
+                            "bandwidth=${bandwidthMeter.bitrateEstimate}bps " +
+                            "buffered=${player.totalBufferedDuration}ms",
+                    )
                     emitQualities()
                 }
             }
@@ -373,6 +379,7 @@ internal class TwitchPlayerView(
         if (proxyDataSourceFactories.isNotEmpty()) {
             Log.d(LOG_TAG, "adaptive ad proxy active (${proxyUrls.size} endpoints)")
         }
+        val prefetchSegments = TwitchPrefetchSegments()
         val hlsDataSourceFactory = AdaptiveTwitchHlsDataSourceFactory(
             manifestResolver = TwitchPlaybackCoordinator(
                 rootUsherUri = playbackUrl,
@@ -381,7 +388,10 @@ internal class TwitchPlayerView(
                 freshRootUsherUri = ::refreshPlaybackUri,
                 onEvent = { message -> Log.d(LOG_TAG, "adaptive ad proxy: $message") },
             ),
-            directFactory = directDataSourceFactory,
+            directFactory = ResolvingDataSource.Factory(directDataSourceFactory) { dataSpec ->
+                val flags = prefetchSegments.flagsFor(dataSpec.uri.toString(), dataSpec.flags)
+                if (flags == dataSpec.flags) dataSpec else dataSpec.buildUpon().setFlags(flags).build()
+            },
         )
         val mediaSource = HlsMediaSource.Factory(hlsDataSourceFactory)
             .setExtractorFactory(TwitchEmsgMetadataBridgeExtractorFactory())
@@ -390,6 +400,7 @@ internal class TwitchPlayerView(
             .setPlaylistParserFactory(
                 ServerTimePlaylistParserFactory(
                     latencySession = session,
+                    prefetchSegments = prefetchSegments,
                     onAdCues = { parsedCues ->
                         mainHandler.post {
                             if (generation != sessionGeneration) {
@@ -918,7 +929,17 @@ internal class TwitchPlayerView(
         }
     }
 
-    private companion object {
+    companion object {
+        internal fun adaptiveTrackSelectionFactory(clock: Clock = Clock.DEFAULT) =
+            AdaptiveTrackSelection.Factory(
+                AUTO_QUALITY_MIN_DURATION_FOR_INCREASE_MS,
+                AUTO_QUALITY_MAX_DURATION_FOR_DECREASE_MS,
+                AUTO_QUALITY_MIN_DURATION_TO_RETAIN_MS,
+                AUTO_QUALITY_BANDWIDTH_FRACTION,
+                AUTO_QUALITY_BUFFERED_FRACTION_TO_LIVE_EDGE,
+                clock,
+            )
+
         const val LOG_TAG = "FlowTwitchPlayer"
         const val USER_AGENT = "Flow/1.0 (Android Media3)"
         const val AUTO_QUALITY_ID = "auto"
@@ -932,10 +953,14 @@ internal class TwitchPlayerView(
         const val MAX_BUFFER_MS = 6000
         const val BUFFER_FOR_PLAYBACK_MS = 1000
         const val BUFFER_AFTER_REBUFFER_MS = 1500
-        const val AUTO_QUALITY_MIN_DURATION_FOR_INCREASE_MS = 10_000
+        // A ten-second promotion gate can never be met by our six-second buffer.
+        // Twitch prefetch also inflates the advertised live duration used by
+        // Media3's live-edge adjustment. Promote once the real startup buffer is
+        // healthy, while still selecting by measured bandwidth.
+        const val AUTO_QUALITY_MIN_DURATION_FOR_INCREASE_MS = BUFFER_FOR_PLAYBACK_MS
         // Keep the downgrade guard inside Twitch's 1.65-second live-edge buffer.
         const val AUTO_QUALITY_MAX_DURATION_FOR_DECREASE_MS = 1_000
-        const val AUTO_QUALITY_MIN_DURATION_TO_RETAIN_MS = 10_000
+        const val AUTO_QUALITY_MIN_DURATION_TO_RETAIN_MS = MIN_BUFFER_MS
         const val AUTO_QUALITY_BANDWIDTH_FRACTION = 0.60f
         const val AUTO_QUALITY_BUFFERED_FRACTION_TO_LIVE_EDGE = 0.90f
         const val PLAYBACK_URI_REFRESH_TIMEOUT_SECONDS = 15L

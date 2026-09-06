@@ -103,6 +103,24 @@ mixin _$BrowseStore on BrowseStoreBase, Store {
     });
   }
 
+  late final _$categorySortAtom = Atom(
+    name: 'BrowseStoreBase.categorySort',
+    context: context,
+  );
+
+  @override
+  CategorySort get categorySort {
+    _$categorySortAtom.reportRead();
+    return super.categorySort;
+  }
+
+  @override
+  set categorySort(CategorySort value) {
+    _$categorySortAtom.reportWrite(value, super.categorySort, () {
+      super.categorySort = value;
+    });
+  }
+
   late final _$categoriesLoadedAtom = Atom(
     name: 'BrowseStoreBase.categoriesLoaded',
     context: context,
@@ -295,6 +313,18 @@ mixin _$BrowseStore on BrowseStoreBase, Store {
     );
   }
 
+  late final _$selectCategorySortAsyncAction = AsyncAction(
+    'BrowseStoreBase.selectCategorySort',
+    context: context,
+  );
+
+  @override
+  Future<void> selectCategorySort(CategorySort sort) {
+    return _$selectCategorySortAsyncAction.run(
+      () => super.selectCategorySort(sort),
+    );
+  }
+
   late final _$selectStreamSortAsyncAction = AsyncAction(
     'BrowseStoreBase.selectStreamSort',
     context: context,
@@ -383,6 +413,7 @@ categories: ${categories},
 liveChannels: ${liveChannels},
 selectedSection: ${selectedSection},
 streamSort: ${streamSort},
+categorySort: ${categorySort},
 categoriesLoaded: ${categoriesLoaded},
 liveChannelsLoaded: ${liveChannelsLoaded},
 isLoadingCategories: ${isLoadingCategories},

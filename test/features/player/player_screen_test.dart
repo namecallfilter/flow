@@ -142,6 +142,12 @@ void main() {
       await tester.longPress(find.byKey(ValueKey(entry.key)));
       await tester.pump(const Duration(milliseconds: 200));
       expect(find.text(entry.value), findsOneWidget);
+      if (entry.key != "player_name_and_title") {
+        expect(
+          tester.getRect(find.text(entry.value)).bottom,
+          lessThan(tester.getRect(find.byKey(ValueKey(entry.key))).top),
+        );
+      }
       Tooltip.dismissAllToolTips();
       await tester.pump(const Duration(milliseconds: 200));
     }

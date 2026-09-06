@@ -1613,6 +1613,7 @@ class _DelayedTopLevelBrowseCache extends TwitchApiCache {
     int first = 12,
     String? cursor,
     bool refresh = false,
+    CategorySort sort = CategorySort.viewersHighToLow,
   }) {
     final response = Completer<TwitchPage<TwitchCategory>>();
     categoryLoads.add((refresh: refresh, response: response));
@@ -1751,7 +1752,7 @@ class _CountingPreferencesStore implements FlowPreferencesStore {
   }
 }
 
-class _StaticCookieExtractor implements TwitchCookieExtractor {
+class _StaticCookieExtractor extends TwitchCookieExtractor {
   const _StaticCookieExtractor();
 
   @override

@@ -20,6 +20,8 @@ abstract interface class FlowPreferences {
   Future<void> saveLoginOfferDismissed({required bool dismissed});
   Future<StreamSort> readStreamSort(String section);
   Future<void> saveStreamSort(String section, StreamSort sort);
+  Future<CategorySort> readCategorySort();
+  Future<void> saveCategorySort(CategorySort sort);
 }
 
 abstract interface class FlowPreferencesStore {
@@ -80,6 +82,9 @@ class SharedPreferencesFlowPreferences implements FlowPreferences {
   @override
   Future<StreamSort> readStreamSort(String section) async {
     final value = await _store.getString("stream_sort_$section");
+    if (value == "recommended") {
+      return StreamSort.recommendedForYou;
+    }
     return StreamSort.values.where((sort) => sort.name == value).firstOrNull ??
         StreamSort.viewersHighToLow;
   }
@@ -87,6 +92,19 @@ class SharedPreferencesFlowPreferences implements FlowPreferences {
   @override
   Future<void> saveStreamSort(String section, StreamSort sort) =>
       _store.setString("stream_sort_$section", sort.name);
+
+  @override
+  Future<CategorySort> readCategorySort() async {
+    final value = await _store.getString("category_sort");
+    if (value == "viewers") {
+      return CategorySort.viewersHighToLow;
+    }
+    return CategorySort.values.where((sort) => sort.name == value).firstOrNull ??
+        CategorySort.viewersHighToLow;
+  }
+
+  @override
+  Future<void> saveCategorySort(CategorySort sort) => _store.setString("category_sort", sort.name);
 
   @override
   Future<bool> readAdProxyEnabled() async => await _store.getString(adProxyEnabledKey) == "true";

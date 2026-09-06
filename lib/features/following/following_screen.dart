@@ -8,12 +8,14 @@ import "package:flow/app/radius.dart";
 import "package:flow/app/routes.dart";
 import "package:flow/app/spacing.dart";
 import "package:flow/app/theme.dart";
+import "package:flow/features/browse/browse_screen.dart";
 import "package:flow/features/browse/browse_store.dart";
 import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/following/following_store.dart";
 import "package:flow/features/following/twitch_login_offer_screen.dart";
 import "package:flow/features/following/twitch_login_screen.dart";
 import "package:flow/features/player/player_screen.dart";
+import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flow/shared/widgets/app_bottom_nav.dart";
@@ -254,6 +256,30 @@ class _FollowingScreenState extends State<FollowingScreen> {
     );
   }
 
+  void _openCategory(StreamChannel channel) {
+    if (channel.categoryId.isEmpty) {
+      return;
+    }
+    unawaited(
+      Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => CategoryStreamsScreen(
+            apiCache: _apiCache,
+            preferences: _store.preferences,
+            category: BrowseCategory(
+              id: channel.categoryId,
+              name: channel.category,
+              viewerCount: 0,
+              viewers: "--",
+              imageUrl: null,
+              colors: colorsForText(channel.categoryId),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   void _openOfflineChannel(OfflineChannel channel) {
     _openChannel(
       ChannelPreview(
@@ -327,13 +353,19 @@ class _FollowingScreenState extends State<FollowingScreen> {
                   parent: ClampingScrollPhysics(),
                 ),
                 padding: PageHeaderLayout.scrollPadding(
-                  top: PageHeaderLayout.largeTitleContentTopPadding + topSafeAreaInset,
+                  top:
+                      PageHeaderLayout.largeTitleContentTopPadding +
+                      topSafeAreaInset -
+                      StreamSortButton.contentVerticalPadding,
                   bottom: bottomScrollPadding,
                 ),
                 children: [
                   StreamSortButton(
                     key: const ValueKey("following_stream_sort"),
                     sort: showsAnonymousChannels ? browseStore!.streamSort : _store.streamSort,
+                    options: showsAnonymousChannels
+                        ? StreamSort.values
+                        : StreamSortButton.defaultOptions,
                     onSelected: (sort) {
                       if (showsAnonymousChannels) {
                         unawaited(browseStore!.selectStreamSort(sort));
@@ -372,6 +404,7 @@ class _FollowingScreenState extends State<FollowingScreen> {
                           channel: channel,
                           onChannelSelected: _openLiveChannel,
                           onStreamSelected: _openPlayer,
+                          onCategorySelected: _openCategory,
                         ),
                     if (!showsAnonymousChannels) ...[
                       const SizedBox(height: AppSpacing.sm),
@@ -611,12 +644,14 @@ class StreamCard extends StatelessWidget {
     super.key,
     this.onChannelSelected,
     this.onStreamSelected,
+    this.onCategorySelected,
     this.showCategory = true,
   });
 
   final StreamChannel channel;
   final ValueChanged<StreamChannel>? onChannelSelected;
   final ValueChanged<StreamChannel>? onStreamSelected;
+  final ValueChanged<StreamChannel>? onCategorySelected;
   final bool showCategory;
 
   @override
@@ -625,7 +660,6 @@ class StreamCard extends StatelessWidget {
     final isDark = theme.brightness == Brightness.dark;
     final cardColor = theme.colorScheme.surface;
     final primaryColor = theme.colorScheme.onSurface;
-    final mutedColor = theme.colorScheme.onSurface.withValues(alpha: 0.58);
     final borderRadius = BorderRadius.circular(12);
     final VoidCallback? onChannelTap = onChannelSelected == null
         ? null
@@ -721,30 +755,43 @@ class StreamCard extends StatelessWidget {
                               constraints: BoxConstraints(
                                 minHeight: showCategory ? 0 : _streamTitleAreaHeight,
                               ),
-                              child: Text(
-                                channel.title,
-                                key: ValueKey("stream_title_${channel.name}"),
-                                maxLines: showCategory ? 1 : 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  height: 1.18,
-                                  color: primaryColor.withValues(alpha: 0.86),
-                                  fontWeight: FontWeight.w500,
+                              child: Tooltip(
+                                message: channel.title,
+                                enableFeedback: true,
+                                showDuration: const Duration(seconds: 5),
+                                child: Text(
+                                  channel.title,
+                                  key: ValueKey("stream_title_${channel.name}"),
+                                  maxLines: showCategory ? 1 : 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    height: 1.18,
+                                    color: primaryColor.withValues(alpha: 0.86),
+                                    fontWeight: FontWeight.w500,
+                                  ),
                                 ),
                               ),
                             ),
                             if (showCategory) ...[
                               const SizedBox(height: 5),
-                              Text(
-                                channel.category,
-                                key: ValueKey("stream_category_${channel.name}"),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  fontSize: 13,
-                                  color: mutedColor,
-                                  fontWeight: FontWeight.w500,
-                                  height: 1.15,
+                              GestureDetector(
+                                onTap: onCategorySelected == null || channel.categoryId.isEmpty
+                                    ? null
+                                    : () => onCategorySelected!(channel),
+                                child: Text(
+                                  channel.category,
+                                  key: ValueKey("stream_category_${channel.name}"),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    fontSize: 13,
+                                    color:
+                                        onCategorySelected != null && channel.categoryId.isNotEmpty
+                                        ? theme.colorScheme.primary
+                                        : theme.colorScheme.onSurface.withValues(alpha: 0.58),
+                                    fontWeight: FontWeight.w500,
+                                    height: 1.15,
+                                  ),
                                 ),
                               ),
                             ],
@@ -779,6 +826,12 @@ class StreamCard extends StatelessWidget {
       ),
     );
     properties.add(DiagnosticsProperty<bool>("showCategory", showCategory));
+    properties.add(
+      ObjectFlagProperty<ValueChanged<StreamChannel>?>.has(
+        "onCategorySelected",
+        onCategorySelected,
+      ),
+    );
   }
 }
 

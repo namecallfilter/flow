@@ -34,21 +34,45 @@ scalar PurchaseOfferInput
 scalar ReactionsContentKey
 scalar ReactionsContentType
 scalar ReadNotificationsInput
-scalar RecommendationsContext
+input RecommendationsContext {
+  platform: String
+}
 
 # Verified against Twitch GraphQL stream and game directory queries.
 enum StreamSort {
+  RECENT
   RELEVANCE
   VIEWER_COUNT
   VIEWER_COUNT_ASC
 }
 
+enum StreamRestrictionType {
+  SUB_ONLY_LIVE
+}
+
 input StreamOptions {
+  broadcasterLanguages: [String!]
+  includeRestricted: [StreamRestrictionType!]
   sort: StreamSort
+  recommendationsContext: RecommendationsContext
+  requestID: ID
 }
 
 input GameStreamOptions {
   sort: StreamSort
+  recommendationsContext: RecommendationsContext
+  requestID: ID
+}
+
+enum GameSort {
+  RELEVANCE
+  VIEWER_COUNT
+}
+
+input GameOptions {
+  sort: GameSort
+  recommendationsContext: RecommendationsContext
+  requestID: ID
 }
 scalar RecordAdEventInput
 scalar RegenerateVerificationCodeInput
@@ -636,7 +660,7 @@ type Query {
   featuredStreams(acceptedMature: Boolean, first: Int, language: String): [FeaturedStream]
   feedItems(input: Query_FeedItems_Input_Input): [FeedItem]
   game(id: ID, name: String, slug: String): Game
-  games(after: Cursor, first: Int): FlowGameConnection
+  games(after: Cursor, first: Int, options: GameOptions): FlowGameConnection
   guestStarChannelCollaboration(
     options: GuestStarChannelCollaborationOptions
   ): GuestStarChannelCollaboration

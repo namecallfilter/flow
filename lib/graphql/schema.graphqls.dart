@@ -1,32 +1,158 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 // ignore_for_file: type=lint
+class Input$RecommendationsContext {
+  factory Input$RecommendationsContext({String? platform}) =>
+      Input$RecommendationsContext._({
+        if (platform != null) r'platform': platform,
+      });
+
+  Input$RecommendationsContext._(this._$data);
+
+  factory Input$RecommendationsContext.fromJson(Map<String, dynamic> data) {
+    final result$data = <String, dynamic>{};
+    if (data.containsKey('platform')) {
+      final l$platform = data['platform'];
+      result$data['platform'] = (l$platform as String?);
+    }
+    return Input$RecommendationsContext._(result$data);
+  }
+
+  Map<String, dynamic> _$data;
+
+  String? get platform => (_$data['platform'] as String?);
+
+  Map<String, dynamic> toJson() {
+    final result$data = <String, dynamic>{};
+    final l$platform = _$data.containsKey('platform') ? platform : null;
+    result$data['platform'] = l$platform;
+    return result$data;
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other is! Input$RecommendationsContext ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$platform = platform;
+    final lOther$platform = other.platform;
+    if (_$data.containsKey('platform') !=
+        other._$data.containsKey('platform')) {
+      return false;
+    }
+    if (l$platform != lOther$platform) {
+      return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode {
+    final l$platform = platform;
+    return Object.hashAll([
+      _$data.containsKey('platform') ? l$platform : const {},
+    ]);
+  }
+}
+
 class Input$StreamOptions {
-  factory Input$StreamOptions({Enum$StreamSort? sort}) =>
-      Input$StreamOptions._({if (sort != null) r'sort': sort});
+  factory Input$StreamOptions({
+    List<String>? broadcasterLanguages,
+    List<Enum$StreamRestrictionType>? includeRestricted,
+    Enum$StreamSort? sort,
+    Input$RecommendationsContext? recommendationsContext,
+    String? requestID,
+  }) => Input$StreamOptions._({
+    if (broadcasterLanguages != null)
+      r'broadcasterLanguages': broadcasterLanguages,
+    if (includeRestricted != null) r'includeRestricted': includeRestricted,
+    if (sort != null) r'sort': sort,
+    if (recommendationsContext != null)
+      r'recommendationsContext': recommendationsContext,
+    if (requestID != null) r'requestID': requestID,
+  });
 
   Input$StreamOptions._(this._$data);
 
   factory Input$StreamOptions.fromJson(Map<String, dynamic> data) {
     final result$data = <String, dynamic>{};
+    if (data.containsKey('broadcasterLanguages')) {
+      final l$broadcasterLanguages = data['broadcasterLanguages'];
+      result$data['broadcasterLanguages'] =
+          (l$broadcasterLanguages as List<dynamic>?)
+              ?.map((e) => (e as String))
+              .toList();
+    }
+    if (data.containsKey('includeRestricted')) {
+      final l$includeRestricted = data['includeRestricted'];
+      result$data['includeRestricted'] = (l$includeRestricted as List<dynamic>?)
+          ?.map((e) => fromJson$Enum$StreamRestrictionType((e as String)))
+          .toList();
+    }
     if (data.containsKey('sort')) {
       final l$sort = data['sort'];
       result$data['sort'] = l$sort == null
           ? null
           : fromJson$Enum$StreamSort((l$sort as String));
     }
+    if (data.containsKey('recommendationsContext')) {
+      final l$recommendationsContext = data['recommendationsContext'];
+      result$data['recommendationsContext'] = l$recommendationsContext == null
+          ? null
+          : Input$RecommendationsContext.fromJson(
+              (l$recommendationsContext as Map<String, dynamic>),
+            );
+    }
+    if (data.containsKey('requestID')) {
+      final l$requestID = data['requestID'];
+      result$data['requestID'] = (l$requestID as String?);
+    }
     return Input$StreamOptions._(result$data);
   }
 
   Map<String, dynamic> _$data;
 
+  List<String>? get broadcasterLanguages =>
+      (_$data['broadcasterLanguages'] as List<String>?);
+
+  List<Enum$StreamRestrictionType>? get includeRestricted =>
+      (_$data['includeRestricted'] as List<Enum$StreamRestrictionType>?);
+
   Enum$StreamSort? get sort => (_$data['sort'] as Enum$StreamSort?);
+
+  Input$RecommendationsContext? get recommendationsContext =>
+      (_$data['recommendationsContext'] as Input$RecommendationsContext?);
+
+  String? get requestID => (_$data['requestID'] as String?);
 
   Map<String, dynamic> toJson() {
     final result$data = <String, dynamic>{};
+    final l$broadcasterLanguages = _$data.containsKey('broadcasterLanguages')
+        ? broadcasterLanguages
+        : null;
+    result$data['broadcasterLanguages'] = l$broadcasterLanguages
+        ?.map((e) => e)
+        .toList();
+    final l$includeRestricted = _$data.containsKey('includeRestricted')
+        ? includeRestricted
+        : null;
+    result$data['includeRestricted'] = l$includeRestricted
+        ?.map((e) => toJson$Enum$StreamRestrictionType(e))
+        .toList();
     final l$sort = _$data.containsKey('sort') ? sort : null;
     result$data['sort'] = l$sort == null
         ? null
         : toJson$Enum$StreamSort(l$sort);
+    final l$recommendationsContext =
+        _$data.containsKey('recommendationsContext')
+        ? recommendationsContext
+        : null;
+    result$data['recommendationsContext'] = l$recommendationsContext?.toJson();
+    final l$requestID = _$data.containsKey('requestID') ? requestID : null;
+    result$data['requestID'] = l$requestID;
     return result$data;
   }
 
@@ -38,6 +164,47 @@ class Input$StreamOptions {
     if (other is! Input$StreamOptions || runtimeType != other.runtimeType) {
       return false;
     }
+    final l$broadcasterLanguages = broadcasterLanguages;
+    final lOther$broadcasterLanguages = other.broadcasterLanguages;
+    if (_$data.containsKey('broadcasterLanguages') !=
+        other._$data.containsKey('broadcasterLanguages')) {
+      return false;
+    }
+    if (l$broadcasterLanguages != null && lOther$broadcasterLanguages != null) {
+      if (l$broadcasterLanguages.length != lOther$broadcasterLanguages.length) {
+        return false;
+      }
+      for (int i = 0; i < l$broadcasterLanguages.length; i++) {
+        final l$broadcasterLanguages$entry = l$broadcasterLanguages[i];
+        final lOther$broadcasterLanguages$entry =
+            lOther$broadcasterLanguages[i];
+        if (l$broadcasterLanguages$entry != lOther$broadcasterLanguages$entry) {
+          return false;
+        }
+      }
+    } else if (l$broadcasterLanguages != lOther$broadcasterLanguages) {
+      return false;
+    }
+    final l$includeRestricted = includeRestricted;
+    final lOther$includeRestricted = other.includeRestricted;
+    if (_$data.containsKey('includeRestricted') !=
+        other._$data.containsKey('includeRestricted')) {
+      return false;
+    }
+    if (l$includeRestricted != null && lOther$includeRestricted != null) {
+      if (l$includeRestricted.length != lOther$includeRestricted.length) {
+        return false;
+      }
+      for (int i = 0; i < l$includeRestricted.length; i++) {
+        final l$includeRestricted$entry = l$includeRestricted[i];
+        final lOther$includeRestricted$entry = lOther$includeRestricted[i];
+        if (l$includeRestricted$entry != lOther$includeRestricted$entry) {
+          return false;
+        }
+      }
+    } else if (l$includeRestricted != lOther$includeRestricted) {
+      return false;
+    }
     final l$sort = sort;
     final lOther$sort = other.sort;
     if (_$data.containsKey('sort') != other._$data.containsKey('sort')) {
@@ -46,19 +213,65 @@ class Input$StreamOptions {
     if (l$sort != lOther$sort) {
       return false;
     }
+    final l$recommendationsContext = recommendationsContext;
+    final lOther$recommendationsContext = other.recommendationsContext;
+    if (_$data.containsKey('recommendationsContext') !=
+        other._$data.containsKey('recommendationsContext')) {
+      return false;
+    }
+    if (l$recommendationsContext != lOther$recommendationsContext) {
+      return false;
+    }
+    final l$requestID = requestID;
+    final lOther$requestID = other.requestID;
+    if (_$data.containsKey('requestID') !=
+        other._$data.containsKey('requestID')) {
+      return false;
+    }
+    if (l$requestID != lOther$requestID) {
+      return false;
+    }
     return true;
   }
 
   @override
   int get hashCode {
+    final l$broadcasterLanguages = broadcasterLanguages;
+    final l$includeRestricted = includeRestricted;
     final l$sort = sort;
-    return Object.hashAll([_$data.containsKey('sort') ? l$sort : const {}]);
+    final l$recommendationsContext = recommendationsContext;
+    final l$requestID = requestID;
+    return Object.hashAll([
+      _$data.containsKey('broadcasterLanguages')
+          ? l$broadcasterLanguages == null
+                ? null
+                : Object.hashAll(l$broadcasterLanguages.map((v) => v))
+          : const {},
+      _$data.containsKey('includeRestricted')
+          ? l$includeRestricted == null
+                ? null
+                : Object.hashAll(l$includeRestricted.map((v) => v))
+          : const {},
+      _$data.containsKey('sort') ? l$sort : const {},
+      _$data.containsKey('recommendationsContext')
+          ? l$recommendationsContext
+          : const {},
+      _$data.containsKey('requestID') ? l$requestID : const {},
+    ]);
   }
 }
 
 class Input$GameStreamOptions {
-  factory Input$GameStreamOptions({Enum$StreamSort? sort}) =>
-      Input$GameStreamOptions._({if (sort != null) r'sort': sort});
+  factory Input$GameStreamOptions({
+    Enum$StreamSort? sort,
+    Input$RecommendationsContext? recommendationsContext,
+    String? requestID,
+  }) => Input$GameStreamOptions._({
+    if (sort != null) r'sort': sort,
+    if (recommendationsContext != null)
+      r'recommendationsContext': recommendationsContext,
+    if (requestID != null) r'requestID': requestID,
+  });
 
   Input$GameStreamOptions._(this._$data);
 
@@ -70,6 +283,18 @@ class Input$GameStreamOptions {
           ? null
           : fromJson$Enum$StreamSort((l$sort as String));
     }
+    if (data.containsKey('recommendationsContext')) {
+      final l$recommendationsContext = data['recommendationsContext'];
+      result$data['recommendationsContext'] = l$recommendationsContext == null
+          ? null
+          : Input$RecommendationsContext.fromJson(
+              (l$recommendationsContext as Map<String, dynamic>),
+            );
+    }
+    if (data.containsKey('requestID')) {
+      final l$requestID = data['requestID'];
+      result$data['requestID'] = (l$requestID as String?);
+    }
     return Input$GameStreamOptions._(result$data);
   }
 
@@ -77,12 +302,24 @@ class Input$GameStreamOptions {
 
   Enum$StreamSort? get sort => (_$data['sort'] as Enum$StreamSort?);
 
+  Input$RecommendationsContext? get recommendationsContext =>
+      (_$data['recommendationsContext'] as Input$RecommendationsContext?);
+
+  String? get requestID => (_$data['requestID'] as String?);
+
   Map<String, dynamic> toJson() {
     final result$data = <String, dynamic>{};
     final l$sort = _$data.containsKey('sort') ? sort : null;
     result$data['sort'] = l$sort == null
         ? null
         : toJson$Enum$StreamSort(l$sort);
+    final l$recommendationsContext =
+        _$data.containsKey('recommendationsContext')
+        ? recommendationsContext
+        : null;
+    result$data['recommendationsContext'] = l$recommendationsContext?.toJson();
+    final l$requestID = _$data.containsKey('requestID') ? requestID : null;
+    result$data['requestID'] = l$requestID;
     return result$data;
   }
 
@@ -102,13 +339,151 @@ class Input$GameStreamOptions {
     if (l$sort != lOther$sort) {
       return false;
     }
+    final l$recommendationsContext = recommendationsContext;
+    final lOther$recommendationsContext = other.recommendationsContext;
+    if (_$data.containsKey('recommendationsContext') !=
+        other._$data.containsKey('recommendationsContext')) {
+      return false;
+    }
+    if (l$recommendationsContext != lOther$recommendationsContext) {
+      return false;
+    }
+    final l$requestID = requestID;
+    final lOther$requestID = other.requestID;
+    if (_$data.containsKey('requestID') !=
+        other._$data.containsKey('requestID')) {
+      return false;
+    }
+    if (l$requestID != lOther$requestID) {
+      return false;
+    }
     return true;
   }
 
   @override
   int get hashCode {
     final l$sort = sort;
-    return Object.hashAll([_$data.containsKey('sort') ? l$sort : const {}]);
+    final l$recommendationsContext = recommendationsContext;
+    final l$requestID = requestID;
+    return Object.hashAll([
+      _$data.containsKey('sort') ? l$sort : const {},
+      _$data.containsKey('recommendationsContext')
+          ? l$recommendationsContext
+          : const {},
+      _$data.containsKey('requestID') ? l$requestID : const {},
+    ]);
+  }
+}
+
+class Input$GameOptions {
+  factory Input$GameOptions({
+    Enum$GameSort? sort,
+    Input$RecommendationsContext? recommendationsContext,
+    String? requestID,
+  }) => Input$GameOptions._({
+    if (sort != null) r'sort': sort,
+    if (recommendationsContext != null)
+      r'recommendationsContext': recommendationsContext,
+    if (requestID != null) r'requestID': requestID,
+  });
+
+  Input$GameOptions._(this._$data);
+
+  factory Input$GameOptions.fromJson(Map<String, dynamic> data) {
+    final result$data = <String, dynamic>{};
+    if (data.containsKey('sort')) {
+      final l$sort = data['sort'];
+      result$data['sort'] = l$sort == null
+          ? null
+          : fromJson$Enum$GameSort((l$sort as String));
+    }
+    if (data.containsKey('recommendationsContext')) {
+      final l$recommendationsContext = data['recommendationsContext'];
+      result$data['recommendationsContext'] = l$recommendationsContext == null
+          ? null
+          : Input$RecommendationsContext.fromJson(
+              (l$recommendationsContext as Map<String, dynamic>),
+            );
+    }
+    if (data.containsKey('requestID')) {
+      final l$requestID = data['requestID'];
+      result$data['requestID'] = (l$requestID as String?);
+    }
+    return Input$GameOptions._(result$data);
+  }
+
+  Map<String, dynamic> _$data;
+
+  Enum$GameSort? get sort => (_$data['sort'] as Enum$GameSort?);
+
+  Input$RecommendationsContext? get recommendationsContext =>
+      (_$data['recommendationsContext'] as Input$RecommendationsContext?);
+
+  String? get requestID => (_$data['requestID'] as String?);
+
+  Map<String, dynamic> toJson() {
+    final result$data = <String, dynamic>{};
+    final l$sort = _$data.containsKey('sort') ? sort : null;
+    result$data['sort'] = l$sort == null ? null : toJson$Enum$GameSort(l$sort);
+    final l$recommendationsContext =
+        _$data.containsKey('recommendationsContext')
+        ? recommendationsContext
+        : null;
+    result$data['recommendationsContext'] = l$recommendationsContext?.toJson();
+    final l$requestID = _$data.containsKey('requestID') ? requestID : null;
+    result$data['requestID'] = l$requestID;
+    return result$data;
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other is! Input$GameOptions || runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$sort = sort;
+    final lOther$sort = other.sort;
+    if (_$data.containsKey('sort') != other._$data.containsKey('sort')) {
+      return false;
+    }
+    if (l$sort != lOther$sort) {
+      return false;
+    }
+    final l$recommendationsContext = recommendationsContext;
+    final lOther$recommendationsContext = other.recommendationsContext;
+    if (_$data.containsKey('recommendationsContext') !=
+        other._$data.containsKey('recommendationsContext')) {
+      return false;
+    }
+    if (l$recommendationsContext != lOther$recommendationsContext) {
+      return false;
+    }
+    final l$requestID = requestID;
+    final lOther$requestID = other.requestID;
+    if (_$data.containsKey('requestID') !=
+        other._$data.containsKey('requestID')) {
+      return false;
+    }
+    if (l$requestID != lOther$requestID) {
+      return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode {
+    final l$sort = sort;
+    final l$recommendationsContext = recommendationsContext;
+    final l$requestID = requestID;
+    return Object.hashAll([
+      _$data.containsKey('sort') ? l$sort : const {},
+      _$data.containsKey('recommendationsContext')
+          ? l$recommendationsContext
+          : const {},
+      _$data.containsKey('requestID') ? l$requestID : const {},
+    ]);
   }
 }
 
@@ -2384,6 +2759,7 @@ class Input$Query_Video_Options_Input {
 }
 
 enum Enum$StreamSort {
+  RECENT,
   RELEVANCE,
   VIEWER_COUNT,
   VIEWER_COUNT_ASC,
@@ -2397,6 +2773,8 @@ enum Enum$StreamSort {
 
 String toJson$Enum$StreamSort(Enum$StreamSort e) {
   switch (e) {
+    case Enum$StreamSort.RECENT:
+      return r'RECENT';
     case Enum$StreamSort.RELEVANCE:
       return r'RELEVANCE';
     case Enum$StreamSort.VIEWER_COUNT:
@@ -2410,6 +2788,8 @@ String toJson$Enum$StreamSort(Enum$StreamSort e) {
 
 Enum$StreamSort fromJson$Enum$StreamSort(String value) {
   switch (value) {
+    case r'RECENT':
+      return Enum$StreamSort.RECENT;
     case r'RELEVANCE':
       return Enum$StreamSort.RELEVANCE;
     case r'VIEWER_COUNT':
@@ -2418,6 +2798,66 @@ Enum$StreamSort fromJson$Enum$StreamSort(String value) {
       return Enum$StreamSort.VIEWER_COUNT_ASC;
     default:
       return Enum$StreamSort.$unknown;
+  }
+}
+
+enum Enum$StreamRestrictionType {
+  SUB_ONLY_LIVE,
+  $unknown;
+
+  factory Enum$StreamRestrictionType.fromJson(String value) =>
+      fromJson$Enum$StreamRestrictionType(value);
+
+  String toJson() => toJson$Enum$StreamRestrictionType(this);
+}
+
+String toJson$Enum$StreamRestrictionType(Enum$StreamRestrictionType e) {
+  switch (e) {
+    case Enum$StreamRestrictionType.SUB_ONLY_LIVE:
+      return r'SUB_ONLY_LIVE';
+    case Enum$StreamRestrictionType.$unknown:
+      return r'$unknown';
+  }
+}
+
+Enum$StreamRestrictionType fromJson$Enum$StreamRestrictionType(String value) {
+  switch (value) {
+    case r'SUB_ONLY_LIVE':
+      return Enum$StreamRestrictionType.SUB_ONLY_LIVE;
+    default:
+      return Enum$StreamRestrictionType.$unknown;
+  }
+}
+
+enum Enum$GameSort {
+  RELEVANCE,
+  VIEWER_COUNT,
+  $unknown;
+
+  factory Enum$GameSort.fromJson(String value) => fromJson$Enum$GameSort(value);
+
+  String toJson() => toJson$Enum$GameSort(this);
+}
+
+String toJson$Enum$GameSort(Enum$GameSort e) {
+  switch (e) {
+    case Enum$GameSort.RELEVANCE:
+      return r'RELEVANCE';
+    case Enum$GameSort.VIEWER_COUNT:
+      return r'VIEWER_COUNT';
+    case Enum$GameSort.$unknown:
+      return r'$unknown';
+  }
+}
+
+Enum$GameSort fromJson$Enum$GameSort(String value) {
+  switch (value) {
+    case r'RELEVANCE':
+      return Enum$GameSort.RELEVANCE;
+    case r'VIEWER_COUNT':
+      return Enum$GameSort.VIEWER_COUNT;
+    default:
+      return Enum$GameSort.$unknown;
   }
 }
 
