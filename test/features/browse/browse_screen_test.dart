@@ -128,7 +128,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text("Viewers: High to Low"));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(CheckedPopupMenuItem<StreamSort>, "Recently Started"));
+    await tester.tap(find.widgetWithText(PopupMenuItem<StreamSort>, "Recently Started"));
     await tester.pumpAndSettle();
     final request = requests.lastWhere((request) => _isGraphQlOperation(request, "FlowTopStreams"));
     expect(_graphQlVariables(request)["options"], containsPair("sort", "RECENT"));
