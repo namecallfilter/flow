@@ -6,6 +6,142 @@ import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  testWidgets("holding a title with finger movement does not show the refresh indicator", (
+    tester,
+  ) async {
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+    var refreshes = 0;
+    await tester.pumpWidget(
+      _RefreshApp(
+        scrollController: scrollController,
+        periodicRefreshInterval: null,
+        onRefresh: () async => refreshes++,
+        title: const Tooltip(
+          message: "Full stream title",
+          child: SizedBox(height: 200, child: Center(child: Text("Stream title"))),
+        ),
+      ),
+    );
+
+    final gesture = await tester.startGesture(tester.getCenter(find.text("Stream title")));
+    await gesture.moveBy(const Offset(2, 3));
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text("Full stream title"), findsOneWidget);
+    expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsNothing);
+
+    await gesture.moveBy(const Offset(8, 9));
+    await tester.pump();
+    await gesture.moveBy(const Offset(0, 25));
+    await tester.pump();
+    expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsNothing);
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(refreshes, 0);
+  });
+
+  testWidgets("horizontal gestures with vertical movement do not show the refresh indicator", (
+    tester,
+  ) async {
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+    var refreshes = 0;
+    var horizontalUpdates = 0;
+    await tester.pumpWidget(
+      _RefreshApp(
+        scrollController: scrollController,
+        periodicRefreshInterval: null,
+        onRefresh: () async => refreshes++,
+        title: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onHorizontalDragUpdate: (_) => horizontalUpdates++,
+          child: const SizedBox(height: 200),
+        ),
+      ),
+    );
+
+    final gesture = await tester.startGesture(const Offset(20, 100));
+    await gesture.moveBy(const Offset(100, 3));
+    await tester.pump();
+    expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsNothing);
+
+    await gesture.moveBy(const Offset(100, 12));
+    await tester.pump();
+    expect(horizontalUpdates, greaterThan(0));
+    expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsNothing);
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(refreshes, 0);
+  });
+
+  testWidgets("an accepted vertical pull refreshes once on release", (tester) async {
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+    final refreshCompleter = Completer<void>();
+    var refreshes = 0;
+    await tester.pumpWidget(
+      _RefreshApp(
+        scrollController: scrollController,
+        periodicRefreshInterval: null,
+        onRefresh: () {
+          refreshes++;
+          return refreshCompleter.future;
+        },
+      ),
+    );
+
+    final gesture = await tester.startGesture(const Offset(200, 100));
+    await gesture.moveBy(const Offset(0, 8));
+    await tester.pump();
+    expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsNothing);
+
+    await gesture.moveBy(const Offset(0, 220));
+    await tester.pump();
+    expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsOneWidget);
+    expect(refreshes, 0);
+
+    await gesture.up();
+    await tester.pump();
+    expect(refreshes, 1);
+    expect(
+      tester.widget<RefreshProgressIndicator>(find.byType(RefreshProgressIndicator)).value,
+      null,
+    );
+
+    refreshCompleter.complete();
+    await tester.pumpAndSettle();
+    expect(refreshes, 1);
+    expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsNothing);
+  });
+
+  testWidgets("reversing a vertical pull cancels refresh", (tester) async {
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+    var refreshes = 0;
+    await tester.pumpWidget(
+      _RefreshApp(
+        scrollController: scrollController,
+        periodicRefreshInterval: null,
+        onRefresh: () async => refreshes++,
+      ),
+    );
+
+    final gesture = await tester.startGesture(const Offset(200, 100));
+    await gesture.moveBy(const Offset(0, 220));
+    await tester.pump();
+    expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsOneWidget);
+    await gesture.moveBy(const Offset(0, -40));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(refreshes, 0);
+    expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsNothing);
+  });
+
   testWidgets("cancelling a pull never starts a refresh", (tester) async {
     final scrollController = ScrollController();
     addTearDown(scrollController.dispose);
@@ -169,11 +305,13 @@ class _RefreshApp extends StatelessWidget {
     required this.scrollController,
     required this.onRefresh,
     this.periodicRefreshInterval = const Duration(seconds: 30),
+    this.title,
   });
 
   final ScrollController scrollController;
   final Future<void> Function() onRefresh;
   final Duration? periodicRefreshInterval;
+  final Widget? title;
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -187,7 +325,10 @@ class _RefreshApp extends StatelessWidget {
         periodicRefreshInterval: periodicRefreshInterval,
         child: ListView(
           controller: scrollController,
-          children: const [SizedBox(height: 1200)],
+          children: [
+            ?title,
+            const SizedBox(height: 1200),
+          ],
         ),
       ),
     ),

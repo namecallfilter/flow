@@ -187,6 +187,38 @@ void main() {
     expect(tester.getRect(badge).top, closeTo(44 + 100 + AppSpacing.md, 0.1));
     expect(tester.getRect(badge).center.dx, closeTo(400, 0.1));
   });
+
+  testWidgets("returns continuously at a bounded pace from nearby and deep offsets", (
+    tester,
+  ) async {
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+    _configureView(tester);
+    await tester.pumpWidget(_testApp(scrollController, itemCount: 400));
+    await tester.pump();
+
+    for (final start in [700.0, 8000.0, 16000.0]) {
+      scrollController.jumpTo(start);
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey("scroll_to_top_badge")));
+      await tester.pump();
+      expect(scrollController.offset, start, reason: "A return must not jump before animating.");
+
+      var previous = start;
+      var frames = 0;
+      while (scrollController.offset > 0 && frames < 250) {
+        await tester.pump(const Duration(milliseconds: 16));
+        final current = scrollController.offset;
+        expect(previous - current, inInclusiveRange(0, 400));
+        previous = current;
+        frames++;
+      }
+      expect(scrollController.offset, 0);
+      if (start == 700) {
+        expect(frames, 20, reason: "Nearby returns should keep their 320 ms timing.");
+      }
+    }
+  });
 }
 
 void _configureView(
@@ -207,7 +239,7 @@ void _configureView(
   addTearDown(tester.view.resetViewPadding);
 }
 
-Widget _testApp(ScrollController scrollController) => MaterialApp(
+Widget _testApp(ScrollController scrollController, {int itemCount = 100}) => MaterialApp(
   home: Scaffold(
     body: ScrollReactiveChrome(
       scrollController: scrollController,
@@ -220,7 +252,7 @@ Widget _testApp(ScrollController scrollController) => MaterialApp(
         controller: scrollController,
         padding: EdgeInsets.zero,
         itemExtent: 50,
-        itemCount: 100,
+        itemCount: itemCount,
         itemBuilder: (context, index) => SizedBox(
           key: ValueKey("test_item_$index"),
           child: Text("Item $index"),

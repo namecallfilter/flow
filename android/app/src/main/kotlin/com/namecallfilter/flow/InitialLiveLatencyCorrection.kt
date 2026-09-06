@@ -57,6 +57,16 @@ internal class LiveLatencyCorrectionCoordinator(
         request = null
     }
 
+    fun finishIfMetadataUnavailable(isPlaying: Boolean, hasMeasuredLatency: Boolean): Boolean {
+        if (request == null || !isPlaying || hasMeasuredLatency) {
+            return false
+        }
+        // A playing stream without timed metadata is not evidence of stalled
+        // playback. Recreating it cannot provide the missing measurement.
+        request = null
+        return true
+    }
+
     fun arm(
         reason: LiveLatencyCorrectionReason,
         targetLatencyMs: Long,

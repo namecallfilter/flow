@@ -138,6 +138,9 @@ void main() {
       "player_live_duration": "Live for 1:02:03",
       "player_viewers": "12.3K viewers",
       "player_latency": "Live latency unavailable",
+      "player_jump_live_button": "Jump to live edge",
+      "player_refresh_button": "Refresh player",
+      "player_orientation_button": "Enter landscape",
     }.entries) {
       await tester.longPress(find.byKey(ValueKey(entry.key)));
       await tester.pump(const Duration(milliseconds: 200));

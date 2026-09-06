@@ -26,6 +26,7 @@ import androidx.media3.extractor.text.SubtitleParser
 import java.io.EOFException
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import org.json.JSONObject
 
 /**
@@ -64,6 +65,7 @@ internal class TwitchEmsgMetadataBridgeExtractorFactory(
             playerId,
         ),
         bridge = bridge,
+        timestampAdjuster = timestampAdjuster,
     )
 
     override fun setSubtitleParserFactory(
@@ -100,9 +102,10 @@ internal class TwitchEmsgMetadataBridgeExtractorFactory(
 private class TwitchEmsgMetadataBridgeChunkExtractor(
     private val delegate: HlsMediaChunkExtractor,
     private val bridge: TwitchEmsgMetadataBridge,
+    private val timestampAdjuster: TimestampAdjuster,
 ) : HlsMediaChunkExtractor {
     override fun init(extractorOutput: ExtractorOutput) {
-        delegate.init(TwitchEmsgMetadataBridgeExtractorOutput(extractorOutput, bridge))
+        delegate.init(TwitchEmsgMetadataBridgeExtractorOutput(extractorOutput, bridge, timestampAdjuster))
     }
 
     override fun read(extractorInput: ExtractorInput): Boolean = delegate.read(extractorInput)
@@ -114,26 +117,69 @@ private class TwitchEmsgMetadataBridgeChunkExtractor(
     override fun recreate(): HlsMediaChunkExtractor = TwitchEmsgMetadataBridgeChunkExtractor(
         delegate = delegate.recreate(),
         bridge = bridge,
+        timestampAdjuster = timestampAdjuster,
     )
 
     override fun onTruncatedSegmentParsed() = delegate.onTruncatedSegmentParsed()
 }
 
 @UnstableApi
-private class TwitchEmsgMetadataBridgeExtractorOutput(
+internal class TwitchEmsgMetadataBridgeExtractorOutput(
     extractorOutput: ExtractorOutput,
     private val bridge: TwitchEmsgMetadataBridge,
+    private val timestampAdjuster: TimestampAdjuster,
 ) : ForwardingExtractorOutput(extractorOutput) {
     private val metadataOutputs = mutableMapOf<Int, TrackOutput>()
+    private var lastMediaSampleTimeUs = C.TIME_UNSET
 
     override fun track(id: Int, type: @C.TrackType Int): TrackOutput {
         val output = super.track(id, type)
+        if (type == C.TRACK_TYPE_VIDEO || type == C.TRACK_TYPE_AUDIO) {
+            return object : TrackOutput by output {
+                override fun sampleMetadata(
+                    timeUs: Long,
+                    flags: @C.BufferFlags Int,
+                    size: Int,
+                    offset: Int,
+                    cryptoData: TrackOutput.CryptoData?,
+                ) {
+                    lastMediaSampleTimeUs = timeUs
+                    output.sampleMetadata(timeUs, flags, size, offset, cryptoData)
+                }
+            }
+        }
         if (type != C.TRACK_TYPE_METADATA) {
             return output
         }
         return metadataOutputs.getOrPut(id) {
-            TwitchEmsgMetadataBridgeTrackOutput(output, bridge)
+            TwitchEmsgMetadataBridgeTrackOutput(output, bridge, ::correctTwitchTimestamp)
         }
+    }
+
+    private fun correctTwitchTimestamp(timeUs: Long): Long {
+        val offsetUs = timestampAdjuster.timestampOffsetUs
+        if (
+            timeUs == C.TIME_UNSET || lastMediaSampleTimeUs == C.TIME_UNSET ||
+            offsetUs == C.TIME_UNSET || offsetUs == 0L
+        ) {
+            return timeUs
+        }
+        // Media3 applies its offset twice to queued v0 EMSG. Twitch AVC uses
+        // delta=0; its HEVC rendition carries a measured 34ms presentation delta.
+        // Preserve that delta. A small lead requires a negative original or
+        // prior repair of this same offset, so a long timeline can cross zero.
+        val correctedUs = runCatching { Math.subtractExact(timeUs, offsetUs) }.getOrNull()
+            ?: return timeUs
+        val hasSmallPresentationLead =
+            (timeUs < 0 || bridge.hasConfirmedTimestampOffset(offsetUs)) && lastMediaSampleTimeUs >= 0 &&
+            correctedUs > lastMediaSampleTimeUs &&
+            correctedUs - lastMediaSampleTimeUs <= MAX_TWITCH_PRESENTATION_LEAD_US
+        return if (correctedUs == lastMediaSampleTimeUs || hasSmallPresentationLead) correctedUs else timeUs
+    }
+
+    private companion object {
+        // ponytail: larger presentation leads would need the raw EMSG delta retained.
+        const val MAX_TWITCH_PRESENTATION_LEAD_US = 100_000L
     }
 }
 
@@ -142,6 +188,7 @@ private class TwitchEmsgMetadataBridgeExtractorOutput(
 internal class TwitchEmsgMetadataBridgeTrackOutput(
     private val delegate: TrackOutput,
     private val bridge: TwitchEmsgMetadataBridge,
+    private val correctTwitchTimestamp: (Long) -> Long = { it },
 ) : TrackOutput {
     private var buffer = ByteArray(INITIAL_BUFFER_SIZE)
     private var bufferPosition = 0
@@ -246,13 +293,21 @@ internal class TwitchEmsgMetadataBridgeTrackOutput(
 
         val originalSample = buffer.copyOfRange(sampleStart, sampleEnd)
         val bridgedSample = bridge.rewriteSample(originalSample)
+        val correctedTimeUs = if (bridgedSample !== originalSample) {
+            correctTwitchTimestamp(timeUs)
+        } else {
+            timeUs
+        }
+        if (correctedTimeUs != timeUs) {
+            bridge.reportTimestampRepair(timeUs, correctedTimeUs)
+        }
         delegate.sampleData(
             ParsableByteArray(bridgedSample),
             bridgedSample.size,
             TrackOutput.SAMPLE_DATA_PART_MAIN,
         )
         delegate.sampleMetadata(
-            timeUs,
+            correctedTimeUs,
             flags,
             bridgedSample.size,
             /* offset= */ 0,
@@ -312,6 +367,17 @@ internal class TwitchEmsgMetadataBridge(
 ) {
     private val loggedRecovery = AtomicBoolean(false)
     private val loggedOversizedPayload = AtomicBoolean(false)
+    private val confirmedTimestampOffsetUs = AtomicLong(C.TIME_UNSET)
+
+    internal fun hasConfirmedTimestampOffset(offsetUs: Long): Boolean =
+        confirmedTimestampOffsetUs.get() == offsetUs
+
+    internal fun reportTimestampRepair(originalTimeUs: Long, correctedTimeUs: Long) {
+        val offsetUs = Math.subtractExact(originalTimeUs, correctedTimeUs)
+        if (confirmedTimestampOffsetUs.getAndSet(offsetUs) == C.TIME_UNSET) {
+            logger("latency repaired Twitch EMSG timestamp=$originalTimeUs to $correctedTimeUs")
+        }
+    }
 
     fun rewriteSample(sample: ByteArray): ByteArray {
         val eventMessage = try {

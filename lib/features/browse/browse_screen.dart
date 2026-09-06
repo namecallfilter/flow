@@ -1893,7 +1893,7 @@ class _CategoryGridSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final rowExtent = _categoryTileExtent(context) + 16;
+    final rowExtent = _categoryTileExtent(context) + AppSpacing.md;
     final rowCount = math.max(
       2,
       (MediaQuery.sizeOf(context).height / rowExtent).ceil(),
@@ -1996,7 +1996,7 @@ SliverGridDelegateWithFixedCrossAxisCount _categoryGridDelegate(BuildContext con
     SliverGridDelegateWithFixedCrossAxisCount(
       crossAxisCount: 3,
       crossAxisSpacing: 10,
-      mainAxisSpacing: 16,
+      mainAxisSpacing: AppSpacing.md,
       mainAxisExtent: _categoryTileExtent(context),
     );
 
@@ -2008,7 +2008,7 @@ double _categoryTileExtent(BuildContext context) {
     0.0,
     double.infinity,
   );
-  return (tileWidth * 4 / 3) + 68 + (textScaleExtra * 4);
+  return (tileWidth * 4 / 3) + 60 + (textScaleExtra * 4);
 }
 
 class _CategoryCard extends StatelessWidget {

@@ -188,9 +188,11 @@ class _ScrollReactiveChromeState extends State<ScrollReactiveChrome> {
       position.jumpTo(position.minScrollExtent);
       return;
     }
+    final distance = position.pixels - position.minScrollExtent;
+    // Give deep returns enough time to avoid crossing many rows in each frame.
     await position.animateTo(
       position.minScrollExtent,
-      duration: const Duration(milliseconds: 320),
+      duration: Duration(milliseconds: (distance / 5).clamp(320, double.infinity).round()),
       curve: Curves.easeOutCubic,
     );
   }

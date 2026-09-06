@@ -5,7 +5,11 @@ import androidx.media3.common.DataReader
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.ParsableByteArray
+import androidx.media3.common.util.TimestampAdjuster
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.extractor.DiscardingTrackOutput
+import androidx.media3.extractor.ExtractorOutput
+import androidx.media3.extractor.SeekMap
 import androidx.media3.extractor.TrackOutput
 import androidx.media3.extractor.metadata.emsg.EventMessage
 import androidx.media3.extractor.metadata.emsg.EventMessageDecoder
@@ -20,6 +24,176 @@ import org.junit.Test
 
 @UnstableApi
 class TwitchEmsgMetadataBridgeTest {
+    @Test
+    fun queuedHevcEmsgPreservesItsObservedPresentationDeltaAcrossASeek() {
+        val adjuster = TimestampAdjuster(28_000_000L)
+        adjuster.adjustSampleTimestamp(18_486_033_000L)
+        val target = CapturingTrackOutput()
+        val output = extractorOutput(target, adjuster)
+        val media = output.track(1, C.TRACK_TYPE_VIDEO)
+        val metadata = output.track(2, C.TRACK_TYPE_METADATA)
+        metadata.format(Format.Builder().setSampleMimeType(MimeTypes.APPLICATION_EMSG).build())
+        val expectedTimesUs = listOf(28_034_000L, 30_034_000L, 48_034_000L)
+
+        expectedTimesUs.forEach { presentationTimeUs ->
+            media.sampleMetadata(presentationTimeUs - 34_000L, 0, 0, 0, null)
+            writeTwitchSample(metadata, adjuster.adjustSampleTimestamp(presentationTimeUs))
+        }
+
+        assertEquals(expectedTimesUs, target.samples.map { it.timeUs })
+    }
+
+    @Test
+    fun confirmedHevcOffsetSurvivesPositiveTimestampsAndARecreatedOutput() {
+        val adjuster = TimestampAdjuster(28_000_000L)
+        val mediaTimeUs = adjuster.adjustSampleTimestamp(18_486_033_000L)
+        val bridge = TwitchEmsgMetadataBridge(logger = {})
+        assertEquals(
+            listOf(mediaTimeUs + 34_000L),
+            forwardedTimestamps(
+                adjuster, mediaTimeUs,
+                listOf(adjuster.adjustSampleTimestamp(mediaTimeUs + 34_000L)), bridge,
+            ),
+        )
+
+        // Native period time keeps advancing even when the visible HLS window moves.
+        val laterMediaTimeUs = 18_500_000_000L
+        val laterPresentationTimeUs = laterMediaTimeUs + 34_000L
+        val doubledTimeUs = adjuster.adjustSampleTimestamp(laterPresentationTimeUs)
+        assertTrue(doubledTimeUs > 0)
+        assertEquals(
+            listOf(laterPresentationTimeUs, laterPresentationTimeUs),
+            forwardedTimestamps(
+                adjuster, laterMediaTimeUs,
+                listOf(doubledTimeUs, laterPresentationTimeUs), bridge,
+            ),
+        )
+
+        val otherOffset = TimestampAdjuster(28_000_000L)
+        val otherMediaTimeUs = otherOffset.adjustSampleTimestamp(27_000_000L)
+        val unprovenTimeUs = otherOffset.adjustSampleTimestamp(otherMediaTimeUs + 34_000L)
+        assertEquals(
+            listOf(unprovenTimeUs),
+            forwardedTimestamps(otherOffset, otherMediaTimeUs, listOf(unprovenTimeUs), bridge),
+        )
+    }
+
+    @Test
+    fun invalidLargeLeadsNegativeCandidatesAndAlreadyCorrectEmsgAreNotRepaired() {
+        val adjuster = TimestampAdjuster(28_000_000L)
+        val mediaTimeUs = adjuster.adjustSampleTimestamp(18_486_033_000L)
+        val unchangedTimesUs = listOf(
+            adjuster.adjustSampleTimestamp(mediaTimeUs + 2_000_000L),
+            adjuster.adjustSampleTimestamp(-34_000L),
+            mediaTimeUs + 34_000L,
+        )
+
+        assertEquals(unchangedTimesUs, forwardedTimestamps(adjuster, mediaTimeUs, unchangedTimesUs))
+    }
+
+    @Test
+    fun unprovenPositiveOffsetsRequireAnExactMatchAndArithmeticOverflowKeepsTheOriginal() {
+        val positiveAdjuster = TimestampAdjuster(28_000_000L)
+        val mediaTimeUs = positiveAdjuster.adjustSampleTimestamp(27_000_000L)
+        val exactTimeUs = positiveAdjuster.adjustSampleTimestamp(mediaTimeUs)
+        val positiveLeadTimeUs = positiveAdjuster.adjustSampleTimestamp(mediaTimeUs + 34_000L)
+        assertEquals(
+            listOf(positiveLeadTimeUs, mediaTimeUs),
+            forwardedTimestamps(positiveAdjuster, mediaTimeUs, listOf(positiveLeadTimeUs, exactTimeUs)),
+        )
+
+        val overflowingAdjuster = TimestampAdjuster(0L)
+        overflowingAdjuster.adjustSampleTimestamp(-Long.MAX_VALUE + 1L)
+        assertEquals(listOf(-3L), forwardedTimestamps(overflowingAdjuster, 0L, listOf(-3L)))
+    }
+
+    @Test
+    fun queuedTwitchEmsgRemovesTheDuplicateNativeOffsetAndKeepsTheVideoTimestamp() {
+        // CMAF's source clock can be hours ahead of the current HLS window.
+        val adjuster = TimestampAdjuster(28_000_000L)
+        val videoTimeUs = adjuster.adjustSampleTimestamp(17_060_033_000L)
+        val duplicatedEmsgTimeUs = adjuster.adjustSampleTimestamp(videoTimeUs)
+        assertTrue(duplicatedEmsgTimeUs < 0)
+        val target = CapturingTrackOutput()
+        val output = extractorOutput(target, adjuster)
+        output.track(1, C.TRACK_TYPE_VIDEO).sampleMetadata(videoTimeUs, 0, 0, 0, null)
+        val metadata = output.track(2, C.TRACK_TYPE_METADATA)
+        metadata.format(Format.Builder().setSampleMimeType(MimeTypes.APPLICATION_EMSG).build())
+        val sample = twitchEmsg(VALID_SEGMENT_JSON)
+
+        metadata.sampleData(ParsableByteArray(sample), sample.size, TrackOutput.SAMPLE_DATA_PART_MAIN)
+        metadata.sampleMetadata(duplicatedEmsgTimeUs, C.BUFFER_FLAG_KEY_FRAME, sample.size, 0, null)
+
+        assertEquals(videoTimeUs, target.samples.single().timeUs)
+        assertEquals(
+            TwitchEmsgMetadataBridge.AOM_ID3_SCHEME,
+            EventMessageDecoder().decode(ParsableByteArray(target.samples.single().data)).schemeIdUri,
+        )
+    }
+
+    @Test
+    fun nativeAbsoluteEmsgUnrelatedEmsgAndTsMetadataKeepTheirOriginalTimestamps() {
+        val adjuster = TimestampAdjuster(28_000_000L)
+        val videoTimeUs = adjuster.adjustSampleTimestamp(17_060_033_000L)
+        val target = CapturingTrackOutput()
+        val output = extractorOutput(target, adjuster)
+        output.track(1, C.TRACK_TYPE_VIDEO).sampleMetadata(videoTimeUs, 0, 0, 0, null)
+        val metadata = output.track(2, C.TRACK_TYPE_METADATA)
+        metadata.format(Format.Builder().setSampleMimeType(MimeTypes.APPLICATION_EMSG).build())
+        val absolute = twitchEmsg(VALID_SEGMENT_JSON)
+        metadata.sampleData(ParsableByteArray(absolute), absolute.size, TrackOutput.SAMPLE_DATA_PART_MAIN)
+        metadata.sampleMetadata(videoTimeUs, C.BUFFER_FLAG_KEY_FRAME, absolute.size, 0, null)
+        val unrelated = EventMessageEncoder().encode(EventMessage("urn:other", "", 0, 1, byteArrayOf(1)))
+        val unrelatedTimeUs = adjuster.adjustSampleTimestamp(videoTimeUs)
+        metadata.sampleData(ParsableByteArray(unrelated), unrelated.size, TrackOutput.SAMPLE_DATA_PART_MAIN)
+        metadata.sampleMetadata(unrelatedTimeUs, 0, unrelated.size, 0, null)
+        val ts = encodeTxxxId3Tag("segmentmetadata", VALID_SEGMENT_JSON)
+        metadata.format(Format.Builder().setSampleMimeType(MimeTypes.APPLICATION_ID3).build())
+        metadata.sampleData(ParsableByteArray(ts), ts.size, TrackOutput.SAMPLE_DATA_PART_MAIN)
+        metadata.sampleMetadata(videoTimeUs + 2_000_000L, 0, ts.size, 0, null)
+
+        assertEquals(listOf(videoTimeUs, unrelatedTimeUs, videoTimeUs + 2_000_000L), target.samples.map { it.timeUs })
+        assertArrayEquals(unrelated, target.samples[1].data)
+        assertArrayEquals(ts, target.samples[2].data)
+    }
+
+    private fun extractorOutput(
+        target: TrackOutput,
+        adjuster: TimestampAdjuster,
+        bridge: TwitchEmsgMetadataBridge = TwitchEmsgMetadataBridge(logger = {}),
+    ) =
+        TwitchEmsgMetadataBridgeExtractorOutput(
+            object : ExtractorOutput {
+                override fun track(id: Int, type: Int): TrackOutput =
+                    if (type == C.TRACK_TYPE_METADATA) target else DiscardingTrackOutput()
+                override fun endTracks() = Unit
+                override fun seekMap(seekMap: SeekMap) = Unit
+            },
+            bridge,
+            adjuster,
+        )
+
+    private fun forwardedTimestamps(
+        adjuster: TimestampAdjuster,
+        mediaTimeUs: Long,
+        metadataTimesUs: List<Long>,
+        bridge: TwitchEmsgMetadataBridge = TwitchEmsgMetadataBridge(logger = {}),
+    ): List<Long> {
+        val target = CapturingTrackOutput()
+        val output = extractorOutput(target, adjuster, bridge)
+        output.track(1, C.TRACK_TYPE_VIDEO).sampleMetadata(mediaTimeUs, 0, 0, 0, null)
+        val metadata = output.track(2, C.TRACK_TYPE_METADATA)
+        metadata.format(Format.Builder().setSampleMimeType(MimeTypes.APPLICATION_EMSG).build())
+        metadataTimesUs.forEach { writeTwitchSample(metadata, it) }
+        return target.samples.map { it.timeUs }
+    }
+
+    private fun writeTwitchSample(metadata: TrackOutput, timeUs: Long) {
+        val sample = twitchEmsg(VALID_SEGMENT_JSON)
+        metadata.sampleData(ParsableByteArray(sample), sample.size, TrackOutput.SAMPLE_DATA_PART_MAIN)
+        metadata.sampleMetadata(timeUs, C.BUFFER_FLAG_KEY_FRAME, sample.size, 0, null)
+    }
+
     @Test
     fun twitchId3EmsgWithEmptyValueIsRelabeledAndUsesExistingLatencySession() {
         val logs = mutableListOf<String>()

@@ -103,7 +103,17 @@ internal class TwitchPlayerView(
                 correctionStartedAt != null &&
                 SystemClock.elapsedRealtime() - correctionStartedAt >= CORRECTION_TIMEOUT_MS
             ) {
-                requestPlaybackReload("live correction timed out")
+                if (latencyCorrection.finishIfMetadataUnavailable(
+                        isPlaying = player.isPlaying,
+                        hasMeasuredLatency = latestLatencyMs != null,
+                    )
+                ) {
+                    correctionRequestedAtRealtimeMs = null
+                    lastCorrectionWaitReason = null
+                    Log.d(LOG_TAG, "live correction stopped: no timed latency metadata")
+                } else {
+                    requestPlaybackReload("live correction timed out")
+                }
             }
             mainHandler.postDelayed(this, AD_PROGRESS_INTERVAL_MS)
         }
@@ -169,6 +179,12 @@ internal class TwitchPlayerView(
             context,
             adaptiveTrackSelectionFactory(),
         )
+        // Auto follows decoder support and connection capacity, including source
+        // renditions above the display size and transitions between AVC and HEVC.
+        trackSelector.parameters = trackSelector.parameters.buildUpon()
+            .clearViewportSizeConstraints()
+            .setAllowVideoMixedMimeTypeAdaptiveness(true)
+            .build()
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
                 MIN_BUFFER_MS,

@@ -8,6 +8,30 @@ import org.junit.Test
 
 class InitialLiveLatencyCorrectionTest {
     @Test
+    fun metadataFreePlaybackFinishesItsTimedOutRequestWithoutAReplay() {
+        val coordinator = LiveLatencyCorrectionCoordinator(maximumSeekAttempts = 3)
+        coordinator.arm(LiveLatencyCorrectionReason.QUALITY_CHANGE, 1_650L, 0L)
+
+        assertTrue(coordinator.finishIfMetadataUnavailable(isPlaying = true, hasMeasuredLatency = false))
+        assertFalse(coordinator.hasPendingRequest)
+        assertEquals(
+            LiveLatencyCorrectionOutcome.COMPLETE,
+            evaluate(coordinator, measurement(latencyMs = 5_000L, sequence = 1L)).outcome,
+        )
+    }
+
+    @Test
+    fun stalledOrMeasuredPlaybackRetainsTheExistingTimeoutRecovery() {
+        val coordinator = LiveLatencyCorrectionCoordinator(maximumSeekAttempts = 3)
+        coordinator.arm(LiveLatencyCorrectionReason.RESUME, 1_650L, 0L)
+
+        assertFalse(coordinator.finishIfMetadataUnavailable(isPlaying = false, hasMeasuredLatency = false))
+        assertTrue(coordinator.hasPendingRequest)
+        assertFalse(coordinator.finishIfMetadataUnavailable(isPlaying = true, hasMeasuredLatency = true))
+        assertTrue(coordinator.hasPendingRequest)
+    }
+
+    @Test
     fun longPauseOrLargeLatencyReloadsInsteadOfChasingSixSecondsOfOldBuffer() {
         assertTrue(shouldReloadLivePlayback(pausedForMs = 60_000L))
         assertTrue(shouldReloadLivePlayback(pausedForMs = 10_000L))

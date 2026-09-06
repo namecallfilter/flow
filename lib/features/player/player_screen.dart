@@ -888,14 +888,19 @@ class _PlayerViewport extends StatelessWidget {
                               onProfileTap: onProfileTap,
                               onCategoryTap: onCategoryTap,
                             ),
-                            _PlayerFooter(
-                              viewers: viewerText,
-                              liveDuration: liveDuration,
-                              latencyMs: latencyMs,
-                              isLandscape: isLandscape,
-                              onJumpToLive: onJumpToLive,
-                              onRefresh: onRefresh,
-                              onToggleLandscape: onToggleLandscape,
+                            TooltipTheme(
+                              data: TooltipTheme.of(context).copyWith(
+                                preferBelow: isLandscape ? null : false,
+                              ),
+                              child: _PlayerFooter(
+                                viewers: viewerText,
+                                liveDuration: liveDuration,
+                                latencyMs: latencyMs,
+                                isLandscape: isLandscape,
+                                onJumpToLive: onJumpToLive,
+                                onRefresh: onRefresh,
+                                onToggleLandscape: onToggleLandscape,
+                              ),
                             ),
                           ],
                         ),
@@ -1644,7 +1649,6 @@ class _OverlayMetric extends StatelessWidget {
   Widget build(BuildContext context) => Tooltip(
     message: tooltip,
     enableFeedback: true,
-    preferBelow: MediaQuery.orientationOf(context) == Orientation.portrait ? false : null,
     child: Text(
       text,
       maxLines: 1,

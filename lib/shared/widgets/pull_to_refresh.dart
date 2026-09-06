@@ -1,6 +1,7 @@
 import "dart:async";
 
 import "package:flutter/foundation.dart";
+import "package:flutter/gestures.dart";
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 
@@ -51,6 +52,8 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> with WidgetsBindi
 
   Timer? _periodicRefreshTimer;
   double _pullExtent = 0;
+  Offset _pendingPullDelta = Offset.zero;
+  bool _isVerticalDrag = false;
   bool _isPulling = false;
   bool _hasReversed = false;
   bool _isRefreshing = false;
@@ -142,6 +145,8 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> with WidgetsBindi
 
     _isPulling = false;
     _hasReversed = false;
+    _isVerticalDrag = false;
+    _pendingPullDelta = Offset.zero;
   }
 
   void _handlePointerMove(PointerMoveEvent event) {
@@ -149,18 +154,52 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> with WidgetsBindi
       return;
     }
 
-    final isPullGesture = _isPulling || (_isAtTop && event.delta.dy > 0);
+    if (!_isPulling) {
+      if (_isAtTop) {
+        _pendingPullDelta += event.delta;
+        _tryStartPull();
+      } else {
+        _pendingPullDelta = Offset.zero;
+      }
+      return;
+    }
+
+    _applyPullDelta(event.delta.dy);
+  }
+
+  bool _handleScrollStart(ScrollStartNotification notification) {
+    if (notification.depth == 0 &&
+        notification.metrics.axis == Axis.vertical &&
+        notification.dragDetails != null &&
+        !_isRefreshing &&
+        !_refreshInFlight) {
+      // Wait until scrolling wins over a title hold or a horizontal back swipe.
+      _isVerticalDrag = true;
+      _tryStartPull();
+    }
+    return false;
+  }
+
+  void _tryStartPull() {
+    if (_isVerticalDrag &&
+        _pendingPullDelta.dy > kTouchSlop &&
+        _pendingPullDelta.dy > _pendingPullDelta.dx.abs()) {
+      _applyPullDelta(_pendingPullDelta.dy);
+      _pendingPullDelta = Offset.zero;
+    }
+  }
+
+  void _applyPullDelta(double delta) {
+    final isPullGesture = _isPulling || (_isAtTop && delta > 0);
     if (!isPullGesture) {
       return;
     }
 
-    if (event.delta.dy < 0) {
+    if (delta < 0) {
       _hasReversed = true;
     }
 
-    final dragDelta = event.delta.dy > 0
-        ? event.delta.dy * _pullResistance
-        : event.delta.dy * _reverseResistance;
+    final dragDelta = delta > 0 ? delta * _pullResistance : delta * _reverseResistance;
     final nextExtent = (_pullExtent + dragDelta).clamp(0.0, widget.triggerDistance);
 
     _snapScrollableToTop();
@@ -183,6 +222,8 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> with WidgetsBindi
         _pullExtent >= widget.triggerDistance;
     _isPulling = false;
     _hasReversed = false;
+    _isVerticalDrag = false;
+    _pendingPullDelta = Offset.zero;
 
     if (shouldRefresh) {
       unawaited(_runRefresh());
@@ -265,7 +306,10 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> with WidgetsBindi
       onPointerCancel: _handlePointerEnd,
       child: Stack(
         children: [
-          widget.child,
+          NotificationListener<ScrollStartNotification>(
+            onNotification: _handleScrollStart,
+            child: widget.child,
+          ),
           if (shouldShowIndicator)
             AnimatedPositioned(
               duration: animationDuration,

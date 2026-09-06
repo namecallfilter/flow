@@ -34,10 +34,12 @@ class TwitchPlayerQualityTest {
                 .setSampleMimeType(MimeTypes.VIDEO_H264).build(),
             Format.Builder().setId("1080p60").setHeight(1080).setAverageBitrate(6_000_000)
                 .setSampleMimeType(MimeTypes.VIDEO_H264).build(),
+            Format.Builder().setId("1440p60").setHeight(1440).setAverageBitrate(12_000_000)
+                .setSampleMimeType(MimeTypes.VIDEO_H265).build(),
         )
         val selection = checkNotNull(
             TwitchPlayerView.adaptiveTrackSelectionFactory(clock).createTrackSelections(
-                arrayOf(ExoTrackSelection.Definition(group, 0, 1)),
+                arrayOf(ExoTrackSelection.Definition(group, 0, 1, 2)),
                 meter,
                 MediaPeriodId(Any()),
                 Timeline.EMPTY,
@@ -49,16 +51,19 @@ class TwitchPlayerQualityTest {
             // Twitch's promoted prefetch overstates the timeline's live duration.
             30_000_000L,
             emptyList(),
-            arrayOf(MediaChunkIterator.EMPTY, MediaChunkIterator.EMPTY),
+            arrayOf(MediaChunkIterator.EMPTY, MediaChunkIterator.EMPTY, MediaChunkIterator.EMPTY),
         )
 
         update(1_650_000L)
         assertEquals("160p", selection.selectedFormat.id)
-        bandwidth = 50_000_000L
+        bandwidth = 14_000_000L
         update(500_000L)
         assertEquals("160p", selection.selectedFormat.id) // Buffer must be healthy first.
         update(1_650_000L)
         assertEquals("1080p60", selection.selectedFormat.id)
+        bandwidth = 50_000_000L
+        update(1_650_000L)
+        assertEquals("1440p60", selection.selectedFormat.id)
         bandwidth = 500_000L
         update(500_000L)
         assertEquals("160p", selection.selectedFormat.id) // Auto still responds to a slow network.
