@@ -33,10 +33,10 @@ class StreamSortButton extends StatelessWidget {
     label: (value) => value.label,
     icon: switch (sort) {
       StreamSort.recommendedForYou => Icons.auto_awesome,
-      StreamSort.viewersHighToLow => Icons.arrow_downward,
-      StreamSort.viewersLowToHigh => Icons.arrow_upward,
+      StreamSort.viewersHighToLow || StreamSort.viewersLowToHigh => Icons.sort,
       StreamSort.recentlyStarted => Icons.schedule,
     },
+    flipIconVertically: sort == StreamSort.viewersLowToHigh,
     tooltip: "Sort live channels",
   );
 
@@ -64,7 +64,7 @@ class CategorySortButton extends StatelessWidget {
     label: (value) => value.label,
     icon: switch (sort) {
       CategorySort.recommendedForYou => Icons.auto_awesome,
-      CategorySort.viewersHighToLow => Icons.arrow_downward,
+      CategorySort.viewersHighToLow => Icons.sort,
     },
     tooltip: "Sort categories",
   );
@@ -86,6 +86,7 @@ class _SortMenu<T> extends StatelessWidget {
     required this.label,
     required this.icon,
     required this.tooltip,
+    this.flipIconVertically = false,
   });
 
   final T sort;
@@ -94,6 +95,7 @@ class _SortMenu<T> extends StatelessWidget {
   final String Function(T) label;
   final IconData icon;
   final String tooltip;
+  final bool flipIconVertically;
 
   @override
   Widget build(BuildContext context) => Align(
@@ -117,7 +119,7 @@ class _SortMenu<T> extends StatelessWidget {
           key: const ValueKey("sort_button_content"),
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 20),
+            Transform.flip(flipY: flipIconVertically, child: Icon(icon, size: 20)),
             const SizedBox(width: AppSpacing.sm),
             Flexible(child: Text(label(sort), overflow: TextOverflow.ellipsis)),
             const Icon(Icons.arrow_drop_down),
@@ -136,6 +138,7 @@ class _SortMenu<T> extends StatelessWidget {
       ..add(ObjectFlagProperty<ValueChanged<T>>.has("onSelected", onSelected))
       ..add(ObjectFlagProperty<String Function(T)>.has("label", label))
       ..add(DiagnosticsProperty<IconData>("icon", icon))
+      ..add(DiagnosticsProperty<bool>("flipIconVertically", flipIconVertically))
       ..add(StringProperty("tooltip", tooltip));
   }
 }
