@@ -10,6 +10,80 @@ import "package:http/testing.dart";
 void main() {
   tearDown(() => TwitchApiClient.restoreWebSessionDeviceId(null));
 
+  for (final isPartner in [true, false, null]) {
+    test("retains explicit partner status across channel queries ($isPartner)", () async {
+      final broadcaster = {"id": "creator", "login": "creator", "isPartner": isPartner};
+      final stream = {
+        "id": "stream",
+        "broadcaster": broadcaster,
+        "game": {"id": "509658", "displayName": "Just Chatting"},
+      };
+      final user = {...broadcaster, "stream": stream};
+      final streams = {
+        "edges": [
+          {"node": stream},
+        ],
+        "pageInfo": {"hasNextPage": false},
+      };
+      final client = TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+        gqlAccessToken: "web-token-123",
+        httpClient: MockClient((request) async {
+          expect(
+            (jsonDecode(request.body) as Map<String, Object?>)["query"],
+            contains("isPartner"),
+          );
+          return _jsonResponse({
+            "data": {
+              "user": user,
+              "users": [user],
+              "streams": streams,
+              "game": {"streams": streams},
+              "currentUser": {
+                "followedLiveUsers": {
+                  "edges": [
+                    {"node": user},
+                  ],
+                  "pageInfo": {"hasNextPage": false},
+                },
+              },
+              "searchSuggestions": {
+                "edges": [
+                  {
+                    "node": {
+                      "text": "Creator",
+                      "content": {
+                        "__typename": "SearchSuggestionChannel",
+                        ...broadcaster,
+                        "isVerified": true,
+                        "user": user,
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          });
+        }),
+      );
+      final expected = isPartner == true;
+      expect((await client.fetchLiveStreams()).single.isPartner, expected);
+      expect((await client.fetchLiveStreams(gameIds: ["509658"])).single.isPartner, expected);
+      expect((await client.fetchLiveStreams(userLogins: ["creator"])).single.isPartner, expected);
+      expect((await client.fetchFollowedStreams("viewer")).single.isPartner, expected);
+      final channel = await client.fetchChannelDetails("creator");
+      expect(channel.isPartner, expected);
+      expect(
+        channel.withPastBroadcasts(pastBroadcasts: [], pastBroadcastsCursor: null).isPartner,
+        expected,
+      );
+      final result = (await client.searchChannelsPage("creator")).data.single;
+      expect(result.isPartner, expected);
+      expect(result.gameId, "509658");
+    });
+  }
+
   for (final operation in [
     "current user",
     "live follows",

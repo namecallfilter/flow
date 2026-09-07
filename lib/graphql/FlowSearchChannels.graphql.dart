@@ -310,6 +310,15 @@ const documentNodeQueryFlowSearchChannels = DocumentNode(
                                                 selectionSet: null,
                                               ),
                                               FieldNode(
+                                                name: NameNode(
+                                                  value: 'isPartner',
+                                                ),
+                                                alias: null,
+                                                arguments: [],
+                                                directives: [],
+                                                selectionSet: null,
+                                              ),
+                                              FieldNode(
                                                 name: NameNode(value: 'stream'),
                                                 alias: null,
                                                 arguments: [],
@@ -1110,6 +1119,7 @@ class Query$FlowSearchChannels$searchSuggestions$edges$node$content$$SearchSugge
 class Query$FlowSearchChannels$searchSuggestions$edges$node$content$$SearchSuggestionChannel$user {
   Query$FlowSearchChannels$searchSuggestions$edges$node$content$$SearchSuggestionChannel$user({
     this.id,
+    this.isPartner,
     this.stream,
   });
 
@@ -1117,9 +1127,13 @@ class Query$FlowSearchChannels$searchSuggestions$edges$node$content$$SearchSugge
     Map<String, dynamic> json,
   ) {
     final l$id = json.containsKey('id') ? json['id'] : null;
+    final l$isPartner = json.containsKey('isPartner')
+        ? json['isPartner']
+        : null;
     final l$stream = json.containsKey('stream') ? json['stream'] : null;
     return Query$FlowSearchChannels$searchSuggestions$edges$node$content$$SearchSuggestionChannel$user(
       id: (l$id as String?),
+      isPartner: (l$isPartner as bool?),
       stream: l$stream == null
           ? null
           : Query$FlowSearchChannels$searchSuggestions$edges$node$content$$SearchSuggestionChannel$user$stream.fromJson(
@@ -1130,6 +1144,8 @@ class Query$FlowSearchChannels$searchSuggestions$edges$node$content$$SearchSugge
 
   final String? id;
 
+  final bool? isPartner;
+
   final Query$FlowSearchChannels$searchSuggestions$edges$node$content$$SearchSuggestionChannel$user$stream?
   stream;
 
@@ -1137,6 +1153,8 @@ class Query$FlowSearchChannels$searchSuggestions$edges$node$content$$SearchSugge
     final _resultData = <String, dynamic>{};
     final l$id = id;
     _resultData['id'] = l$id;
+    final l$isPartner = isPartner;
+    _resultData['isPartner'] = l$isPartner;
     final l$stream = stream;
     _resultData['stream'] = l$stream?.toJson();
     return _resultData;
@@ -1145,8 +1163,9 @@ class Query$FlowSearchChannels$searchSuggestions$edges$node$content$$SearchSugge
   @override
   int get hashCode {
     final l$id = id;
+    final l$isPartner = isPartner;
     final l$stream = stream;
-    return Object.hashAll([l$id, l$stream]);
+    return Object.hashAll([l$id, l$isPartner, l$stream]);
   }
 
   @override
@@ -1162,6 +1181,11 @@ class Query$FlowSearchChannels$searchSuggestions$edges$node$content$$SearchSugge
     final l$id = id;
     final lOther$id = other.id;
     if (l$id != lOther$id) {
+      return false;
+    }
+    final l$isPartner = isPartner;
+    final lOther$isPartner = other.isPartner;
+    if (l$isPartner != lOther$isPartner) {
       return false;
     }
     final l$stream = stream;

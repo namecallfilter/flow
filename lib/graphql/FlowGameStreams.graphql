@@ -9,6 +9,7 @@ query FlowGameStreams($id: ID, $first: Int, $after: Cursor, $options: GameStream
             id
             login
             displayName
+            isPartner
             profileImageURL(width: 300)
             broadcastSettings {
               title

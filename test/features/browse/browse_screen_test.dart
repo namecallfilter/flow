@@ -16,6 +16,7 @@ import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flow/shared/widgets/pull_to_refresh.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:http/http.dart" as http;
 import "package:http/testing.dart";
@@ -23,6 +24,38 @@ import "package:http/testing.dart";
 typedef _RequestObserver = void Function(http.Request request);
 
 void main() {
+  testWidgets("vibrates when changing the browse section", (tester) async {
+    final haptics = <Object?>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (
+      call,
+    ) async {
+      if (call.method == "HapticFeedback.vibrate") {
+        haptics.add(call.arguments);
+      }
+      return null;
+    });
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: BrowseScreen(authController: _authController(), periodicRefreshInterval: null),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey("browse_segment_live_channels")));
+    await tester.pumpAndSettle();
+    expect(haptics, ["HapticFeedbackType.selectionClick"]);
+    await tester.tap(find.byKey(const ValueKey("browse_segment_live_channels")));
+    await tester.pumpAndSettle();
+    expect(haptics, ["HapticFeedbackType.selectionClick"]);
+    await tester.tap(find.byKey(const ValueKey("browse_segment_categories")));
+    await tester.pumpAndSettle();
+    expect(haptics, List.filled(2, "HapticFeedbackType.selectionClick"));
+  });
+
   testWidgets("recommendation paging stops after an error and resumes after refresh", (
     tester,
   ) async {
@@ -544,7 +577,7 @@ void main() {
     expect(searchHistoryStore.history, isEmpty);
   });
 
-  testWidgets("opens live search results in the player and avatars as channels", (
+  testWidgets("shows partner badges and preserves search result navigation", (
     tester,
   ) async {
     final rootNavigator = GlobalKey<NavigatorState>();
@@ -573,8 +606,32 @@ void main() {
     await tester.pumpAndSettle();
     final searchPage = tester.element(find.byKey(const ValueKey("browse_search_page")));
     expect(Navigator.of(searchPage), same(tabNavigator.currentState));
+    for (final name in ["HighCreator", "MinecraftCreator", "LowCreator", "BannedCreator"]) {
+      expect(
+        find.descendant(
+          of: find.byKey(ValueKey("browse_search_channel_$name")),
+          matching: find.byIcon(Icons.verified),
+        ),
+        name == "HighCreator" || name == "MinecraftCreator" ? findsOneWidget : findsNothing,
+      );
+    }
 
-    await tester.tap(find.byKey(const ValueKey("browse_search_channel_MinecraftCreator")));
+    await tester.tap(find.byKey(const ValueKey("browse_search_channel_category_HighCreator")));
+    await tester.pumpAndSettle();
+    final categoryPage = tester.element(
+      find.byKey(const ValueKey("category_streams_page_Minecraft")),
+    );
+    expect(Navigator.of(categoryPage), same(tabNavigator.currentState));
+    expect(
+      tester.widget<CategoryStreamsScreen>(find.byType(CategoryStreamsScreen)).category.id,
+      "game-Minecraft",
+    );
+    expect(find.byType(StreamPlayerScreen), findsNothing);
+    Navigator.of(categoryPage).pop();
+    await tester.pumpAndSettle();
+    expect(tester.element(find.byKey(const ValueKey("browse_search_page"))), same(searchPage));
+
+    await tester.tap(find.byKey(const ValueKey("browse_search_channel_category_MinecraftCreator")));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey("channel_page_minecraftcreator")), findsOneWidget);
 
@@ -591,6 +648,7 @@ void main() {
     expect(player.channel.login, "highcreator");
     expect(player.channel.name, "HighCreator");
     expect(player.channel.category, "Minecraft");
+    expect(player.channel.categoryId, "game-Minecraft");
 
     Navigator.of(
       tester.element(find.byKey(const ValueKey("player_page_highcreator"))),
@@ -695,12 +753,14 @@ MockClient _browseHttpClient({_RequestObserver? onRequest}) => MockClient((reque
                 id: "creator-4",
                 login: "minecraftcreator",
                 displayName: "MinecraftCreator",
+                isPartner: true,
               ),
               _searchChannelEdge(
                 id: "creator-high",
                 login: "highcreator",
                 displayName: "HighCreator",
                 isLive: true,
+                isPartner: true,
               ),
               _searchChannelEdge(
                 id: "banned-1",
@@ -939,6 +999,7 @@ Map<String, Object?> _searchChannelEdge({
   required String login,
   required String displayName,
   bool isLive = false,
+  bool isPartner = false,
 }) => {
   "node": {
     "id": "$id-suggestion",
@@ -952,6 +1013,7 @@ Map<String, Object?> _searchChannelEdge({
       "profileImageURL": "https://static-cdn.jtvnw.net/$id.png",
       "user": {
         "id": id,
+        "isPartner": isPartner,
         "roles": const <Object?>[],
         "stream": isLive ? _searchStreamForLogin(login) : null,
       },

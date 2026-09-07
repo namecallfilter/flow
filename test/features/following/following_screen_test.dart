@@ -230,7 +230,11 @@ void main() {
       ),
     );
 
+    await tester.longPress(find.byKey(const ValueKey("profile_auth_button")));
+    await tester.pump(const Duration(milliseconds: 160));
+    expect(find.text("Me"), findsOneWidget);
     await _logInFromMe(tester);
+    expect(tester.takeException(), isNull);
 
     await tester.tap(find.byKey(const ValueKey("stream_thumbnail_LiveOne")));
     await tester.pumpAndSettle();
@@ -310,6 +314,7 @@ void main() {
       title: "Building with chat",
       category: "Minecraft",
       categoryId: "27471",
+      isPartner: true,
       viewers: "321",
       avatarColors: [Colors.purple, Colors.pink],
       thumbnailColors: [Colors.blue, Colors.indigo],
@@ -374,6 +379,28 @@ void main() {
     expect(find.text(channel.title), findsNWidgets(2));
     expect(streamSelections, 1);
     await tester.pump(const Duration(seconds: 6));
+  });
+
+  testWidgets("stream cards omit the checkmark for non-partners", (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: StreamCard(
+            channel: StreamChannel(
+              login: "creator",
+              name: "Creator",
+              initials: "C",
+              title: "Live now",
+              category: "Just Chatting",
+              viewers: "42",
+              avatarColors: [Colors.purple, Colors.pink],
+              thumbnailColors: [Colors.blue, Colors.indigo],
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.byIcon(Icons.verified), findsNothing);
   });
 }
 

@@ -108,11 +108,16 @@ void main() {
       tester.getSize(find.byKey(const ValueKey("scroll_to_top_badge"))).height,
       greaterThanOrEqualTo(48),
     );
+    await tester.longPress(find.byKey(const ValueKey("scroll_to_top_badge")));
+    await tester.pump(const Duration(milliseconds: 160));
+    expect(find.text("Scroll to top"), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey("scroll_to_top_badge")));
     await tester.pumpAndSettle();
 
     expect(scrollController.offset, closeTo(0, 0.1));
     expect(find.byKey(const ValueKey("scroll_to_top_badge")), findsNothing);
+    expect(find.text("Scroll to top"), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets("removes the Top badge when collapsing content corrects the scroll offset", (
@@ -149,6 +154,9 @@ void main() {
     scrollController.jumpTo(700);
     await tester.pump();
     expect(find.byKey(const ValueKey("scroll_to_top_badge")), findsOneWidget);
+    await tester.longPress(find.byKey(const ValueKey("scroll_to_top_badge")));
+    await tester.pump(const Duration(milliseconds: 160));
+    expect(find.text("Scroll to top"), findsOneWidget);
 
     updateContent(() => expanded = false);
     await tester.pump();
@@ -157,6 +165,7 @@ void main() {
 
     expect(scrollController.offset, 0);
     expect(find.byKey(const ValueKey("scroll_to_top_badge")), findsNothing);
+    expect(find.text("Scroll to top"), findsNothing);
     expect(tester.getTopLeft(find.byKey(const ValueKey("test_header"))).dy, 44);
     expect(tester.takeException(), isNull);
   });

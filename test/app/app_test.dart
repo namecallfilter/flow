@@ -1,10 +1,12 @@
 import "package:flow/app/app.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flutter/material.dart";
+import "package:flutter_secure_storage/flutter_secure_storage.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
   testWidgets("launches even when settings storage fails", (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
     await tester.pumpWidget(FlowApp(preferences: _UnavailablePreferences()));
     await tester.pumpAndSettle();
 

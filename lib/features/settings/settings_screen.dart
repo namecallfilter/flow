@@ -238,14 +238,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _moveProxy(int index, int offset) async {
+  Future<void> _reorderProxy(int oldIndex, int newIndex) async {
     final urls = _settingsStore.adProxyUrls.toList();
-    final target = index + offset;
-    if (target < 0 || target >= urls.length) {
-      return;
-    }
-    final value = urls.removeAt(index);
-    urls.insert(target, value);
+    final value = urls.removeAt(oldIndex);
+    urls.insert(newIndex, value);
     await _settingsStore.setAdProxyUrls(urls);
   }
 
@@ -356,8 +352,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             final urls = _settingsStore.adProxyUrls.toList()..removeAt(index);
                             unawaited(_saveSettings(() => _settingsStore.setAdProxyUrls(urls)));
                           },
-                          onMoveProxy: (index, offset) =>
-                              unawaited(_saveSettings(() => _moveProxy(index, offset))),
+                          onReorderProxy: (oldIndex, newIndex) =>
+                              unawaited(_saveSettings(() => _reorderProxy(oldIndex, newIndex))),
                           onAddChannel: () => unawaited(_saveSettings(_addWhitelistedChannel)),
                           onRemoveChannel: (channel) {
                             final channels = _settingsStore.adProxyWhitelistedChannels.toList()
@@ -457,7 +453,7 @@ class _AdProxySettings extends StatelessWidget {
     required this.onEnabledChanged,
     required this.onAddProxy,
     required this.onRemoveProxy,
-    required this.onMoveProxy,
+    required this.onReorderProxy,
     required this.onAddChannel,
     required this.onRemoveChannel,
   });
@@ -470,13 +466,41 @@ class _AdProxySettings extends StatelessWidget {
   final ValueChanged<bool> onEnabledChanged;
   final VoidCallback onAddProxy;
   final ValueChanged<int> onRemoveProxy;
-  final void Function(int index, int offset) onMoveProxy;
+  final ReorderCallback onReorderProxy;
   final VoidCallback onAddChannel;
   final ValueChanged<String> onRemoveChannel;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    Widget proxyTile(int index) => ListTile(
+      key: ValueKey("settings_proxy_${proxyUrls[index]}"),
+      dense: true,
+      contentPadding: const EdgeInsets.only(left: AppSpacing.lg, right: AppSpacing.sm),
+      title: Text(index == 0 ? "Main" : "Fallback $index"),
+      subtitle: Text(
+        _displayProxyUrl(proxyUrls[index]),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: "Remove proxy",
+            onPressed: () => onRemoveProxy(index),
+            icon: const Icon(Icons.delete_outline),
+          ),
+          ReorderableDragStartListener(
+            index: index,
+            child: const Tooltip(
+              message: "Reorder proxy",
+              child: SizedBox.square(dimension: 48, child: Icon(Icons.drag_indicator)),
+            ),
+          ),
+        ],
+      ),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -495,37 +519,17 @@ class _AdProxySettings extends StatelessWidget {
         if (proxyUrls.isEmpty)
           const _SettingsEmptyList(message: "Add at least one HTTP proxy.")
         else
-          for (final (index, url) in proxyUrls.indexed)
-            ListTile(
-              key: ValueKey("settings_proxy_$index"),
-              dense: true,
-              title: Text(index == 0 ? "Main" : "Fallback $index"),
-              subtitle: Text(
-                _displayProxyUrl(url),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    tooltip: "Move up",
-                    onPressed: index == 0 ? null : () => onMoveProxy(index, -1),
-                    icon: const Icon(Icons.arrow_upward),
-                  ),
-                  IconButton(
-                    tooltip: "Move down",
-                    onPressed: index == proxyUrls.length - 1 ? null : () => onMoveProxy(index, 1),
-                    icon: const Icon(Icons.arrow_downward),
-                  ),
-                  IconButton(
-                    tooltip: "Remove proxy",
-                    onPressed: () => onRemoveProxy(index),
-                    icon: const Icon(Icons.delete_outline),
-                  ),
-                ],
-              ),
-            ),
+          ReorderableListView(
+            shrinkWrap: true,
+            primary: false,
+            physics: const NeverScrollableScrollPhysics(),
+            padding: EdgeInsets.zero,
+            buildDefaultDragHandles: false,
+            onReorderItem: onReorderProxy,
+            // Keep an open tooltip out of the subtree moved between overlays.
+            proxyDecorator: (_, index, _) => Material(elevation: 6, child: proxyTile(index)),
+            children: [for (var index = 0; index < proxyUrls.length; index++) proxyTile(index)],
+          ),
         Divider(height: 1, color: theme.dividerColor),
         _SettingsListHeader(title: "Whitelisted channels", onAdd: onAddChannel),
         if (whitelistedChannels.isEmpty)
@@ -535,6 +539,7 @@ class _AdProxySettings extends StatelessWidget {
             ListTile(
               key: ValueKey("settings_whitelisted_$channel"),
               dense: true,
+              contentPadding: const EdgeInsets.only(left: AppSpacing.lg, right: AppSpacing.sm),
               title: Text(channel),
               subtitle: subscriptionChannels.contains(channel)
                   ? const Text("Subscribed channel")
@@ -567,7 +572,7 @@ class _AdProxySettings extends StatelessWidget {
     );
     properties.add(ObjectFlagProperty<VoidCallback>.has("onAddProxy", onAddProxy));
     properties.add(ObjectFlagProperty<ValueChanged<int>>.has("onRemoveProxy", onRemoveProxy));
-    properties.add(ObjectFlagProperty<void Function(int, int)>.has("onMoveProxy", onMoveProxy));
+    properties.add(ObjectFlagProperty<ReorderCallback>.has("onReorderProxy", onReorderProxy));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onAddChannel", onAddChannel));
     properties.add(
       ObjectFlagProperty<ValueChanged<String>>.has("onRemoveChannel", onRemoveChannel),

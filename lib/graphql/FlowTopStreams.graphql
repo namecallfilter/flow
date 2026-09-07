@@ -8,6 +8,7 @@ query FlowTopStreams($first: Int, $after: Cursor, $options: StreamOptions) {
           id
           login
           displayName
+          isPartner
           profileImageURL(width: 300)
           broadcastSettings {
             title

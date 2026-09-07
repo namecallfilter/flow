@@ -127,7 +127,7 @@ void main() {
     expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsNothing);
   });
 
-  testWidgets("reversing a vertical pull cancels refresh", (tester) async {
+  testWidgets("releasing a reversed pull below the threshold cancels refresh", (tester) async {
     final haptics = _recordHaptics(tester);
     final scrollController = ScrollController();
     addTearDown(scrollController.dispose);
@@ -146,13 +146,50 @@ void main() {
     expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsOneWidget);
     await gesture.moveBy(const Offset(0, -40));
     await tester.pump();
-    await gesture.moveBy(const Offset(0, 90));
-    await tester.pump();
     await gesture.up();
     await tester.pumpAndSettle();
 
     expect(refreshes, 0);
     expect(haptics, ["HapticFeedbackType.selectionClick"]);
+    expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsNothing);
+  });
+
+  testWidgets("crossing the threshold again vibrates and rearms the same pull", (tester) async {
+    final haptics = _recordHaptics(tester);
+    final scrollController = ScrollController();
+    addTearDown(scrollController.dispose);
+    var refreshes = 0;
+    await tester.pumpWidget(
+      _RefreshApp(
+        scrollController: scrollController,
+        periodicRefreshInterval: null,
+        onRefresh: () async => refreshes++,
+      ),
+    );
+
+    final gesture = await tester.startGesture(const Offset(200, 100));
+    await gesture.moveBy(const Offset(0, 220));
+    await tester.pump();
+    expect(haptics, ["HapticFeedbackType.selectionClick"]);
+
+    await gesture.moveBy(const Offset(0, -40));
+    await gesture.moveBy(const Offset(0, 90));
+    await tester.pump();
+    expect(haptics, ["HapticFeedbackType.selectionClick", "HapticFeedbackType.selectionClick"]);
+
+    await gesture.moveBy(const Offset(0, -140));
+    await gesture.moveBy(const Offset(0, 220));
+    await tester.pump();
+    expect(haptics, List.filled(3, "HapticFeedbackType.selectionClick"));
+    expect(refreshes, 0);
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(refreshes, 1);
+    expect(haptics, [
+      ...List.filled(3, "HapticFeedbackType.selectionClick"),
+      "HapticFeedbackType.mediumImpact",
+    ]);
     expect(find.byKey(const ValueKey("pull_refresh_indicator")), findsNothing);
   });
 

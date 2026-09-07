@@ -93,6 +93,31 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  for (final isPartner in [true, false]) {
+    testWidgets("channel header uses Twitch partner status ($isPartner)", (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChannelScreen(
+            apiCache: TwitchApiCache(
+              clientLoader: () async => TwitchApiClient(
+                clientId: "client-123",
+                accessToken: "token-123",
+                httpClient: MockClient((_) async => _channelDetailsResponse(isPartner: isPartner)),
+              ),
+            ),
+            initialChannel: const ChannelPreview(
+              login: "jason",
+              displayName: "Jason",
+              isPartner: true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byIcon(Icons.verified), isPartner ? findsOneWidget : findsNothing);
+    });
+  }
+
   testWidgets("opens channel after player return and live Following reorder", (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(390, 844);
@@ -200,6 +225,13 @@ void main() {
     await tester.tap(find.byKey(const ValueKey("stream_channel_identity_Jason")));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey("past_broadcast_vod-1")), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.longPress(find.byKey(const ValueKey("channel_back_button")));
+    await tester.pump(const Duration(milliseconds: 160));
+    expect(find.text("Back"), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey("channel_back_button")));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("channel_page_jason")), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -616,6 +648,7 @@ http.Response _channelDetailsResponse({
   String videoCategory = "Just Chatting",
   String? nextCursor,
   bool isLive = true,
+  bool isPartner = false,
   DateTime? streamStartedAt,
   DateTime? firstVideoCreatedAt,
   int videoLengthSeconds = 17999,
@@ -629,6 +662,7 @@ http.Response _channelDetailsResponse({
           "id": "creator-1",
           "login": "jason",
           "displayName": "Jason",
+          "isPartner": isPartner,
           "description": "Hi Im Jason",
           "profileImageURL": "https://static-cdn.jtvnw.net/creator-1.png",
           "followers": {"totalCount": 2300000},

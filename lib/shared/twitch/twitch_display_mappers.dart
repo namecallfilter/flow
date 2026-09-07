@@ -122,6 +122,7 @@ StreamChannel streamChannelFromStream(
     categoryId: stream.gameId,
     viewers: formatCompactCount(stream.viewerCount),
     viewerCount: stream.viewerCount,
+    isPartner: stream.isPartner,
     avatarColors: colorsForText(stream.userId),
     thumbnailColors: colorsForText(stream.id, count: 3),
     avatarImageUrl: avatarImageUrl ?? stream.profileImageUrl,

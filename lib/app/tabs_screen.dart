@@ -631,15 +631,17 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
         routeName == _tabsStore.currentRoute && (ModalRoute.isCurrentOf(context) ?? false);
     final theme = Theme.of(context);
     final tabChild = Theme(
-      data: routeTransitionsEnabled
-          ? theme
-          : theme.copyWith(
-              pageTransitionsTheme: const PageTransitionsTheme(
-                builders: {
-                  TargetPlatform.android: _InstantPageTransitionsBuilder(),
-                },
-              ),
+      data: theme.copyWith(
+        pageTransitionsTheme: PageTransitionsTheme(
+          builders: {
+            ...theme.pageTransitionsTheme.builders,
+            TargetPlatform.android: _TabPageTransitionsBuilder(
+              enabled: routeTransitionsEnabled,
+              delegate: theme.pageTransitionsTheme.builders[TargetPlatform.android]!,
             ),
+          },
+        ),
+      ),
       child: child,
     );
     final tab = isPredictiveBackTab
@@ -877,14 +879,18 @@ class _PredictiveTabBackTransition extends StatelessWidget {
   }
 }
 
-class _InstantPageTransitionsBuilder extends PageTransitionsBuilder {
-  const _InstantPageTransitionsBuilder();
+// Keep the transition subtree mounted so root dialogs do not reparent active tooltips.
+class _TabPageTransitionsBuilder extends PageTransitionsBuilder {
+  const _TabPageTransitionsBuilder({required this.enabled, required this.delegate});
+
+  final bool enabled;
+  final PageTransitionsBuilder delegate;
 
   @override
-  Duration get transitionDuration => Duration.zero;
+  Duration get transitionDuration => delegate.transitionDuration;
 
   @override
-  Duration get reverseTransitionDuration => Duration.zero;
+  Duration get reverseTransitionDuration => delegate.reverseTransitionDuration;
 
   @override
   Widget buildTransitions<T>(
@@ -893,7 +899,10 @@ class _InstantPageTransitionsBuilder extends PageTransitionsBuilder {
     Animation<double> animation,
     Animation<double> secondaryAnimation,
     Widget child,
-  ) => child;
+  ) => PopScope<T>(
+    canPop: enabled || route.isFirst,
+    child: delegate.buildTransitions(route, context, animation, secondaryAnimation, child),
+  );
 }
 
 Future<TwitchApiClient> _loadApiClient(TwitchAuthController authController) async {

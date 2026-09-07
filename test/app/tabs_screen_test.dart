@@ -25,6 +25,69 @@ import "package:http/testing.dart";
 typedef _RequestObserver = void Function(http.Request request);
 
 void main() {
+  testWidgets("settings tooltip survives opening a root dialog", (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: FlowTabsScreen(
+          initialRoute: FlowRoutes.settings,
+          showLoginOnLaunch: false,
+          authController: _authController(secureStore: _MemoryTwitchStore()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final addProxy = find.byTooltip("Add Proxies");
+    await tester.longPress(addProxy);
+    await tester.pumpAndSettle();
+    expect(find.text("Add Proxies"), findsOneWidget);
+    await tester.tap(addProxy);
+    await tester.pumpAndSettle();
+    expect(find.text("Add HTTP proxy"), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.tap(find.widgetWithText(TextButton, "Cancel"));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("settings_title")), findsOneWidget);
+  });
+
+  testWidgets(
+    "root page handles predictive back above a nested channel",
+    (tester) async {
+      final store = _MemoryTwitchStore()
+        ..accessToken = "token-123"
+        ..webSessionToken = "gql-token-123";
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFlowTheme(Brightness.light),
+          home: FlowTabsScreen(authController: _authController(secureStore: store)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey("stream_channel_identity_AussieAntics")));
+      await tester.pumpAndSettle();
+      final channel = find.byKey(const ValueKey("channel_page_aussieantics"));
+      final nestedNavigator = Navigator.of(tester.element(channel));
+      final rootNavigator = Navigator.of(tester.element(channel), rootNavigator: true);
+      unawaited(
+        rootNavigator.push<void>(
+          MaterialPageRoute<void>(builder: (_) => const Scaffold(body: Text("Root page"))),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(await _startBackGesture(tester), isTrue);
+      await tester.pump();
+      expect(nestedNavigator.userGestureInProgress, isFalse);
+      expect(rootNavigator.userGestureInProgress, isTrue);
+      await _sendBackGestureMessage(tester, const MethodCall("commitBackGesture"));
+      await tester.pumpAndSettle();
+      expect(channel, findsOneWidget);
+      expect(find.text("Root page"), findsNothing);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
   testWidgets("offers login on startup and allows guest access", (tester) async {
     var topStreamsRequests = 0;
     tester.view.physicalSize = const Size(800, 600);

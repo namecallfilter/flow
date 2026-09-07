@@ -31,6 +31,7 @@ import "package:flow/shared/widgets/stream_sort_button.dart";
 import "package:flutter/cupertino.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:flutter_mobx/flutter_mobx.dart";
 import "package:mobx/mobx.dart";
 
@@ -174,6 +175,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
       return;
     }
 
+    unawaited(HapticFeedback.selectionClick());
     _persistScrollOffset();
     _store.selectSection(section);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -638,6 +640,7 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
               displayName: channelName,
               avatarImageUrl: channel.thumbnailUrl,
               isLive: channel.isLive,
+              isPartner: channel.isPartner,
             ),
           ),
         ),
@@ -659,6 +662,8 @@ class _BrowseSearchScreenState extends State<BrowseSearchScreen> {
       initials: initialsForName(channelName),
       title: channel.title.isEmpty ? "Live now" : channel.title,
       category: channel.gameName.isEmpty ? "Live" : channel.gameName,
+      categoryId: channel.gameId,
+      isPartner: channel.isPartner,
       viewers: "--",
       avatarColors: colorsForText(channel.id),
       thumbnailColors: colorsForText(channel.id, count: 3),
@@ -1097,6 +1102,7 @@ class _SearchResults extends StatelessWidget {
             channel: channel,
             onChannelSelected: onChannelSelected,
             onStreamSelected: onStreamSelected,
+            onCategorySelected: onCategorySelected,
           ),
       ],
       if (categories.isNotEmpty) ...[
@@ -1195,17 +1201,20 @@ class _SearchChannelRow extends StatelessWidget {
     required this.channel,
     required this.onChannelSelected,
     required this.onStreamSelected,
+    required this.onCategorySelected,
   });
 
   final TwitchSearchChannel channel;
   final ValueChanged<TwitchSearchChannel> onChannelSelected;
   final ValueChanged<TwitchSearchChannel> onStreamSelected;
+  final ValueChanged<BrowseCategory> onCategorySelected;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final mutedColor = theme.colorScheme.onSurface.withValues(alpha: 0.58);
     final channelName = displayName(channel.displayName, channel.broadcasterLogin);
+    final canOpenCategory = channel.gameId.isNotEmpty && channel.gameName.isNotEmpty;
     final subtitle = channel.isLive
         ? (channel.gameName.isEmpty ? "Live now" : channel.gameName)
         : (channel.gameName.isEmpty ? "Offline" : channel.gameName);
@@ -1231,14 +1240,31 @@ class _SearchChannelRow extends StatelessWidget {
           imageUrl: channel.thumbnailUrl,
         ),
       ),
-      title: Text(
-        channelName,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: theme.textTheme.titleMedium?.copyWith(
-          color: theme.colorScheme.onSurface,
-          fontWeight: FontWeight.w800,
-        ),
+      title: Row(
+        children: [
+          Flexible(
+            child: Text(
+              channelName,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.titleMedium?.copyWith(
+                color: theme.colorScheme.onSurface,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          if (channel.isPartner) ...[
+            const SizedBox(width: 5),
+            Icon(
+              Icons.verified,
+              semanticLabel: "Twitch partner",
+              color: theme.colorScheme.primary.withValues(
+                alpha: theme.brightness == Brightness.dark ? 0.72 : 0.66,
+              ),
+              size: 14,
+            ),
+          ],
+        ],
       ),
       subtitle: Row(
         children: [
@@ -1247,13 +1273,28 @@ class _SearchChannelRow extends StatelessWidget {
             const SizedBox(width: 5),
           ],
           Expanded(
-            child: Text(
-              subtitle,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: mutedColor,
-                fontWeight: FontWeight.w600,
+            child: GestureDetector(
+              onTap: canOpenCategory
+                  ? () => onCategorySelected(
+                      BrowseCategory(
+                        id: channel.gameId,
+                        name: channel.gameName,
+                        viewerCount: 0,
+                        viewers: "--",
+                        imageUrl: null,
+                        colors: colorsForText(channel.gameId),
+                      ),
+                    )
+                  : null,
+              child: Text(
+                subtitle,
+                key: ValueKey("browse_search_channel_category_$channelName"),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: canOpenCategory ? theme.colorScheme.primary : mutedColor,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
           ),
@@ -1266,6 +1307,12 @@ class _SearchChannelRow extends StatelessWidget {
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<TwitchSearchChannel>("channel", channel));
+    properties.add(
+      ObjectFlagProperty<ValueChanged<BrowseCategory>>.has(
+        "onCategorySelected",
+        onCategorySelected,
+      ),
+    );
     properties.add(
       ObjectFlagProperty<ValueChanged<TwitchSearchChannel>>.has(
         "onChannelSelected",
@@ -1831,6 +1878,7 @@ ChannelPreview _channelPreviewFromStreamChannel(StreamChannel channel) => Channe
   displayName: channel.name,
   avatarImageUrl: channel.avatarImageUrl,
   isLive: true,
+  isPartner: channel.isPartner,
 );
 
 void _openStreamPlayer(

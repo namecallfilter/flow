@@ -3,6 +3,7 @@ query FlowChannelDetails($login: String!, $videosFirst: Int, $videosAfter: Curso
     id
     login
     displayName
+    isPartner
     description
     profileImageURL(width: 300)
     followers {

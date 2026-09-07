@@ -616,8 +616,12 @@ void main() {
       ),
     );
     await tester.pump();
+    await tester.longPress(find.byKey(const ValueKey("player_settings_button")));
+    await tester.pump(const Duration(milliseconds: 160));
+    expect(find.text("Video quality"), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey("player_settings_button")));
     await _pumpNavigation(tester);
+    expect(tester.takeException(), isNull);
     expect(find.text("Auto · 1080p60"), findsOneWidget);
     player.emit(
       const TwitchQualitiesEvent(
@@ -1178,8 +1182,12 @@ void main() {
     ) async {
       final player = _FakePlayerController();
       final host = await _pumpHostedPlayer(tester, player: player);
+      await tester.longPress(find.byKey(const ValueKey("player_name_and_title")));
+      await tester.pump(const Duration(milliseconds: 160));
+      expect(find.text("A precise stream title"), findsOneWidget);
       await tester.tap(find.byKey(ValueKey(buttonKey)));
       await _pumpNavigation(tester);
+      expect(tester.takeException(), isNull);
       expect(host.mode, PlaybackMode.mini);
       expect(find.byKey(ValueKey(destinationKey)), findsOneWidget);
       expect(find.byKey(const ValueKey("player_mini")), findsOneWidget);

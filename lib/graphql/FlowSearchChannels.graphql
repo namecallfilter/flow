@@ -20,6 +20,7 @@ query FlowSearchChannels(
             profileImageURL(width: 50)
             user {
               id
+              isPartner
               stream {
                 id
                 viewersCount

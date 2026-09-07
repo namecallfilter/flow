@@ -681,6 +681,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
               login: login,
               displayName: widget.channel.name,
               avatarImageUrl: widget.channel.avatarImageUrl,
+              isPartner: widget.channel.isPartner,
               isLive: _isLive,
             ),
           ),

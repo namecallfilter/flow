@@ -246,6 +246,13 @@ const documentNodeQueryFlowUsers = DocumentNode(
                   selectionSet: null,
                 ),
                 FieldNode(
+                  name: NameNode(value: 'isPartner'),
+                  alias: null,
+                  arguments: [],
+                  directives: [],
+                  selectionSet: null,
+                ),
+                FieldNode(
                   name: NameNode(value: 'profileImageURL'),
                   alias: null,
                   arguments: [
@@ -564,6 +571,7 @@ class Query$FlowUsers$users {
     this.id,
     this.login,
     this.displayName,
+    this.isPartner,
     this.profileImageURL,
     this.lastBroadcast,
     this.broadcastSettings,
@@ -575,6 +583,9 @@ class Query$FlowUsers$users {
     final l$login = json.containsKey('login') ? json['login'] : null;
     final l$displayName = json.containsKey('displayName')
         ? json['displayName']
+        : null;
+    final l$isPartner = json.containsKey('isPartner')
+        ? json['isPartner']
         : null;
     final l$profileImageURL = json.containsKey('profileImageURL')
         ? json['profileImageURL']
@@ -590,6 +601,7 @@ class Query$FlowUsers$users {
       id: (l$id as String?),
       login: (l$login as String?),
       displayName: (l$displayName as String?),
+      isPartner: (l$isPartner as bool?),
       profileImageURL: (l$profileImageURL as String?),
       lastBroadcast: l$lastBroadcast == null
           ? null
@@ -615,6 +627,8 @@ class Query$FlowUsers$users {
 
   final String? displayName;
 
+  final bool? isPartner;
+
   final String? profileImageURL;
 
   final Query$FlowUsers$users$lastBroadcast? lastBroadcast;
@@ -631,6 +645,8 @@ class Query$FlowUsers$users {
     _resultData['login'] = l$login;
     final l$displayName = displayName;
     _resultData['displayName'] = l$displayName;
+    final l$isPartner = isPartner;
+    _resultData['isPartner'] = l$isPartner;
     final l$profileImageURL = profileImageURL;
     _resultData['profileImageURL'] = l$profileImageURL;
     final l$lastBroadcast = lastBroadcast;
@@ -647,6 +663,7 @@ class Query$FlowUsers$users {
     final l$id = id;
     final l$login = login;
     final l$displayName = displayName;
+    final l$isPartner = isPartner;
     final l$profileImageURL = profileImageURL;
     final l$lastBroadcast = lastBroadcast;
     final l$broadcastSettings = broadcastSettings;
@@ -655,6 +672,7 @@ class Query$FlowUsers$users {
       l$id,
       l$login,
       l$displayName,
+      l$isPartner,
       l$profileImageURL,
       l$lastBroadcast,
       l$broadcastSettings,
@@ -683,6 +701,11 @@ class Query$FlowUsers$users {
     final l$displayName = displayName;
     final lOther$displayName = other.displayName;
     if (l$displayName != lOther$displayName) {
+      return false;
+    }
+    final l$isPartner = isPartner;
+    final lOther$isPartner = other.isPartner;
+    if (l$isPartner != lOther$isPartner) {
       return false;
     }
     final l$profileImageURL = profileImageURL;

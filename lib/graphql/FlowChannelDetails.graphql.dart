@@ -217,6 +217,13 @@ const documentNodeQueryFlowChannelDetails = DocumentNode(
                   selectionSet: null,
                 ),
                 FieldNode(
+                  name: NameNode(value: 'isPartner'),
+                  alias: null,
+                  arguments: [],
+                  directives: [],
+                  selectionSet: null,
+                ),
+                FieldNode(
                   name: NameNode(value: 'description'),
                   alias: null,
                   arguments: [],
@@ -670,6 +677,7 @@ class Query$FlowChannelDetails$user {
     this.id,
     this.login,
     this.displayName,
+    this.isPartner,
     this.description,
     this.profileImageURL,
     this.followers,
@@ -682,6 +690,9 @@ class Query$FlowChannelDetails$user {
     final l$login = json.containsKey('login') ? json['login'] : null;
     final l$displayName = json.containsKey('displayName')
         ? json['displayName']
+        : null;
+    final l$isPartner = json.containsKey('isPartner')
+        ? json['isPartner']
         : null;
     final l$description = json.containsKey('description')
         ? json['description']
@@ -698,6 +709,7 @@ class Query$FlowChannelDetails$user {
       id: (l$id as String?),
       login: (l$login as String?),
       displayName: (l$displayName as String?),
+      isPartner: (l$isPartner as bool?),
       description: (l$description as String?),
       profileImageURL: (l$profileImageURL as String?),
       followers: l$followers == null
@@ -724,6 +736,8 @@ class Query$FlowChannelDetails$user {
 
   final String? displayName;
 
+  final bool? isPartner;
+
   final String? description;
 
   final String? profileImageURL;
@@ -742,6 +756,8 @@ class Query$FlowChannelDetails$user {
     _resultData['login'] = l$login;
     final l$displayName = displayName;
     _resultData['displayName'] = l$displayName;
+    final l$isPartner = isPartner;
+    _resultData['isPartner'] = l$isPartner;
     final l$description = description;
     _resultData['description'] = l$description;
     final l$profileImageURL = profileImageURL;
@@ -760,6 +776,7 @@ class Query$FlowChannelDetails$user {
     final l$id = id;
     final l$login = login;
     final l$displayName = displayName;
+    final l$isPartner = isPartner;
     final l$description = description;
     final l$profileImageURL = profileImageURL;
     final l$followers = followers;
@@ -769,6 +786,7 @@ class Query$FlowChannelDetails$user {
       l$id,
       l$login,
       l$displayName,
+      l$isPartner,
       l$description,
       l$profileImageURL,
       l$followers,
@@ -799,6 +817,11 @@ class Query$FlowChannelDetails$user {
     final l$displayName = displayName;
     final lOther$displayName = other.displayName;
     if (l$displayName != lOther$displayName) {
+      return false;
+    }
+    final l$isPartner = isPartner;
+    final lOther$isPartner = other.isPartner;
+    if (l$isPartner != lOther$isPartner) {
       return false;
     }
     final l$description = description;

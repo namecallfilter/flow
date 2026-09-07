@@ -239,6 +239,7 @@ class _FollowingScreenState extends State<FollowingScreen> {
         login: channel.login.isEmpty ? channel.name : channel.login,
         displayName: channel.name,
         avatarImageUrl: channel.avatarImageUrl,
+        isPartner: channel.isPartner,
         isLive: true,
       ),
     );
@@ -743,18 +744,20 @@ class StreamCard extends StatelessWidget {
                                     ),
                                   ),
                                 ),
-                                const SizedBox(width: 5),
-                                GestureDetector(
-                                  key: ValueKey("stream_channel_badge_${channel.name}"),
-                                  onTap: onChannelTap,
-                                  child: Icon(
-                                    Icons.verified,
-                                    color: theme.colorScheme.primary.withValues(
-                                      alpha: isDark ? 0.72 : 0.66,
+                                if (channel.isPartner) ...[
+                                  const SizedBox(width: 5),
+                                  GestureDetector(
+                                    key: ValueKey("stream_channel_badge_${channel.name}"),
+                                    onTap: onChannelTap,
+                                    child: Icon(
+                                      Icons.verified,
+                                      color: theme.colorScheme.primary.withValues(
+                                        alpha: isDark ? 0.72 : 0.66,
+                                      ),
+                                      size: 14,
                                     ),
-                                    size: 14,
                                   ),
-                                ),
+                                ],
                               ],
                             ),
                             const SizedBox(height: 6),
@@ -1288,6 +1291,7 @@ class OfflineChannelRow extends StatelessWidget {
                         style: theme.textTheme.titleMedium?.copyWith(
                           fontWeight: FontWeight.w800,
                           color: theme.colorScheme.onSurface,
+                          height: 1.1,
                         ),
                       ),
                       const SizedBox(height: 3),
@@ -1298,6 +1302,7 @@ class OfflineChannelRow extends StatelessWidget {
                         style: theme.textTheme.bodyMedium?.copyWith(
                           color: mutedColor,
                           fontWeight: FontWeight.w600,
+                          height: 1.1,
                         ),
                       ),
                       const SizedBox(height: 2),
@@ -1311,6 +1316,7 @@ class OfflineChannelRow extends StatelessWidget {
                           style: theme.textTheme.bodyMedium?.copyWith(
                             color: canOpenCategory ? theme.colorScheme.primary : mutedColor,
                             fontWeight: FontWeight.w500,
+                            height: 1.1,
                           ),
                         ),
                       ),

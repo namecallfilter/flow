@@ -54,6 +54,7 @@ class TwitchFollowedStream {
     required this.gameName,
     required this.title,
     required this.viewerCount,
+    this.isPartner = false,
     this.gameId = "",
     this.thumbnailUrl,
     this.profileImageUrl,
@@ -69,6 +70,7 @@ class TwitchFollowedStream {
   final String gameId;
   final String title;
   final int viewerCount;
+  final bool isPartner;
   final String? thumbnailUrl;
   final String? profileImageUrl;
   final DateTime? startedAt;
@@ -129,6 +131,8 @@ class TwitchSearchChannel {
     required this.gameName,
     required this.title,
     required this.isLive,
+    this.isPartner = false,
+    this.gameId = "",
     this.thumbnailUrl,
     this.startedAt,
   });
@@ -137,8 +141,10 @@ class TwitchSearchChannel {
   final String broadcasterLogin;
   final String displayName;
   final String gameName;
+  final String gameId;
   final String title;
   final bool isLive;
+  final bool isPartner;
   final String? thumbnailUrl;
   final DateTime? startedAt;
 }
@@ -152,6 +158,7 @@ class TwitchChannelDetails {
     required this.followers,
     required this.pastBroadcasts,
     required this.pastBroadcastsCursor,
+    this.isPartner = false,
     this.profileImageUrl,
     this.liveStream,
   });
@@ -161,6 +168,7 @@ class TwitchChannelDetails {
   final String displayName;
   final String description;
   final int followers;
+  final bool isPartner;
   final String? profileImageUrl;
   final TwitchChannelLiveStream? liveStream;
   final List<TwitchPastBroadcast> pastBroadcasts;
@@ -175,6 +183,7 @@ class TwitchChannelDetails {
     displayName: displayName,
     description: description,
     followers: followers,
+    isPartner: isPartner,
     profileImageUrl: profileImageUrl,
     liveStream: liveStream,
     pastBroadcasts: pastBroadcasts,
@@ -1296,6 +1305,7 @@ class TwitchApiClient {
       gameId: _stringValue(game?["id"]),
       title: _stringValue(broadcastSettings?["title"]),
       viewerCount: _intValue(stream["viewersCount"]),
+      isPartner: broadcaster["isPartner"] == true,
       thumbnailUrl: stream["previewImageURL"] as String?,
       profileImageUrl: broadcaster["profileImageURL"] as String?,
       startedAt: _dateTimeValue(stream["createdAt"]),
@@ -1323,6 +1333,8 @@ class TwitchApiClient {
       ),
       gameName: _stringValue(game?["displayName"]),
       title: _stringValue(broadcastSettings?["title"]),
+      gameId: _stringValue(game?["id"]),
+      isPartner: user?["isPartner"] == true,
       thumbnailUrl: content["profileImageURL"] as String?,
       startedAt: _dateTimeValue(stream?["createdAt"]),
       isLive: isLive,
@@ -1342,6 +1354,7 @@ class TwitchApiClient {
       displayName: _stringValue(user["displayName"]),
       description: _stringValue(user["description"]),
       followers: _intValue(followers?["totalCount"]),
+      isPartner: user["isPartner"] == true,
       profileImageUrl: user["profileImageURL"] as String?,
       liveStream: liveStream == null ? null : _channelLiveStreamFromGraphQl(liveStream),
       pastBroadcastsCursor: _connectionCursor(videosConnection),

@@ -55,7 +55,6 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> with WidgetsBindi
   Offset _pendingPullDelta = Offset.zero;
   bool _isVerticalDrag = false;
   bool _isPulling = false;
-  bool _hasReversed = false;
   bool _isRefreshing = false;
   bool _refreshInFlight = false;
   bool _isSettling = false;
@@ -144,7 +143,6 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> with WidgetsBindi
     }
 
     _isPulling = false;
-    _hasReversed = false;
     _isVerticalDrag = false;
     _pendingPullDelta = Offset.zero;
   }
@@ -195,15 +193,9 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> with WidgetsBindi
       return;
     }
 
-    if (delta < 0) {
-      _hasReversed = true;
-    }
-
     final dragDelta = delta > 0 ? delta * _pullResistance : delta * _reverseResistance;
     final nextExtent = (_pullExtent + dragDelta).clamp(0.0, widget.triggerDistance);
-    if (!_hasReversed &&
-        _pullExtent < widget.triggerDistance &&
-        nextExtent >= widget.triggerDistance) {
+    if (_pullExtent < widget.triggerDistance && nextExtent >= widget.triggerDistance) {
       unawaited(HapticFeedback.selectionClick());
     }
 
@@ -221,12 +213,8 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> with WidgetsBindi
     }
 
     final shouldRefresh =
-        event is PointerUpEvent &&
-        _isPulling &&
-        !_hasReversed &&
-        _pullExtent >= widget.triggerDistance;
+        event is PointerUpEvent && _isPulling && _pullExtent >= widget.triggerDistance;
     _isPulling = false;
-    _hasReversed = false;
     _isVerticalDrag = false;
     _pendingPullDelta = Offset.zero;
 

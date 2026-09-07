@@ -3,6 +3,7 @@ query FlowUsers($ids: [ID!], $logins: [String!]) {
     id
     login
     displayName
+    isPartner
     profileImageURL(width: 300)
     lastBroadcast {
       startedAt

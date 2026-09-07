@@ -27,12 +27,14 @@ class ChannelPreview {
     required this.displayName,
     this.avatarImageUrl,
     this.isLive = false,
+    this.isPartner = false,
   });
 
   final String login;
   final String displayName;
   final String? avatarImageUrl;
   final bool isLive;
+  final bool isPartner;
 }
 
 class ChannelScreen extends StatefulWidget {
@@ -97,6 +99,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
         title: broadcast.title,
         category: broadcast.category,
         categoryId: broadcast.categoryId,
+        isPartner: channel.isPartner,
         viewers: formatCompactCount(broadcast.viewCount),
         avatarColors: colorsForText(channel.id),
         thumbnailColors: colorsForText(broadcast.id, count: 3),
@@ -621,12 +624,14 @@ class _ChannelHeader extends StatelessWidget {
                               ),
                             ),
                           ),
-                          const SizedBox(width: 6),
-                          Icon(
-                            Icons.verified,
-                            size: 18,
-                            color: theme.colorScheme.primary.withValues(alpha: 0.72),
-                          ),
+                          if (channel?.isPartner ?? initialChannel.isPartner) ...[
+                            const SizedBox(width: 6),
+                            Icon(
+                              Icons.verified,
+                              size: 18,
+                              color: theme.colorScheme.primary.withValues(alpha: 0.72),
+                            ),
+                          ],
                         ],
                       ),
                       const SizedBox(height: AppSpacing.xs),
@@ -1215,6 +1220,7 @@ StreamChannel? _livePlayerChannel(
     title: title.isEmpty ? "Live now" : title,
     category: category.isEmpty ? "Live" : category,
     viewers: formatCompactCount(viewerCount),
+    isPartner: channel.isPartner,
     avatarColors: colorsForText(id.isEmpty ? login : id),
     thumbnailColors: colorsForText(
       streamId.isEmpty ? (id.isEmpty ? login : id) : streamId,

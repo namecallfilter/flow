@@ -303,6 +303,13 @@ const documentNodeQueryFlowGameStreams = DocumentNode(
                                           selectionSet: null,
                                         ),
                                         FieldNode(
+                                          name: NameNode(value: 'isPartner'),
+                                          alias: null,
+                                          arguments: [],
+                                          directives: [],
+                                          selectionSet: null,
+                                        ),
+                                        FieldNode(
                                           name: NameNode(
                                             value: 'profileImageURL',
                                           ),
@@ -939,6 +946,7 @@ class Query$FlowGameStreams$game$streams$edges$node$broadcaster {
     this.id,
     this.login,
     this.displayName,
+    this.isPartner,
     this.profileImageURL,
     this.broadcastSettings,
   });
@@ -951,6 +959,9 @@ class Query$FlowGameStreams$game$streams$edges$node$broadcaster {
     final l$displayName = json.containsKey('displayName')
         ? json['displayName']
         : null;
+    final l$isPartner = json.containsKey('isPartner')
+        ? json['isPartner']
+        : null;
     final l$profileImageURL = json.containsKey('profileImageURL')
         ? json['profileImageURL']
         : null;
@@ -961,6 +972,7 @@ class Query$FlowGameStreams$game$streams$edges$node$broadcaster {
       id: (l$id as String?),
       login: (l$login as String?),
       displayName: (l$displayName as String?),
+      isPartner: (l$isPartner as bool?),
       profileImageURL: (l$profileImageURL as String?),
       broadcastSettings: l$broadcastSettings == null
           ? null
@@ -976,6 +988,8 @@ class Query$FlowGameStreams$game$streams$edges$node$broadcaster {
 
   final String? displayName;
 
+  final bool? isPartner;
+
   final String? profileImageURL;
 
   final Query$FlowGameStreams$game$streams$edges$node$broadcaster$broadcastSettings?
@@ -989,6 +1003,8 @@ class Query$FlowGameStreams$game$streams$edges$node$broadcaster {
     _resultData['login'] = l$login;
     final l$displayName = displayName;
     _resultData['displayName'] = l$displayName;
+    final l$isPartner = isPartner;
+    _resultData['isPartner'] = l$isPartner;
     final l$profileImageURL = profileImageURL;
     _resultData['profileImageURL'] = l$profileImageURL;
     final l$broadcastSettings = broadcastSettings;
@@ -1001,12 +1017,14 @@ class Query$FlowGameStreams$game$streams$edges$node$broadcaster {
     final l$id = id;
     final l$login = login;
     final l$displayName = displayName;
+    final l$isPartner = isPartner;
     final l$profileImageURL = profileImageURL;
     final l$broadcastSettings = broadcastSettings;
     return Object.hashAll([
       l$id,
       l$login,
       l$displayName,
+      l$isPartner,
       l$profileImageURL,
       l$broadcastSettings,
     ]);
@@ -1034,6 +1052,11 @@ class Query$FlowGameStreams$game$streams$edges$node$broadcaster {
     final l$displayName = displayName;
     final lOther$displayName = other.displayName;
     if (l$displayName != lOther$displayName) {
+      return false;
+    }
+    final l$isPartner = isPartner;
+    final lOther$isPartner = other.isPartner;
+    if (l$isPartner != lOther$isPartner) {
       return false;
     }
     final l$profileImageURL = profileImageURL;

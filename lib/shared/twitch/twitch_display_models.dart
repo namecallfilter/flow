@@ -13,6 +13,7 @@ class StreamChannel {
     this.id = "",
     this.viewerCount = 0,
     this.categoryId = "",
+    this.isPartner = false,
     this.avatarImageUrl,
     this.thumbnailUrl,
     this.startedAt,
@@ -25,6 +26,7 @@ class StreamChannel {
   final String title;
   final String category;
   final String categoryId;
+  final bool isPartner;
   final String viewers;
   final int viewerCount;
   final List<Color> avatarColors;

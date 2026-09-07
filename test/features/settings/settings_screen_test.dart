@@ -1,13 +1,75 @@
 import "dart:async";
 
 import "package:flow/app/app_settings_store.dart";
+import "package:flow/app/routes.dart";
+import "package:flow/app/tabs_screen.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/settings/settings_screen.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flutter/material.dart";
+import "package:flutter_secure_storage/flutter_secure_storage.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  for (final holdThroughDrag in [false, true]) {
+    testWidgets("keeps proxy dragging usable after a held tooltip: $holdThroughDrag", (
+      tester,
+    ) async {
+      FlutterSecureStorage.setMockInitialValues({});
+      tester.view.physicalSize = const Size(800, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final preferences = MemoryFlowPreferences();
+      final settingsStore = AppSettingsStore(preferences: preferences);
+      const urls = ["http://first:8080", "http://second:8080", "http://third:8080"];
+      await settingsStore.setAdProxyUrls(urls);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFlowTheme(Brightness.dark),
+          home: FlowTabsScreen(
+            initialRoute: FlowRoutes.settings,
+            showLoginOnLaunch: false,
+            settingsStore: settingsStore,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final handles = find.byIcon(Icons.drag_indicator);
+      final start = tester.getCenter(handles.first);
+      final end = tester.getCenter(handles.last);
+      final gesture = await tester.startGesture(start);
+      await tester.pump(const Duration(milliseconds: 700));
+      expect(find.text("Reorder proxy"), findsOneWidget);
+      if (holdThroughDrag) {
+        await gesture.moveTo(end);
+        await tester.pump(const Duration(milliseconds: 300));
+        await gesture.up();
+        await tester.pumpAndSettle();
+        expect(settingsStore.adProxyUrls, urls);
+        expect(tester.takeException(), isNull);
+        await tester.timedDrag(handles.first, end - start, const Duration(milliseconds: 300));
+      } else {
+        await gesture.up();
+        await tester.pump(const Duration(milliseconds: 16));
+        await tester.timedDrag(handles.first, end - start, const Duration(milliseconds: 300));
+      }
+      await tester.pumpAndSettle();
+      expect(settingsStore.adProxyUrls, [urls[1], urls[2], urls[0]]);
+      expect(await preferences.readAdProxyUrls(), settingsStore.adProxyUrls);
+      expect(tester.takeException(), isNull);
+
+      await tester.longPress(handles.last);
+      await tester.pump(const Duration(milliseconds: 160));
+      expect(find.text("Reorder proxy"), findsOneWidget);
+      await tester.timedDrag(handles.last, start - end, const Duration(milliseconds: 80));
+      await tester.pumpAndSettle();
+      expect(settingsStore.adProxyUrls, urls);
+      expect(await preferences.readAdProxyUrls(), urls);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets("Playback switches save independently and reload their values", (tester) async {
     final preferences = MemoryFlowPreferences();
     final settingsStore = AppSettingsStore(preferences: preferences);
@@ -193,6 +255,62 @@ void main() {
     expect(find.text("http://host:8080"), findsOneWidget);
     expect(find.textContaining("user"), findsNothing);
     expect(find.textContaining("password"), findsNothing);
+  });
+
+  testWidgets("drags proxies in both directions and persists their priority", (tester) async {
+    tester.view.physicalSize = const Size(800, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final preferences = SharedPreferencesFlowPreferences(store: _MemoryPreferencesStore());
+    final settingsStore = AppSettingsStore(preferences: preferences);
+    const urls = ["http://first:8080", "http://second:8080", "http://third:8080"];
+    await settingsStore.setAdProxyUrls(urls);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: SettingsScreen(settingsStore: settingsStore),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final handles = find.byIcon(Icons.drag_indicator);
+    expect(handles, findsNWidgets(3));
+    expect(find.byIcon(Icons.arrow_upward), findsNothing);
+    expect(find.byIcon(Icons.arrow_downward), findsNothing);
+    expect(tester.getCenter(handles.first).dx, tester.getCenter(find.byTooltip("Add Proxies")).dx);
+    expect(
+      tester.getCenter(handles.first).dx,
+      greaterThan(tester.getCenter(find.byTooltip("Remove proxy").first).dx),
+    );
+
+    final firstPosition = tester.getCenter(handles.first);
+    final lastPosition = tester.getCenter(handles.last);
+    await tester.timedDrag(
+      handles.first,
+      lastPosition - firstPosition,
+      const Duration(milliseconds: 300),
+    );
+    await tester.pumpAndSettle();
+    expect(settingsStore.adProxyUrls, [urls[1], urls[2], urls[0]]);
+    expect(await preferences.readAdProxyUrls(), [urls[1], urls[2], urls[0]]);
+    expect(
+      find.descendant(
+        of: find.byKey(ValueKey("settings_proxy_${urls[1]}")),
+        matching: find.text("Main"),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.timedDrag(
+      handles.last,
+      firstPosition - lastPosition,
+      const Duration(milliseconds: 300),
+    );
+    await tester.pumpAndSettle();
+    expect(settingsStore.adProxyUrls, urls);
+    expect(await preferences.readAdProxyUrls(), urls);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets("allows removing a manual channel that is also subscription-managed", (tester) async {

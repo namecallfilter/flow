@@ -7,6 +7,7 @@ query FlowFollowedLiveUsers($first: Int, $after: Cursor) {
           id
           login
           displayName
+          isPartner
           profileImageURL(width: 300)
           stream {
             id
