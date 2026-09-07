@@ -5,6 +5,10 @@ import "package:shared_preferences/shared_preferences.dart";
 abstract interface class FlowPreferences {
   Future<ThemeMode> readThemeMode();
   Future<void> saveThemeMode(ThemeMode mode);
+  Future<bool> readPictureInPictureEnabled();
+  Future<void> savePictureInPictureEnabled({required bool enabled});
+  Future<bool> readMiniPlayerEnabled();
+  Future<void> saveMiniPlayerEnabled({required bool enabled});
   Future<bool> readAdProxyEnabled();
   Future<void> saveAdProxyEnabled({required bool enabled});
   Future<List<String>> readAdProxyUrls();
@@ -70,6 +74,8 @@ class SharedPreferencesFlowPreferences implements FlowPreferences {
   }) : _store = store ?? SharedPreferencesAsyncFlowPreferencesStore();
 
   static const themeModeKey = "flow_theme_mode";
+  static const pictureInPictureEnabledKey = "picture_in_picture_enabled";
+  static const miniPlayerEnabledKey = "mini_player_enabled";
   static const adProxyEnabledKey = "ad_proxy_enabled";
   static const adProxyUrlsKey = "ad_proxy_urls";
   static const adProxyWhitelistedChannelsKey = "ad_proxy_whitelisted_channels";
@@ -105,6 +111,22 @@ class SharedPreferencesFlowPreferences implements FlowPreferences {
 
   @override
   Future<void> saveCategorySort(CategorySort sort) => _store.setString("category_sort", sort.name);
+
+  @override
+  Future<bool> readPictureInPictureEnabled() async =>
+      await _store.getString(pictureInPictureEnabledKey) != "false";
+
+  @override
+  Future<void> savePictureInPictureEnabled({required bool enabled}) =>
+      _store.setString(pictureInPictureEnabledKey, enabled.toString());
+
+  @override
+  Future<bool> readMiniPlayerEnabled() async =>
+      await _store.getString(miniPlayerEnabledKey) != "false";
+
+  @override
+  Future<void> saveMiniPlayerEnabled({required bool enabled}) =>
+      _store.setString(miniPlayerEnabledKey, enabled.toString());
 
   @override
   Future<bool> readAdProxyEnabled() async => await _store.getString(adProxyEnabledKey) == "true";

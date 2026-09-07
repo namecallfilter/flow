@@ -159,7 +159,7 @@ class _FollowingScreenState extends State<FollowingScreen> {
   }
 
   TwitchAuthController _buildDefaultAuthController() {
-    const config = TwitchAuthConfig.fromEnvironment();
+    const config = TwitchAuthConfig();
     return TwitchAuthController(
       config: config,
       secureStore: const SecureTwitchStore(),

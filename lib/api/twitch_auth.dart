@@ -26,23 +26,20 @@ class TwitchAuthException implements Exception {
 
 class TwitchAuthConfig {
   const TwitchAuthConfig({
-    required this.clientId,
-    this.graphQlClientId = TwitchApiClient.defaultGraphQlClientId,
-    this.redirectUri = defaultRedirectUri,
+    this.clientId = const String.fromEnvironment(
+      "TWITCH_CLIENT_ID",
+      defaultValue: "deh8tdsvcsptv5sby686y9gamadiuo",
+    ),
+    this.graphQlClientId = const String.fromEnvironment(
+      "TWITCH_GQL_CLIENT_ID",
+      defaultValue: TwitchApiClient.defaultGraphQlClientId,
+    ),
+    this.redirectUri = const String.fromEnvironment(
+      "TWITCH_REDIRECT_URI",
+      defaultValue: defaultRedirectUri,
+    ),
     this.scope = "user:read:follows",
   });
-
-  const TwitchAuthConfig.fromEnvironment()
-    : clientId = const String.fromEnvironment("TWITCH_CLIENT_ID"),
-      graphQlClientId = const String.fromEnvironment(
-        "TWITCH_GQL_CLIENT_ID",
-        defaultValue: TwitchApiClient.defaultGraphQlClientId,
-      ),
-      redirectUri = const String.fromEnvironment(
-        "TWITCH_REDIRECT_URI",
-        defaultValue: defaultRedirectUri,
-      ),
-      scope = "user:read:follows";
 
   static const defaultRedirectUri = "https://twitch.tv/login";
 
@@ -203,7 +200,7 @@ class TwitchAuthController {
   Future<Uri> createAuthorizationUri() async {
     if (!config.isConfigured) {
       throw TwitchAuthException(
-        "Set TWITCH_CLIENT_ID with --dart-define-from-file=.env to start Twitch auth.",
+        "Twitch sign-in is unavailable in this build.",
       );
     }
 

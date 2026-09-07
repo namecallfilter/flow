@@ -7,7 +7,30 @@ import "package:flutter_test/flutter_test.dart";
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test("decodes rendered quality and playback recovery events", () async {
+  test("forwards PiP preference values to the native player", () async {
+    const viewId = 48;
+    const channel = MethodChannel("flow/twitch_player/$viewId");
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final controller = MethodChannelTwitchPlayerController(
+      viewId,
+      playbackUriRefresher: () async => Uri.parse("https://example.com/live.m3u8"),
+    );
+    await controller.setPictureInPictureEnabled(enabled: false);
+    await controller.setPictureInPictureEnabled(enabled: true);
+    expect(calls.map((call) => (call.method, call.arguments)), [
+      ("setPictureInPictureEnabled", false),
+      ("setPictureInPictureEnabled", true),
+    ]);
+    controller.dispose();
+  });
+
+  test("decodes quality, recovery, PiP and recording progress events", () async {
     const viewId = 47;
     const eventChannel = MethodChannel("flow/twitch_player/$viewId/events");
     final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -23,11 +46,27 @@ void main() {
     for (final event in [
       {
         "type": "qualities",
-        "qualities": <Object?>[],
-        "selectedId": "auto",
-        "currentLabel": "1080p60",
+        "qualities": [
+          {"id": "audio_only", "label": "Audio only"},
+        ],
+        "selectedId": "audio_only",
+        "currentLabel": "Audio only",
       },
       {"type": "reload"},
+      {"type": "pipTransition", "active": true},
+      {"type": "pipTransition", "active": false},
+      {"type": "pip", "active": true},
+      {"type": "pip", "active": false},
+      {"type": "dismissed"},
+      {
+        "type": "state",
+        "isPlaying": false,
+        "isBuffering": false,
+        "playWhenReady": true,
+        "positionMs": 120000,
+        "durationMs": 120000,
+        "isEnded": true,
+      },
     ]) {
       await messenger.handlePlatformMessage(
         eventChannel.name,
@@ -35,8 +74,20 @@ void main() {
         (_) {},
       );
     }
-    expect((events.first as TwitchQualitiesEvent).currentLabel, "1080p60");
-    expect(events.last, isA<TwitchPlaybackReloadEvent>());
+    final quality = events.first as TwitchQualitiesEvent;
+    expect(quality.currentLabel, "Audio only");
+    expect(quality.selectedId, "audio_only");
+    expect(quality.qualities.single.id, "audio_only");
+    expect(events[1], isA<TwitchPlaybackReloadEvent>());
+    expect((events[2] as TwitchPictureInPictureTransitionEvent).active, isTrue);
+    expect((events[3] as TwitchPictureInPictureTransitionEvent).active, isFalse);
+    expect((events[4] as TwitchPictureInPictureEvent).active, isTrue);
+    expect((events[5] as TwitchPictureInPictureEvent).active, isFalse);
+    expect(events[6], isA<TwitchPlaybackDismissedEvent>());
+    final progress = events.last as TwitchPlaybackStateEvent;
+    expect(progress.position, const Duration(minutes: 2));
+    expect(progress.duration, const Duration(minutes: 2));
+    expect(progress.isEnded, isTrue);
     await subscription.cancel();
     controller.dispose();
   });
@@ -132,7 +183,9 @@ void main() {
     await controller.pause();
     await controller.togglePlayback();
     await controller.jumpToLive();
+    await controller.seekTo(const Duration(seconds: 30));
     await controller.setQuality("auto");
+    await controller.setPictureInPictureEnabled(enabled: false);
 
     expect(calls, isEmpty);
   });

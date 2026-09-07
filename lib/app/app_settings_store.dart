@@ -36,6 +36,12 @@ abstract class AppSettingsStoreBase with Store {
   ThemeMode themeMode = ThemeMode.system;
 
   @observable
+  bool pictureInPictureEnabled = true;
+
+  @observable
+  bool miniPlayerEnabled = true;
+
+  @observable
   bool adProxyEnabled = false;
 
   @observable
@@ -77,12 +83,16 @@ abstract class AppSettingsStoreBase with Store {
       preferences.readAdProxyUrls(),
       preferences.readAdProxyWhitelistedChannels(),
       subscriptionLoad.then((_) => true),
+      preferences.readPictureInPictureEnabled(),
+      preferences.readMiniPlayerEnabled(),
     ]);
     runInAction(() {
       themeMode = values[0] as ThemeMode;
       adProxyEnabled = values[1] as bool;
       adProxyUrls = ObservableList.of(values[2] as List<String>);
       adProxyWhitelistedChannels = ObservableList.of(values[3] as List<String>);
+      pictureInPictureEnabled = values[5] as bool;
+      miniPlayerEnabled = values[6] as bool;
       isLoaded = true;
     });
   }
@@ -133,6 +143,18 @@ abstract class AppSettingsStoreBase with Store {
 
     await preferences.saveThemeMode(mode);
     themeMode = mode;
+  }
+
+  @action
+  Future<void> setPictureInPictureEnabled({required bool enabled}) async {
+    await preferences.savePictureInPictureEnabled(enabled: enabled);
+    pictureInPictureEnabled = enabled;
+  }
+
+  @action
+  Future<void> setMiniPlayerEnabled({required bool enabled}) async {
+    await preferences.saveMiniPlayerEnabled(enabled: enabled);
+    miniPlayerEnabled = enabled;
   }
 
   @action

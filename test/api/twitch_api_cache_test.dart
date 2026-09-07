@@ -9,6 +9,55 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  test("VOD seek metadata retries missing storyboards and caches complete results", () async {
+    var requests = 0;
+    final cache = TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(
+        clientId: "client",
+        accessToken: "token",
+        httpClient: MockClient((request) async {
+          if (request.method == "GET") {
+            return requests == 1
+                ? http.Response("Still processing", 503)
+                : http.Response(
+                    jsonEncode([
+                      {
+                        "width": 160,
+                        "height": 90,
+                        "cols": 1,
+                        "rows": 1,
+                        "count": 1,
+                        "interval": 10,
+                        "images": ["preview.jpg"],
+                      },
+                    ]),
+                    200,
+                  );
+          }
+          requests++;
+          return _jsonResponse({
+            "data": {
+              "video": {
+                "seekPreviewsURL": "https://example.com/storyboard.json",
+                "muteInfo": null,
+              },
+            },
+          });
+        }),
+      ),
+    );
+    final first = await cache.fetchVodSeekMetadata("123456");
+    expect(first.storyboard, isNull);
+    expect(requests, 1);
+    final retried = await cache.fetchVodSeekMetadata("123456");
+    expect(retried.storyboard, isNotNull);
+    expect(await cache.fetchVodSeekMetadata(" 123456 "), same(retried));
+    expect(requests, 2);
+    await cache.fetchVodSeekMetadata("654321");
+    await cache.fetchVodSeekMetadata("123456", refresh: true);
+    expect(requests, 4);
+  });
+
   test("live directory cache and cursors are isolated by server ordering", () async {
     final requests = <Map<String, Object?>>[];
     final client = TwitchApiClient(

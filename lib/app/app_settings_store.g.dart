@@ -36,6 +36,46 @@ mixin _$AppSettingsStore on AppSettingsStoreBase, Store {
     });
   }
 
+  late final _$pictureInPictureEnabledAtom = Atom(
+    name: 'AppSettingsStoreBase.pictureInPictureEnabled',
+    context: context,
+  );
+
+  @override
+  bool get pictureInPictureEnabled {
+    _$pictureInPictureEnabledAtom.reportRead();
+    return super.pictureInPictureEnabled;
+  }
+
+  @override
+  set pictureInPictureEnabled(bool value) {
+    _$pictureInPictureEnabledAtom.reportWrite(
+      value,
+      super.pictureInPictureEnabled,
+      () {
+        super.pictureInPictureEnabled = value;
+      },
+    );
+  }
+
+  late final _$miniPlayerEnabledAtom = Atom(
+    name: 'AppSettingsStoreBase.miniPlayerEnabled',
+    context: context,
+  );
+
+  @override
+  bool get miniPlayerEnabled {
+    _$miniPlayerEnabledAtom.reportRead();
+    return super.miniPlayerEnabled;
+  }
+
+  @override
+  set miniPlayerEnabled(bool value) {
+    _$miniPlayerEnabledAtom.reportWrite(value, super.miniPlayerEnabled, () {
+      super.miniPlayerEnabled = value;
+    });
+  }
+
   late final _$adProxyEnabledAtom = Atom(
     name: 'AppSettingsStoreBase.adProxyEnabled',
     context: context,
@@ -144,6 +184,30 @@ mixin _$AppSettingsStore on AppSettingsStoreBase, Store {
     return _$setThemeModeAsyncAction.run(() => super.setThemeMode(mode));
   }
 
+  late final _$setPictureInPictureEnabledAsyncAction = AsyncAction(
+    'AppSettingsStoreBase.setPictureInPictureEnabled',
+    context: context,
+  );
+
+  @override
+  Future<void> setPictureInPictureEnabled({required bool enabled}) {
+    return _$setPictureInPictureEnabledAsyncAction.run(
+      () => super.setPictureInPictureEnabled(enabled: enabled),
+    );
+  }
+
+  late final _$setMiniPlayerEnabledAsyncAction = AsyncAction(
+    'AppSettingsStoreBase.setMiniPlayerEnabled',
+    context: context,
+  );
+
+  @override
+  Future<void> setMiniPlayerEnabled({required bool enabled}) {
+    return _$setMiniPlayerEnabledAsyncAction.run(
+      () => super.setMiniPlayerEnabled(enabled: enabled),
+    );
+  }
+
   late final _$setAdProxyEnabledAsyncAction = AsyncAction(
     'AppSettingsStoreBase.setAdProxyEnabled',
     context: context,
@@ -199,6 +263,8 @@ mixin _$AppSettingsStore on AppSettingsStoreBase, Store {
   String toString() {
     return '''
 themeMode: ${themeMode},
+pictureInPictureEnabled: ${pictureInPictureEnabled},
+miniPlayerEnabled: ${miniPlayerEnabled},
 adProxyEnabled: ${adProxyEnabled},
 adProxyUrls: ${adProxyUrls},
 adProxyWhitelistedChannels: ${adProxyWhitelistedChannels},

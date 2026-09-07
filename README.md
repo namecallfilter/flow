@@ -15,21 +15,9 @@ dart run build_runner build
 flutter run
 ```
 
-Guest browsing works without OAuth configuration. To enable Twitch login,
-create an ignored `.env` file:
-
-```dotenv
-TWITCH_CLIENT_ID=your_twitch_application_client_id
-TWITCH_REDIRECT_URI=https://twitch.tv/login
-```
-
-The redirect URI must match the one configured for your Twitch application.
-Pass the configuration when running or building:
-
-```sh
-flutter run --dart-define-from-file=.env
-flutter build apk --debug --dart-define-from-file=.env
-```
+Twitch sign-in uses the public client ID and redirect URI in
+`lib/api/twitch_auth.dart`. Normal `flutter run` and `flutter build apk`
+commands include this configuration; no `.env` file or extra flags are needed.
 
 ## Checks
 

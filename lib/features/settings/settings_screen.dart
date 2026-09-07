@@ -11,6 +11,7 @@ import "package:flow/shared/widgets/app_bottom_nav.dart";
 import "package:flow/shared/widgets/page_header_layout.dart";
 import "package:flow/shared/widgets/page_header_title.dart";
 import "package:flow/shared/widgets/scroll_reactive_chrome.dart";
+import "package:flow/shared/widgets/section_header.dart";
 import "package:flutter/cupertino.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
@@ -367,6 +368,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ),
                             );
                           },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    const SectionHeader(title: "Playback"),
+                    const SizedBox(height: AppSpacing.sm),
+                    _SettingsGroup(
+                      key: const ValueKey("settings_playback_group"),
+                      children: [
+                        _SettingsRow(
+                          icon: Icons.picture_in_picture_alt_rounded,
+                          title: "Picture-in-picture",
+                          subtitle: "Keep playing when you leave Flow.",
+                          trailing: Switch(
+                            key: const ValueKey("settings_picture_in_picture_toggle"),
+                            value: _settingsStore.pictureInPictureEnabled,
+                            onChanged: (enabled) => unawaited(
+                              _saveSettings(
+                                () => _settingsStore.setPictureInPictureEnabled(enabled: enabled),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        _SettingsRow(
+                          icon: Icons.web_asset_rounded,
+                          title: "Mini-player",
+                          subtitle: "Keep playing while you browse Flow.",
+                          trailing: Switch(
+                            key: const ValueKey("settings_mini_player_toggle"),
+                            value: _settingsStore.miniPlayerEnabled,
+                            onChanged: (enabled) => unawaited(
+                              _saveSettings(
+                                () => _settingsStore.setMiniPlayerEnabled(enabled: enabled),
+                              ),
+                            ),
+                          ),
                         ),
                       ],
                     ),

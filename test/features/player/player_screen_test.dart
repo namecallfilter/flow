@@ -5,8 +5,6 @@ import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/theme.dart";
-import "package:flow/features/browse/browse_screen.dart";
-import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/player/media3_player_controller.dart";
 import "package:flow/features/player/player_navigation.dart";
 import "package:flow/features/player/player_screen.dart";
@@ -19,6 +17,591 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  testWidgets("PiP preference applies at attachment and updates without restarting playback", (
+    tester,
+  ) async {
+    final preferences = MemoryFlowPreferences();
+    await preferences.savePictureInPictureEnabled(enabled: false);
+    final settingsStore = AppSettingsStore(preferences: preferences);
+    await settingsStore.load();
+    final player = _FakePlayerController();
+    var loads = 0;
+    var surfaces = 0;
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        settingsStore: settingsStore,
+        playbackUriLoader: (_) async {
+          loads++;
+          return Uri.parse("https://example.com/live.m3u8");
+        },
+        onSurfaceCreated: () => surfaces++,
+      ),
+    );
+    await tester.pump();
+    final surface = tester.element(find.byType(_FakePlayerSurface));
+    expect(player._pictureInPictureEnabledValues, [false]);
+
+    await settingsStore.setPictureInPictureEnabled(enabled: true);
+    await tester.pump();
+    expect(player._pictureInPictureEnabledValues, [false, true]);
+    expect(tester.element(find.byType(_FakePlayerSurface)), same(surface));
+    expect(loads, 1);
+    expect(surfaces, 1);
+    expect(player._disposeCount, 0);
+    expect(player._pauseCount, 0);
+    expect(player._playCount, 0);
+  });
+
+  testWidgets("VOD playback loads the video ID and seeks within its timeline", (tester) async {
+    final player = _FakePlayerController();
+    final loadedIds = <String>[];
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        videoId: "123456",
+        playbackUriLoader: (id) async {
+          loadedIds.add(id);
+          return Uri.parse("https://example.com/vod.m3u8");
+        },
+      ),
+    );
+    await tester.pump();
+    player.emit(
+      const TwitchPlaybackStateEvent(
+        isPlaying: true,
+        isBuffering: false,
+        playWhenReady: true,
+        position: Duration(seconds: 10),
+        duration: Duration(minutes: 2),
+      ),
+    );
+    await tester.pump();
+    expect(loadedIds, ["123456"]);
+    expect(find.byKey(const ValueKey("player_jump_live_button")), findsNothing);
+    expect(find.byKey(const ValueKey("player_latency")), findsNothing);
+    final timeline = find.byKey(const ValueKey("player_vod_seek"));
+    final rect = tester.getRect(timeline);
+    await tester.tapAt(Offset(rect.left + rect.width * 0.75, rect.center.dy));
+    await tester.pump();
+    expect(player._seekPositions, hasLength(1));
+    expect(player._seekPositions.single.inSeconds, inInclusiveRange(70, 110));
+    expect(player._jumpToLiveCount, 0);
+  });
+
+  testWidgets("an ongoing VOD timeline grows without resetting playback or its surface", (
+    tester,
+  ) async {
+    final player = _FakePlayerController();
+    await tester.pumpWidget(_playerApp(player: player, videoId: "123456"));
+    await tester.pump();
+    final surface = tester.element(find.byType(_FakePlayerSurface));
+    final timeline = find.byKey(const ValueKey("player_vod_seek"));
+    for (final (position, duration) in [(0, 60), (10, 70), (20, 90)]) {
+      player.emit(
+        TwitchPlaybackStateEvent(
+          isPlaying: true,
+          isBuffering: false,
+          playWhenReady: true,
+          position: Duration(seconds: position),
+          duration: Duration(seconds: duration),
+        ),
+      );
+      await tester.pump();
+      expect(tester.widget<Slider>(timeline).max, duration * 1000);
+      expect(tester.widget<Slider>(timeline).value, position * 1000);
+      expect(tester.element(find.byType(_FakePlayerSurface)), same(surface));
+    }
+    final rect = tester.getRect(timeline);
+    await tester.tapAt(Offset(rect.left + rect.width * .95, rect.center.dy));
+    await tester.pump();
+    expect(player._seekPositions, hasLength(1));
+    expect(player._seekPositions.single.inSeconds, greaterThan(60));
+    expect(player._disposeCount, 0);
+    expect(player._pauseCount, 0);
+    expect(player._playCount, 0);
+  });
+
+  testWidgets("a held VOD seek keeps its preview visible through buffering recovery", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final player = _FakePlayerController();
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        videoId: "123456",
+        apiCache: TwitchApiCache(
+          clientLoader: () async => TwitchApiClient(
+            clientId: "client",
+            accessToken: "token",
+            httpClient: MockClient(
+              (request) async => request.method == "POST"
+                  ? _jsonResponse({
+                      "data": {
+                        "video": {
+                          "seekPreviewsURL": "https://example.com/storyboard.json",
+                          "muteInfo": null,
+                        },
+                      },
+                    })
+                  : http.Response(
+                      jsonEncode([
+                        {
+                          "width": 160,
+                          "height": 90,
+                          "cols": 2,
+                          "rows": 2,
+                          "count": 4,
+                          "interval": 30,
+                          "images": ["sprite.jpg"],
+                        },
+                      ]),
+                      200,
+                    ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    player.emit(
+      const TwitchPlaybackStateEvent(
+        isPlaying: true,
+        isBuffering: false,
+        playWhenReady: true,
+        position: Duration(seconds: 10),
+        duration: Duration(minutes: 2),
+      ),
+    );
+    await tester.pump();
+    final timeline = find.byKey(const ValueKey("player_vod_seek"));
+    final preview = find.byKey(const ValueKey("player_vod_seek_preview"));
+    final centerControl = find.byKey(const ValueKey("player_center_control"));
+    expect(centerControl, findsOneWidget);
+    final gesture = await tester.startGesture(tester.getCenter(timeline));
+    await tester.pump();
+    expect(preview, findsOneWidget);
+    expect(centerControl, findsNothing);
+    final sought = Duration(milliseconds: tester.widget<Slider>(timeline).value.round());
+
+    for (final isBuffering in [true, false]) {
+      player.emit(
+        TwitchPlaybackStateEvent(
+          isPlaying: !isBuffering,
+          isBuffering: isBuffering,
+          playWhenReady: true,
+          position: const Duration(seconds: 11),
+          duration: const Duration(minutes: 2),
+        ),
+      );
+      await tester.pump();
+      expect(centerControl, findsNothing);
+    }
+    await tester.pump(const Duration(seconds: 4));
+    expect(_controlsOpacity(tester), 1);
+    expect(preview, findsOneWidget);
+    expect(centerControl, findsNothing);
+    expect(tester.widget<Slider>(timeline).value, sought.inMilliseconds);
+    expect(player._seekPositions, isEmpty);
+
+    await gesture.up();
+    await tester.pump();
+    expect(preview, findsNothing);
+    expect(centerControl, findsOneWidget);
+    expect(player._seekPositions, [sought]);
+  });
+
+  testWidgets("VOD double taps seek ten seconds, clamp endpoints and fade feedback", (
+    tester,
+  ) async {
+    final player = _FakePlayerController();
+    await tester.pumpWidget(_playerApp(player: player, videoId: "123456"));
+    await tester.pump();
+    for (final (start, fraction, expected, label, icon) in [
+      (20, .2, 10, "-10", Icons.chevron_left_rounded),
+      (20, .8, 30, "+10", Icons.chevron_right_rounded),
+      (3, .2, 0, "-10", Icons.chevron_left_rounded),
+      (57, .8, 60, "+10", Icons.chevron_right_rounded),
+    ]) {
+      player.emit(
+        TwitchPlaybackStateEvent(
+          isPlaying: true,
+          isBuffering: false,
+          playWhenReady: true,
+          position: Duration(seconds: start),
+          duration: const Duration(minutes: 1),
+        ),
+      );
+      await tester.pump();
+      final rect = tester.getRect(find.byKey(const ValueKey("player_surface_tap_target")));
+      final point = Offset(rect.left + rect.width * fraction, rect.center.dy);
+      await tester.tapAt(point);
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tapAt(point);
+      await tester.pump();
+      expect(player._seekPositions.last, Duration(seconds: expected));
+      expect(find.text(label), findsOneWidget);
+      expect(find.byIcon(icon), findsOneWidget);
+      expect(
+        find.byIcon(fraction < .5 ? Icons.chevron_right_rounded : Icons.chevron_left_rounded),
+        findsNothing,
+      );
+      expect(find.text("10 seconds"), findsNothing);
+      final labelX = tester.getCenter(find.text(label)).dx;
+      for (final arrow in find.byIcon(icon).evaluate()) {
+        expect(
+          (tester.getCenter(find.byWidget(arrow.widget)).dx - labelX) * (fraction < .5 ? -1 : 1),
+          greaterThan(0),
+        );
+      }
+      expect(_controlsOpacity(tester), 0);
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(
+        tester.widget<AnimatedOpacity>(find.byKey(const ValueKey("player_seek_feedback"))).opacity,
+        0,
+      );
+      await tester.pump(const Duration(milliseconds: 160));
+      expect(find.byIcon(icon), findsNothing);
+      expect(_controlsOpacity(tester), 1);
+    }
+    expect(player._seekPositions, hasLength(4));
+    expect(player._playCount, 0);
+    expect(player._pauseCount, 0);
+    expect(player._toggleCount, 0);
+  });
+
+  for (final controlsVisible in [true, false]) {
+    testWidgets("VOD seek taps stack while paused and restore controls=$controlsVisible", (
+      tester,
+    ) async {
+      final player = _FakePlayerController();
+      await tester.pumpWidget(_playerApp(player: player, videoId: "123456"));
+      await tester.pump();
+      player.emit(
+        const TwitchPlaybackStateEvent(
+          isPlaying: false,
+          isBuffering: false,
+          playWhenReady: false,
+          position: Duration(seconds: 20),
+          duration: Duration(minutes: 2),
+        ),
+      );
+      await tester.pump();
+      final target = tester.getRect(find.byKey(const ValueKey("player_surface_tap_target")));
+      final point = Offset(target.left + target.width * .8, target.center.dy);
+      if (!controlsVisible) {
+        await tester.tapAt(point);
+        await tester.pump(const Duration(milliseconds: 350));
+      }
+      expect(_controlsOpacity(tester), controlsVisible ? 1 : 0);
+      await tester.tapAt(point);
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tapAt(point);
+      await tester.pump();
+      expect(find.text("+10"), findsOneWidget);
+      expect(_controlsOpacity(tester), 0);
+
+      player.emit(
+        const TwitchPlaybackStateEvent(
+          isPlaying: false,
+          isBuffering: true,
+          playWhenReady: false,
+          position: Duration(seconds: 20),
+          duration: Duration(minutes: 2),
+        ),
+      );
+      await tester.pump();
+      expect(_controlsOpacity(tester), 0);
+      final cancelledTap = await tester.startGesture(point);
+      await tester.pump(const Duration(milliseconds: 150));
+      await cancelledTap.moveBy(const Offset(0, 80));
+      await cancelledTap.up();
+      await tester.pump();
+      expect(player._seekPositions, [const Duration(seconds: 30)]);
+
+      for (var extraTap = 1; extraTap <= 3; extraTap++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.tapAt(point);
+        await tester.pump();
+        expect(player._seekPositions, hasLength(extraTap + 1));
+        expect(player._seekPositions.last, Duration(seconds: 30 + extraTap * 10));
+        expect(find.text("+${10 + extraTap * 10}"), findsOneWidget);
+      }
+      await tester.pump(const Duration(milliseconds: 800));
+      expect(_controlsOpacity(tester), 0);
+      await tester.pump(const Duration(milliseconds: 160));
+      expect(find.byKey(const ValueKey("player_seek_feedback")), findsNothing);
+      expect(_controlsOpacity(tester), controlsVisible ? 1 : 0);
+      expect(player._playCount, 0);
+      expect(player._pauseCount, 0);
+      expect(player._toggleCount, 0);
+    });
+  }
+
+  testWidgets("VOD seek direction resets its count and timeout requires a new double tap", (
+    tester,
+  ) async {
+    final player = _FakePlayerController();
+    await tester.pumpWidget(_playerApp(player: player, videoId: "123456"));
+    await tester.pump();
+    player.emit(
+      const TwitchPlaybackStateEvent(
+        isPlaying: true,
+        isBuffering: false,
+        playWhenReady: true,
+        position: Duration(seconds: 40),
+        duration: Duration(minutes: 2),
+      ),
+    );
+    await tester.pump();
+    final target = tester.getRect(find.byKey(const ValueKey("player_surface_tap_target")));
+    final right = Offset(target.left + target.width * .8, target.center.dy);
+    final left = Offset(target.left + target.width * .2, target.center.dy);
+    await tester.tapAt(right);
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tapAt(right);
+    await tester.pump();
+    for (final (point, label, expected) in [
+      (left, "-10", 40),
+      (left, "-20", 30),
+      (right, "+10", 40),
+    ]) {
+      await tester.tapAt(point);
+      await tester.pump();
+      expect(find.text(label), findsOneWidget);
+      expect(player._seekPositions.last, Duration(seconds: expected));
+    }
+    expect(player._seekPositions, hasLength(4));
+    await tester.pump(const Duration(milliseconds: 1000));
+    await tester.tapAt(right);
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(player._seekPositions, hasLength(4));
+    expect(find.byKey(const ValueKey("player_seek_feedback")), findsNothing);
+    await tester.tapAt(right);
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tapAt(right);
+    await tester.pump();
+    expect(player._seekPositions, hasLength(5));
+    expect(player._seekPositions.last, const Duration(seconds: 50));
+    expect(find.text("+10"), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 1000));
+  });
+
+  testWidgets("every VOD seek tap pulses the text and slides one arrow in the seek direction", (
+    tester,
+  ) async {
+    final player = _FakePlayerController();
+    await tester.pumpWidget(_playerApp(player: player, videoId: "123456"));
+    await tester.pump();
+    player.emit(
+      const TwitchPlaybackStateEvent(
+        isPlaying: false,
+        isBuffering: false,
+        playWhenReady: false,
+        position: Duration(seconds: 40),
+        duration: Duration(minutes: 2),
+      ),
+    );
+    await tester.pump();
+    final target = tester.getRect(find.byKey(const ValueKey("player_surface_tap_target")));
+    final right = Offset(target.left + target.width * .8, target.center.dy);
+    final left = Offset(target.left + target.width * .2, target.center.dy);
+    await tester.tapAt(right);
+    await tester.pump(const Duration(milliseconds: 100));
+    for (final (point, label) in [(right, "+10"), (right, "+20"), (left, "-10")]) {
+      await tester.tapAt(point);
+      await tester.pump();
+      final text = find.text(label);
+      expect(tester.widget<Text>(text).style?.fontSize, 20);
+      final arrow = find.byIcon(
+        label.startsWith("+") ? Icons.chevron_right_rounded : Icons.chevron_left_rounded,
+      );
+      final height = (tester.getBottomRight(text) - tester.getTopLeft(text)).dy;
+      final arrowHeight = (tester.getBottomRight(arrow) - tester.getTopLeft(arrow)).dy;
+      final arrowStart = tester.getCenter(arrow).dx;
+      final direction = label.startsWith("+") ? 1 : -1;
+      await tester.pump(const Duration(milliseconds: 150));
+      final pulsedHeight = (tester.getBottomRight(text) - tester.getTopLeft(text)).dy;
+      expect(pulsedHeight, lessThan(height * .95));
+      expect(
+        (tester.getBottomRight(arrow) - tester.getTopLeft(arrow)).dy,
+        closeTo(arrowHeight, .01),
+      );
+      final arrowMiddle = tester.getCenter(arrow).dx;
+      expect((arrowMiddle - arrowStart) * direction, greaterThan(0));
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(
+        (tester.getBottomRight(text) - tester.getTopLeft(text)).dy,
+        closeTo(height, .01),
+      );
+      expect(
+        (tester.getBottomRight(arrow) - tester.getTopLeft(arrow)).dy,
+        closeTo(arrowHeight, .01),
+      );
+      final arrowEnd = tester.getCenter(arrow).dx;
+      expect((arrowEnd - arrowMiddle) * direction, greaterThan(0));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.getCenter(arrow).dx, closeTo(arrowEnd, .01));
+    }
+    expect(player._seekPositions, [
+      const Duration(seconds: 50),
+      const Duration(seconds: 60),
+      const Duration(seconds: 50),
+    ]);
+    await tester.pump(const Duration(milliseconds: 1000));
+  });
+
+  for (final (key, tooltip) in [
+    ("player_settings_button", "Video quality"),
+    ("player_name_and_title", "A precise stream title"),
+  ]) {
+    testWidgets("holding $key keeps its tooltip open and release gives three seconds", (
+      tester,
+    ) async {
+      final player = _FakePlayerController();
+      await tester.pumpWidget(_playerApp(player: player));
+      await tester.pump();
+      final surface = tester.element(find.byType(_FakePlayerSurface));
+      player.emit(
+        const TwitchPlaybackStateEvent(
+          isPlaying: true,
+          isBuffering: false,
+          playWhenReady: true,
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 2300));
+      final gesture = await tester.startGesture(tester.getCenter(find.byKey(ValueKey(key))));
+      await tester.pump(const Duration(milliseconds: 700));
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(_controlsOpacity(tester), 1);
+      expect(find.text(tooltip), findsOneWidget);
+      for (final isBuffering in [true, false]) {
+        player.emit(
+          TwitchPlaybackStateEvent(
+            isPlaying: !isBuffering,
+            isBuffering: isBuffering,
+            playWhenReady: true,
+          ),
+        );
+        await tester.pump();
+      }
+      await tester.pump(const Duration(seconds: 4));
+      expect(_controlsOpacity(tester), 1);
+      expect(find.text(tooltip), findsOneWidget);
+      await gesture.up();
+      await tester.pump(const Duration(milliseconds: 2999));
+      expect(_controlsOpacity(tester), 1);
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(_controlsOpacity(tester), 0);
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.text(tooltip), findsNothing);
+      expect(tester.element(find.byType(_FakePlayerSurface)), same(surface));
+    });
+  }
+
+  testWidgets("control taps and pointer cancellation restart the inactivity countdown", (
+    tester,
+  ) async {
+    final player = _FakePlayerController();
+    final displayMode = _FakeDisplayModeController();
+    await tester.pumpWidget(_playerApp(player: player, displayMode: displayMode));
+    await tester.pump();
+    player.emit(
+      const TwitchPlaybackStateEvent(
+        isPlaying: true,
+        isBuffering: false,
+        playWhenReady: true,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 2500));
+    for (final key in ["player_orientation_button", "player_name_and_title"]) {
+      await tester.tap(find.byKey(ValueKey(key)));
+      await tester.pump(const Duration(milliseconds: 750));
+      expect(_controlsOpacity(tester), 1);
+      await tester.pump(const Duration(milliseconds: 1750));
+    }
+    expect(displayMode._landscapeRequests, [false]);
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const ValueKey("player_settings_button"))),
+    );
+    await tester.pump(const Duration(seconds: 4));
+    expect(_controlsOpacity(tester), 1);
+    await gesture.cancel();
+    await tester.pump(const Duration(milliseconds: 2999));
+    expect(_controlsOpacity(tester), 1);
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(_controlsOpacity(tester), 0);
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.text("Video quality"), findsNothing);
+  });
+
+  testWidgets("an open title tooltip disappears when controls are hidden by a tap", (tester) async {
+    final player = _FakePlayerController();
+    await tester.pumpWidget(_playerApp(player: player));
+    await tester.pump();
+    player.emit(
+      const TwitchPlaybackStateEvent(
+        isPlaying: true,
+        isBuffering: false,
+        playWhenReady: true,
+      ),
+    );
+    await tester.pump();
+    await tester.longPress(find.byKey(const ValueKey("player_name_and_title")));
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(find.text("A precise stream title"), findsOneWidget);
+    final target = tester.getRect(find.byKey(const ValueKey("player_surface_tap_target")));
+    await tester.tapAt(Offset(target.left + target.width * .8, target.center.dy));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(_controlsOpacity(tester), 0);
+    expect(find.text("A precise stream title"), findsNothing);
+  });
+
+  testWidgets("frequent VOD progress updates let controls hide and EOF restores Play", (
+    tester,
+  ) async {
+    final player = _FakePlayerController();
+    await tester.pumpWidget(_playerApp(player: player, videoId: "123456"));
+    await tester.pump();
+    for (var tick = 0; tick < 8; tick++) {
+      player.emit(
+        TwitchPlaybackStateEvent(
+          isPlaying: true,
+          isBuffering: false,
+          playWhenReady: true,
+          position: Duration(milliseconds: tick * 500),
+          duration: const Duration(minutes: 2),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+    expect(_controlsOpacity(tester), 0);
+    player.emit(
+      const TwitchPlaybackStateEvent(
+        isPlaying: false,
+        isBuffering: false,
+        playWhenReady: true,
+        position: Duration(minutes: 2),
+        duration: Duration(minutes: 2),
+        isEnded: true,
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(_controlsOpacity(tester), 1);
+    expect(find.byTooltip("Play"), findsOneWidget);
+    expect(find.byTooltip("Pause"), findsNothing);
+    await tester.tap(find.byKey(const ValueKey("player_play_pause_button")));
+    expect(player._toggleCount, 1);
+  });
+
   testWidgets("Auto shows the current renderer quality and updates while the sheet is open", (
     tester,
   ) async {
@@ -560,117 +1143,67 @@ void main() {
     ("player_profile_button", "channel_page_creator"),
     ("player_category_button", "category_streams_page_Just Chatting"),
   ]) {
-    testWidgets(
-      "starting a new stream retains one $destinationKey and disposes the old player "
-      "without resuming",
-      (
+    for (final wasPlaying in [true, false]) {
+      testWidgets("opening $destinationKey without a host restores playing=$wasPlaying", (
         tester,
       ) async {
-        tester.view.physicalSize = const Size(400, 800);
-        tester.view.devicePixelRatio = 1;
-        addTearDown(tester.view.resetPhysicalSize);
-        addTearDown(tester.view.resetDevicePixelRatio);
         final player = _FakePlayerController();
-        final displayMode = _FakeDisplayModeController();
-        final apiCache = _navigationApiCache();
-        final playerApp =
-            _playerApp(
-                  player: player,
-                  displayMode: displayMode,
-                  apiCache: apiCache,
-                )
-                as MaterialApp;
-        final rootNavigator = GlobalKey<NavigatorState>();
-        final tabNavigator = GlobalKey<NavigatorState>();
-        await tester.pumpWidget(
-          MaterialApp(
-            navigatorKey: rootNavigator,
-            theme: playerApp.theme,
-            home: Navigator(
-              key: tabNavigator,
-              onGenerateRoute: (_) => MaterialPageRoute<void>(
-                builder: (_) => const Scaffold(key: ValueKey("tab shell")),
-              ),
-            ),
-          ),
-        );
-        unawaited(
-          tabNavigator.currentState!.push<void>(
-            MaterialPageRoute<void>(
-              builder: (_) => buttonKey == "player_profile_button"
-                  ? ChannelScreen(
-                      apiCache: apiCache,
-                      initialChannel: const ChannelPreview(
-                        login: "creator",
-                        displayName: "Creator",
-                      ),
-                    )
-                  : CategoryStreamsScreen(
-                      apiCache: apiCache,
-                      category: const BrowseCategory(
-                        id: "509658",
-                        name: "Just Chatting",
-                        viewerCount: 0,
-                        viewers: "--",
-                        imageUrl: null,
-                        colors: [Colors.purple, Colors.pink],
-                      ),
-                    ),
-            ),
-          ),
-        );
-        await _pumpNavigation(tester);
-        expect(tabNavigator.currentState!.canPop(), isTrue);
-        unawaited(
-          openStreamPlayer(
-            tester.element(
-              find.byKey(ValueKey(destinationKey)),
-            ),
-            builder: (_) => playerApp.home!,
-          ),
-        );
-        await _pumpNavigation(tester);
-        await tester.tap(find.byKey(const ValueKey("player_orientation_button")));
+        await tester.pumpWidget(_playerApp(player: player, apiCache: _navigationApiCache()));
         await tester.pump();
+        player.emit(
+          TwitchPlaybackStateEvent(
+            isPlaying: wasPlaying,
+            isBuffering: false,
+            playWhenReady: wasPlaying,
+          ),
+        );
+        await tester.pump();
+
         await tester.tap(find.byKey(ValueKey(buttonKey)));
         await _pumpNavigation(tester);
-        expect(player._pauseCount, 1);
+        expect(find.byKey(ValueKey(destinationKey)), findsOneWidget);
+        expect(player._pauseCount, wasPlaying ? 1 : 0);
         expect(player._playCount, 0);
-        final destination = tester.element(find.byKey(ValueKey(destinationKey)));
+        expect(player._disposeCount, 0);
 
-        unawaited(
-          openStreamPlayer(
-            destination,
-            builder: (_) => const Scaffold(key: ValueKey("new stream")),
-          ),
-        );
-        await tester.pump();
-        expect(player._playCount, 0);
+        await tester.pageBack();
         await _pumpNavigation(tester);
-        expect(player._disposeCount, 1);
-        expect(displayMode._landscapeRequests, [true]);
-        expect(tabNavigator.currentState!.canPop(), isFalse);
-        expect(find.byKey(ValueKey(destinationKey), skipOffstage: false), findsOneWidget);
-        expect(
-          find.byKey(const ValueKey("player_page_creator"), skipOffstage: false),
-          findsNothing,
-        );
+        expect(player._playCount, wasPlaying ? 1 : 0);
+        expect(player._disposeCount, 0);
+      });
+    }
 
-        rootNavigator.currentState!.pop();
+    testWidgets("opening $destinationKey minimizes playback without interrupting it", (
+      tester,
+    ) async {
+      final player = _FakePlayerController();
+      final host = await _pumpHostedPlayer(tester, player: player);
+      await tester.tap(find.byKey(ValueKey(buttonKey)));
+      await _pumpNavigation(tester);
+      expect(host.mode, PlaybackMode.mini);
+      expect(find.byKey(ValueKey(destinationKey)), findsOneWidget);
+      expect(find.byKey(const ValueKey("player_mini")), findsOneWidget);
+      expect(player._pauseCount, 0);
+      expect(player._playCount, 0);
+      expect(player._disposeCount, 0);
+      await tester.tap(find.byKey(const ValueKey("player_mini")));
+      await _pumpNavigation(tester);
+      expect(host.mode, PlaybackMode.expanded);
+      expect(player._pauseCount, 0);
+      expect(player._playCount, 0);
+      if (buttonKey == "player_profile_button") {
+        await tester.tap(find.byKey(const ValueKey("player_category_button")));
         await _pumpNavigation(tester);
-        expect(tester.element(find.byKey(ValueKey(destinationKey))), same(destination));
-        expect(rootNavigator.currentState!.canPop(), isTrue);
+        expect(find.byKey(const ValueKey("category_streams_page_Just Chatting")), findsOneWidget);
+        expect(host.mode, PlaybackMode.mini);
+        expect(player._pauseCount, 0);
         expect(player._playCount, 0);
-        rootNavigator.currentState!.pop();
-        await _pumpNavigation(tester);
-        expect(find.byKey(const ValueKey("tab shell")), findsOneWidget);
-        expect(rootNavigator.currentState!.canPop(), isFalse);
-        expect(player._playCount, 0);
-      },
-    );
+      }
+      host.dismiss();
+      await _pumpNavigation(tester);
+    });
   }
-
-  testWidgets("ignores inactive state until the app is backgrounded", (tester) async {
+  testWidgets("leaves background playback and automatic PiP to the native player", (tester) async {
     final player = _FakePlayerController();
     await tester.pumpWidget(_playerApp(player: player));
     await tester.pump();
@@ -694,24 +1227,18 @@ void main() {
 
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
     await tester.pump();
-    expect(player._pauseCount, 1);
+    expect(player._pauseCount, 0);
 
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
-    expect(player._playCount, 1);
+    expect(player._playCount, 0);
   });
 
-  testWidgets("does not resume beneath an open destination after lifecycle changes", (
+  testWidgets("lifecycle changes preserve playback while browsing a destination", (
     tester,
   ) async {
     final player = _FakePlayerController();
-    await tester.pumpWidget(
-      _playerApp(
-        player: player,
-        apiCache: _navigationApiCache(),
-      ),
-    );
-    await tester.pump();
+    final host = await _pumpHostedPlayer(tester, player: player);
 
     await tester.tap(find.byKey(const ValueKey("player_profile_button")));
     await _pumpNavigation(tester);
@@ -725,10 +1252,14 @@ void main() {
 
     await tester.pageBack();
     await _pumpNavigation(tester);
-    expect(player._playCount, 1);
+    expect(host.mode, PlaybackMode.mini);
+    expect(player._pauseCount, 0);
+    expect(player._playCount, 0);
+    host.dismiss();
+    await _pumpNavigation(tester);
   });
 
-  testWidgets("restores forced landscape around a destination", (tester) async {
+  testWidgets("minimizing for a destination releases forced landscape", (tester) async {
     tester.view.physicalSize = const Size(400, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -736,14 +1267,7 @@ void main() {
 
     final player = _FakePlayerController();
     final displayMode = _FakeDisplayModeController();
-    await tester.pumpWidget(
-      _playerApp(
-        player: player,
-        displayMode: displayMode,
-        apiCache: _navigationApiCache(),
-      ),
-    );
-    await tester.pump();
+    final host = await _pumpHostedPlayer(tester, player: player, displayMode: displayMode);
 
     await tester.tap(find.byKey(const ValueKey("player_orientation_button")));
     await tester.pump();
@@ -756,11 +1280,11 @@ void main() {
 
     await tester.pageBack();
     await _pumpNavigation(tester);
-    expect(
-      displayMode._operations,
-      ["landscape:true", "restore", "landscape:true"],
-    );
-    expect(player._playCount, 1);
+    expect(displayMode._operations, ["landscape:true", "restore"]);
+    expect(player._playCount, 0);
+    expect(host.mode, PlaybackMode.mini);
+    host.dismiss();
+    await _pumpNavigation(tester);
   });
 
   testWidgets("dispose restores display mode after a pending transition", (
@@ -797,7 +1321,7 @@ void main() {
     );
   });
 
-  testWidgets("pauses a player that attaches behind an open destination", (
+  testWidgets("a player attaching while browsing starts without an extra pause or resume", (
     tester,
   ) async {
     tester.view.physicalSize = const Size(400, 800);
@@ -805,6 +1329,33 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
+    final player = _FakePlayerController();
+    final playbackUri = Completer<Uri>();
+    final host = await _pumpHostedPlayer(
+      tester,
+      player: player,
+      playbackUriLoader: (_) => playbackUri.future,
+    );
+
+    await tester.tap(find.byKey(const ValueKey("player_profile_button")));
+    await _pumpNavigation(tester);
+    expect(find.byKey(const ValueKey("channel_page_creator")), findsOneWidget);
+    expect(player._pauseCount, 0);
+
+    playbackUri.complete(Uri.parse("https://example.com/late-live.m3u8"));
+    await _pumpNavigation(tester);
+    expect(player._pauseCount, 0);
+
+    await tester.pageBack();
+    await _pumpNavigation(tester);
+    expect(player._playCount, 0);
+    host.dismiss();
+    await _pumpNavigation(tester);
+  });
+
+  testWidgets("a player attaching behind a destination without a host waits until return", (
+    tester,
+  ) async {
     final player = _FakePlayerController();
     final playbackUri = Completer<Uri>();
     await tester.pumpWidget(
@@ -815,15 +1366,14 @@ void main() {
       ),
     );
     await tester.pump();
-
     await tester.tap(find.byKey(const ValueKey("player_profile_button")));
     await _pumpNavigation(tester);
-    expect(find.byKey(const ValueKey("channel_page_creator")), findsOneWidget);
-    expect(player._pauseCount, 0);
 
     playbackUri.complete(Uri.parse("https://example.com/late-live.m3u8"));
     await _pumpNavigation(tester);
+    expect(find.byKey(const ValueKey("channel_page_creator")), findsOneWidget);
     expect(player._pauseCount, 1);
+    expect(player._playCount, 0);
 
     await tester.pageBack();
     await _pumpNavigation(tester);
@@ -1031,8 +1581,37 @@ Future<void> _pumpNavigation(WidgetTester tester) async {
   }
 }
 
+Future<PlaybackHost> _pumpHostedPlayer(
+  WidgetTester tester, {
+  required _FakePlayerController player,
+  PlayerDisplayModeController? displayMode,
+  PlaybackUriLoader? playbackUriLoader,
+}) async {
+  final app =
+      _playerApp(
+            player: player,
+            displayMode: displayMode,
+            playbackUriLoader: playbackUriLoader,
+            apiCache: _navigationApiCache(),
+          )
+          as MaterialApp;
+  final host = PlaybackHost();
+  await tester.pumpWidget(
+    MaterialApp(
+      theme: app.theme,
+      navigatorObservers: [host],
+      home: const Scaffold(body: Text("Flow")),
+    ),
+  );
+  await _pumpNavigation(tester);
+  await openStreamPlayer(tester.element(find.text("Flow")), builder: (_) => app.home!);
+  await _pumpNavigation(tester);
+  return host;
+}
+
 Widget _playerApp({
   required _FakePlayerController player,
+  String? videoId,
   TwitchApiCache? apiCache,
   PlayerDisplayModeController? displayMode,
   PlaybackUriLoader? playbackUriLoader,
@@ -1046,6 +1625,7 @@ Widget _playerApp({
   final app = MaterialApp(
     theme: buildFlowTheme(Brightness.dark),
     home: StreamPlayerScreen(
+      videoId: videoId,
       apiCache:
           apiCache ??
           TwitchApiCache(
@@ -1226,12 +1806,19 @@ class _DeferredPlayerSurfaceState extends State<_DeferredPlayerSurface> {
 }
 
 class _FakePlayerController implements TwitchPlayerController {
+  @override
+  Future<void> setPictureInPictureEnabled({required bool enabled}) async {
+    _pictureInPictureEnabledValues.add(enabled);
+  }
+
   final _events = StreamController<TwitchPlayerEvent>.broadcast();
   int _jumpToLiveCount = 0;
   int _toggleCount = 0;
   int _pauseCount = 0;
   int _playCount = 0;
   int _disposeCount = 0;
+  final _seekPositions = <Duration>[];
+  final _pictureInPictureEnabledValues = <bool>[];
 
   @override
   Stream<TwitchPlayerEvent> get events => _events.stream;
@@ -1246,6 +1833,11 @@ class _FakePlayerController implements TwitchPlayerController {
   @override
   Future<void> jumpToLive() async {
     _jumpToLiveCount++;
+  }
+
+  @override
+  Future<void> seekTo(Duration position) async {
+    _seekPositions.add(position);
   }
 
   @override

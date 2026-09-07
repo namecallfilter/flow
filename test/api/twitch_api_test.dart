@@ -10,7 +10,14 @@ import "package:http/testing.dart";
 void main() {
   tearDown(() => TwitchApiClient.restoreWebSessionDeviceId(null));
 
-  for (final operation in ["current user", "live follows", "follows", "subscription", "playback"]) {
+  for (final operation in [
+    "current user",
+    "live follows",
+    "follows",
+    "subscription",
+    "playback",
+    "vod",
+  ]) {
     test("$operation recovers an integrity challenge before returning data", () async {
       var requests = 0;
       final client = TwitchApiClient(
@@ -50,6 +57,7 @@ void main() {
                 "self": {"subscriptionBenefit": null},
               },
               "streamPlaybackAccessToken": {"value": "playback-token", "signature": "signature"},
+              "videoPlaybackAccessToken": {"value": "playback-token", "signature": "signature"},
             },
           });
         }),
@@ -59,6 +67,7 @@ void main() {
         "live follows" => client.fetchFollowedStreams("viewer"),
         "follows" => client.fetchFollowedChannels("viewer"),
         "subscription" => client.fetchChannelSubscriptionStatus("creator"),
+        "vod" => client.fetchVodPlaybackUri("123456"),
         _ => client.fetchLivePlaybackUri("creator"),
       };
       expect(requests, 2);
@@ -736,6 +745,8 @@ void main() {
 
     expect(capturedRequest.headers["Authorization"], "OAuth web-token-123");
     expect(variables["login"], "KaiCenat");
+    expect(variables["isLive"], true);
+    expect(variables["isVod"], false);
     expect(variables["platform"], "web");
     expect(variables["playerType"], "site");
     expect(body["query"], contains('playerBackend: "mediaplayer"'));
@@ -749,43 +760,257 @@ void main() {
     expect(uri.queryParameters["supported_codecs"], isNull);
   });
 
-  test("retries a failed authenticated playback-token query anonymously", () async {
-    final authorizationHeaders = <String?>[];
+  test("builds a signed Twitch VOD HLS playback URI", () async {
+    late http.Request capturedRequest;
     final client = TwitchApiClient(
       clientId: "client-123",
       accessToken: "token-123",
-      gqlAccessToken: "stale-web-token",
+      gqlAccessToken: "web-token-123",
       httpClient: MockClient((request) async {
-        final authorization = request.headers["Authorization"];
-        authorizationHeaders.add(authorization);
-        if (authorization != null) {
-          return _jsonResponse({
-            "errors": [
-              {"message": "Unauthorized"},
-            ],
-          });
-        }
+        capturedRequest = request;
         return _jsonResponse({
           "data": {
-            "streamPlaybackAccessToken": {
-              "value": "anonymous-token",
-              "signature": "anonymous-signature",
-              "authorization": {
-                "isForbidden": false,
-                "forbiddenReasonCode": null,
-              },
+            "videoPlaybackAccessToken": {
+              "value": "{\"vod_id\":123456}",
+              "signature": "signature-123",
             },
           },
         });
       }),
     );
 
-    final uri = await client.fetchLivePlaybackUri("publicchannel");
+    final uri = await client.fetchVodPlaybackUri(" 123456 ");
+    final body = jsonDecode(capturedRequest.body) as Map<String, Object?>;
+    final variables = body["variables"]! as Map<String, Object?>;
 
-    expect(authorizationHeaders, ["OAuth stale-web-token", null]);
-    expect(uri.queryParameters["sig"], "anonymous-signature");
-    expect(uri.queryParameters["token"], "anonymous-token");
+    expect(capturedRequest.headers["Authorization"], "OAuth web-token-123");
+    expect(variables["vodID"], "123456");
+    expect(variables["login"], "");
+    expect(variables["isLive"], false);
+    expect(variables["isVod"], true);
+    expect(variables["platform"], "web");
+    expect(variables["playerType"], "site");
+    expect(uri.scheme, "https");
+    expect(uri.host, "usher.ttvnw.net");
+    expect(uri.path, "/vod/v2/123456.m3u8");
+    expect(uri.queryParameters["nauthsig"], "signature-123");
+    expect(uri.queryParameters["nauth"], "{\"vod_id\":123456}");
+    expect(uri.queryParameters["allow_audio_only"], "true");
+    expect(uri.queryParameters["allow_source"], "true");
   });
+
+  test("rejects missing VOD IDs and playback tokens", () async {
+    var requests = 0;
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "token-123",
+      httpClient: MockClient((_) async {
+        requests++;
+        return _jsonResponse({
+          "data": {"videoPlaybackAccessToken": null},
+        });
+      }),
+    );
+
+    await expectLater(client.fetchVodPlaybackUri(" "), throwsA(isA<TwitchApiException>()));
+    expect(requests, 0);
+    await expectLater(client.fetchVodPlaybackUri("123456"), throwsA(isA<TwitchApiException>()));
+    expect(requests, 1);
+  });
+
+  test("loads muted seconds and resolves storyboard frames across sprite sheets", () async {
+    final requests = <http.Request>[];
+    final client = TwitchApiClient(
+      clientId: "client",
+      accessToken: "token",
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        if (request.method == "POST") {
+          return _jsonResponse({
+            "data": {
+              "video": {
+                "seekPreviewsURL": "https://example.com/storyboards/vod-info.json",
+                "muteInfo": {
+                  "mutedSegmentConnection": {
+                    "nodes": [
+                      {"offset": 12280, "duration": 181},
+                      {"offset": -1, "duration": 20},
+                      {"offset": 30, "duration": 0},
+                      {"duration": 50},
+                      null,
+                    ],
+                  },
+                },
+              },
+            },
+          });
+        }
+        expect(request.headers["Authorization"], isNull);
+        return http.Response(
+          jsonEncode([
+            {
+              "width": 160,
+              "height": 90,
+              "cols": 5,
+              "rows": 40,
+              "count": 200,
+              "interval": 183,
+              "images": ["low.jpg"],
+            },
+            {
+              "width": 220,
+              "height": 124,
+              "cols": 5,
+              "rows": 10,
+              "count": 51,
+              "interval": 183,
+              "images": ["high-0.jpg", "https://cdn.example.com/high-1.jpg"],
+            },
+            {
+              "width": 400,
+              "height": 225,
+              "cols": 0,
+              "rows": 10,
+              "count": 51,
+              "interval": 0,
+              "images": ["invalid.jpg"],
+            },
+          ]),
+          200,
+        );
+      }),
+    );
+    final metadata = await client.fetchVodSeekMetadata(" 123456 ");
+    expect(requests, hasLength(2));
+    expect((jsonDecode(requests.first.body) as Map<String, Object?>)["variables"], {
+      "videoId": "123456",
+    });
+    expect(metadata.mutedSegments.single.offset, const Duration(seconds: 12280));
+    expect(metadata.mutedSegments.single.end, const Duration(seconds: 12461));
+    final storyboard = metadata.storyboard!;
+    expect(storyboard.width, 220);
+    expect(storyboard.height, 124);
+    expect(storyboard.columns, 5);
+    expect(storyboard.rows, 10);
+    expect(storyboard.interval, const Duration(seconds: 183));
+    expect(storyboard.frameAt(const Duration(seconds: -1)), (
+      imageUrl: "https://example.com/storyboards/high-0.jpg",
+      column: 0,
+      row: 0,
+    ));
+    expect(storyboard.frameAt(const Duration(seconds: 183 * 49)), (
+      imageUrl: "https://example.com/storyboards/high-0.jpg",
+      column: 4,
+      row: 9,
+    ));
+    expect(storyboard.frameAt(const Duration(seconds: 183 * 50)), (
+      imageUrl: "https://cdn.example.com/high-1.jpg",
+      column: 0,
+      row: 0,
+    ));
+    expect(
+      storyboard.frameAt(const Duration(days: 1)),
+      storyboard.frameAt(const Duration(seconds: 183 * 50)),
+    );
+  });
+
+  for (final (status, body) in [(403, "Access denied"), (200, "invalid JSON"), (200, "[]")]) {
+    test("keeps muted intervals when storyboard returns $status $body", () async {
+      final client = TwitchApiClient(
+        clientId: "client",
+        accessToken: "token",
+        httpClient: MockClient(
+          (request) async => request.method == "GET"
+              ? http.Response(body, status)
+              : _jsonResponse({
+                  "data": {
+                    "video": {
+                      "seekPreviewsURL": "https://example.com/storyboard.json",
+                      "muteInfo": {
+                        "mutedSegmentConnection": {
+                          "nodes": [
+                            {"offset": 20, "duration": 30},
+                          ],
+                        },
+                      },
+                    },
+                  },
+                }),
+        ),
+      );
+      final metadata = await client.fetchVodSeekMetadata("123456");
+      expect(metadata.storyboard, isNull);
+      expect(metadata.mutedSegments.single.offset, const Duration(seconds: 20));
+      expect(metadata.mutedSegments.single.duration, const Duration(seconds: 30));
+    });
+  }
+
+  test("missing seek metadata returns empty data without requesting a storyboard", () async {
+    var requests = 0;
+    final client = TwitchApiClient(
+      clientId: "client",
+      accessToken: "token",
+      httpClient: MockClient((request) async {
+        requests++;
+        return _jsonResponse({
+          "data": {
+            "video": {"seekPreviewsURL": null, "muteInfo": null},
+          },
+        });
+      }),
+    );
+    await expectLater(client.fetchVodSeekMetadata(" "), throwsA(isA<TwitchApiException>()));
+    expect(requests, 0);
+    final metadata = await client.fetchVodSeekMetadata("123456");
+    expect(requests, 1);
+    expect(metadata.mutedSegments, isEmpty);
+    expect(metadata.storyboard, isNull);
+  });
+
+  for (final isVod in [false, true]) {
+    test(
+      "retries a failed authenticated ${isVod ? 'VOD' : 'live'} playback-token query anonymously",
+      () async {
+        final authorizationHeaders = <String?>[];
+        final client = TwitchApiClient(
+          clientId: "client-123",
+          accessToken: "token-123",
+          gqlAccessToken: "stale-web-token",
+          httpClient: MockClient((request) async {
+            final authorization = request.headers["Authorization"];
+            authorizationHeaders.add(authorization);
+            if (authorization != null) {
+              return _jsonResponse({
+                "errors": [
+                  {"message": "Unauthorized"},
+                ],
+              });
+            }
+            return _jsonResponse({
+              "data": {
+                isVod ? "videoPlaybackAccessToken" : "streamPlaybackAccessToken": {
+                  "value": "anonymous-token",
+                  "signature": "anonymous-signature",
+                  "authorization": {
+                    "isForbidden": false,
+                    "forbiddenReasonCode": null,
+                  },
+                },
+              },
+            });
+          }),
+        );
+
+        final uri = await (isVod
+            ? client.fetchVodPlaybackUri("123456")
+            : client.fetchLivePlaybackUri("publicchannel"));
+
+        expect(authorizationHeaders, ["OAuth stale-web-token", null]);
+        expect(uri.queryParameters[isVod ? "nauthsig" : "sig"], "anonymous-signature");
+        expect(uri.queryParameters[isVod ? "nauth" : "token"], "anonymous-token");
+      },
+    );
+  }
 }
 
 http.Response _jsonResponse(Map<String, Object?> body) => http.Response(

@@ -8,6 +8,8 @@ import "package:flow/app/theme.dart";
 import "package:flow/features/browse/browse_store.dart";
 import "package:flow/features/following/following_screen.dart";
 import "package:flow/features/following/following_store.dart";
+import "package:flow/features/player/player_navigation.dart";
+import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
@@ -15,6 +17,65 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  testWidgets("opens playback after dismissing a visible stream title tooltip", (
+    tester,
+  ) async {
+    const channel = StreamChannel(
+      login: "creator",
+      name: "Creator",
+      initials: "CR",
+      title: "A long live title to preview before opening playback",
+      category: "Just Chatting",
+      viewers: "12K",
+      avatarColors: [Colors.purple, Colors.pink],
+      thumbnailColors: [Colors.black, Colors.grey],
+    );
+    final host = PlaybackHost();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorObservers: [host],
+        theme: buildFlowTheme(Brightness.dark),
+        home: Scaffold(
+          body: Navigator(
+            onGenerateRoute: (_) => MaterialPageRoute<void>(
+              builder: (context) => StreamCard(
+                channel: channel,
+                onStreamSelected: (channel) => unawaited(
+                  openStreamPlayer(
+                    context,
+                    builder: (_) => StreamPlayerScreen(
+                      apiCache: _channelApiCache(),
+                      channel: channel,
+                      playbackUriLoader: (_) async => Uri.parse("https://example.com/live.m3u8"),
+                      viewerCountLoader: (_) async => null,
+                      playerSurfaceBuilder: (_, _, _) => const SizedBox.expand(),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.longPress(find.byKey(const ValueKey("stream_title_Creator")));
+    await tester.pump(const Duration(milliseconds: 160));
+    expect(find.text(channel.title), findsNWidgets(2));
+    await tester.tap(find.byKey(const ValueKey("stream_title_Creator")));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text(channel.title), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pump();
+    expect(find.byKey(const ValueKey("player_page_creator")), findsOneWidget);
+    expect(host.mode, PlaybackMode.expanded);
+    expect(tester.takeException(), isNull);
+    host.dismiss();
+    await tester.pumpAndSettle();
+  });
+
   testWidgets("keeps anonymous channels visible during a saved-session refresh", (
     tester,
   ) async {

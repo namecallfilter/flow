@@ -1,3 +1,5 @@
+# Verified 2026-09-06 on public VOD 2866119887: offset and duration are integer
+# seconds; returned offsets 12280, 16252, 18956 with durations 181, 180, 180.
 #import "../fragments/VideoMutedSegment.graphql"
 
 query VideoPlayer_VODSeekbar ($vodID: ID, $includePrivate: Boolean = false) {

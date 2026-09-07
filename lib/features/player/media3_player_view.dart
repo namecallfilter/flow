@@ -14,12 +14,20 @@ class Media3PlayerView extends StatelessWidget {
     super.key,
     this.proxyUrls = const [],
     this.initialQualityId = "auto",
+    this.mediaTitle = "Flow",
+    this.mediaArtist = "",
+    this.isLive = true,
+    this.pictureInPictureEnabled = true,
   });
 
   final Uri uri;
   final Future<Uri> Function() playbackUriRefresher;
   final List<String> proxyUrls;
   final String initialQualityId;
+  final String mediaTitle;
+  final String mediaArtist;
+  final bool isLive;
+  final bool pictureInPictureEnabled;
   final ValueChanged<TwitchPlayerController> onControllerCreated;
 
   static const unsupportedMessage = "Playback is available on Android.";
@@ -40,23 +48,42 @@ class Media3PlayerView extends StatelessWidget {
       );
     }
 
-    return AndroidView(
+    return PlatformViewLink(
       viewType: "flow/twitch_player",
-      layoutDirection: TextDirection.ltr,
-      hitTestBehavior: PlatformViewHitTestBehavior.transparent,
-      creationParams: {
-        "url": uri.toString(),
-        "proxyUrls": proxyUrls,
-        "qualityId": initialQualityId,
-      },
-      creationParamsCodec: const StandardMessageCodec(),
-      onPlatformViewCreated: (viewId) {
-        final controller = MethodChannelTwitchPlayerController(
-          viewId,
-          playbackUriRefresher: playbackUriRefresher,
+      surfaceFactory: (_, controller) => AndroidViewSurface(
+        controller: controller as AndroidViewController,
+        hitTestBehavior: PlatformViewHitTestBehavior.transparent,
+        gestureRecognizers: const {},
+      ),
+      onCreatePlatformView: (params) {
+        // Native composition avoids asynchronous texture resizing during PiP transitions.
+        final view = PlatformViewsService.initExpensiveAndroidView(
+          id: params.id,
+          viewType: params.viewType,
+          layoutDirection: TextDirection.ltr,
+          creationParams: {
+            "url": uri.toString(),
+            "proxyUrls": proxyUrls,
+            "qualityId": initialQualityId,
+            "title": mediaTitle,
+            "artist": mediaArtist,
+            "isLive": isLive,
+            "pictureInPictureEnabled": pictureInPictureEnabled,
+          },
+          creationParamsCodec: const StandardMessageCodec(),
+          onFocus: () => params.onFocusChanged(true),
         );
-        onControllerCreated(controller);
-        unawaited(controller.initialize());
+        view.addOnPlatformViewCreatedListener(params.onPlatformViewCreated);
+        view.addOnPlatformViewCreatedListener((viewId) {
+          final controller = MethodChannelTwitchPlayerController(
+            viewId,
+            playbackUriRefresher: playbackUriRefresher,
+          );
+          onControllerCreated(controller);
+          unawaited(controller.initialize());
+        });
+        unawaited(view.create());
+        return view;
       },
     );
   }
@@ -73,6 +100,10 @@ class Media3PlayerView extends StatelessWidget {
     );
     properties.add(IntProperty("proxyUrlCount", proxyUrls.length));
     properties.add(StringProperty("initialQualityId", initialQualityId));
+    properties.add(StringProperty("mediaTitle", mediaTitle));
+    properties.add(StringProperty("mediaArtist", mediaArtist));
+    properties.add(DiagnosticsProperty<bool>("isLive", isLive));
+    properties.add(DiagnosticsProperty<bool>("pictureInPictureEnabled", pictureInPictureEnabled));
     properties.add(
       ObjectFlagProperty<ValueChanged<TwitchPlayerController>>.has(
         "onControllerCreated",

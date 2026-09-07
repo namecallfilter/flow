@@ -1,0 +1,13 @@
+query FlowVodSeekMetadata($videoId: ID!) {
+  video(id: $videoId) {
+    seekPreviewsURL
+    muteInfo {
+      mutedSegmentConnection {
+        nodes {
+          offset
+          duration
+        }
+      }
+    }
+  }
+}

@@ -29,11 +29,33 @@ class TwitchPlaybackStateEvent extends TwitchPlayerEvent {
     required this.isPlaying,
     required this.isBuffering,
     required this.playWhenReady,
+    this.position = Duration.zero,
+    this.duration = Duration.zero,
+    this.isEnded = false,
   });
 
   final bool isPlaying;
   final bool isBuffering;
   final bool playWhenReady;
+  final Duration position;
+  final Duration duration;
+  final bool isEnded;
+}
+
+class TwitchPictureInPictureEvent extends TwitchPlayerEvent {
+  const TwitchPictureInPictureEvent({required this.active});
+
+  final bool active;
+}
+
+class TwitchPictureInPictureTransitionEvent extends TwitchPlayerEvent {
+  const TwitchPictureInPictureTransitionEvent({required this.active});
+
+  final bool active;
+}
+
+class TwitchPlaybackDismissedEvent extends TwitchPlayerEvent {
+  const TwitchPlaybackDismissedEvent();
 }
 
 class TwitchQualityOption {
@@ -81,7 +103,11 @@ abstract interface class TwitchPlayerController {
 
   Future<void> jumpToLive();
 
+  Future<void> seekTo(Duration position);
+
   Future<void> setQuality(String id);
+
+  Future<void> setPictureInPictureEnabled({required bool enabled});
 }
 
 class MethodChannelTwitchPlayerController implements TwitchPlayerController {
@@ -128,6 +154,9 @@ class MethodChannelTwitchPlayerController implements TwitchPlayerController {
   Future<void> jumpToLive() => _invoke("jumpToLive");
 
   @override
+  Future<void> seekTo(Duration position) => _invoke("seekTo", position.inMilliseconds);
+
+  @override
   Future<void> pause() => _invoke("pause");
 
   @override
@@ -135,6 +164,10 @@ class MethodChannelTwitchPlayerController implements TwitchPlayerController {
 
   @override
   Future<void> setQuality(String id) => _invoke("setQuality", id);
+
+  @override
+  Future<void> setPictureInPictureEnabled({required bool enabled}) =>
+      _invoke("setPictureInPictureEnabled", enabled);
 
   @override
   Future<void> togglePlayback() => _invoke("togglePlayback");
@@ -161,7 +194,16 @@ TwitchPlayerEvent? _decodeEvent(Object? rawEvent) {
         isPlaying: rawEvent["isPlaying"] == true,
         isBuffering: rawEvent["isBuffering"] == true,
         playWhenReady: rawEvent["playWhenReady"] == true,
+        position: Duration(milliseconds: (rawEvent["positionMs"] as num?)?.round() ?? 0),
+        duration: Duration(milliseconds: (rawEvent["durationMs"] as num?)?.round() ?? 0),
+        isEnded: rawEvent["isEnded"] == true,
       );
+    case "pip":
+      return TwitchPictureInPictureEvent(active: rawEvent["active"] == true);
+    case "pipTransition":
+      return TwitchPictureInPictureTransitionEvent(active: rawEvent["active"] == true);
+    case "dismissed":
+      return const TwitchPlaybackDismissedEvent();
     case "qualities":
       final rawQualities = rawEvent["qualities"];
       final qualities = <TwitchQualityOption>[];

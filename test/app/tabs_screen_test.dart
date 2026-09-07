@@ -11,6 +11,8 @@ import "package:flow/app/theme.dart";
 import "package:flow/features/browse/browse_screen.dart";
 import "package:flow/features/browse/browse_store.dart";
 import "package:flow/features/following/following_store.dart";
+import "package:flow/features/player/player_navigation.dart";
+import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flutter/cupertino.dart";
@@ -616,6 +618,91 @@ void main() {
     expect(topLiveStreamsRequests, 1);
     expect(followedLiveRequests, 1);
   });
+
+  for (final miniPlayerEnabled in [true, false]) {
+    for (final videoId in <String?>[null, "123456"]) {
+      testWidgets(
+        "hidden Search stays unfocused after swiping away ${videoId == null ? "live" : "VOD"} "
+        "with mini-player $miniPlayerEnabled",
+        (tester) async {
+          tester.view.physicalSize = const Size(400, 800);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final authController = _authController(
+            secureStore: _MemoryTwitchStore()
+              ..accessToken = "token-123"
+              ..webSessionToken = "gql-token-123",
+          );
+          final followingStore = FollowingStore(authController: authController);
+          final host = PlaybackHost()..setMiniPlayerEnabled(enabled: miniPlayerEnabled);
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: buildFlowTheme(Brightness.light),
+              navigatorObservers: [host],
+              home: FlowTabsScreen(followingStore: followingStore),
+            ),
+          );
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Browse")));
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const ValueKey("browse_search_field")));
+          await tester.pumpAndSettle();
+          final searchField = find.byKey(const ValueKey("browse_search_page_field"));
+          final search = tester.widget<TextField>(searchField);
+          expect(search.focusNode!.hasFocus, isTrue);
+          expect(tester.testTextInput.isVisible, isTrue);
+
+          await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Following")));
+          await tester.pumpAndSettle();
+          expect(search.focusNode!.hasFocus, isFalse);
+          expect(search.focusNode!.canRequestFocus, isFalse);
+          expect(tester.testTextInput.isVisible, isFalse);
+          await openStreamPlayer(
+            tester.element(find.byKey(const ValueKey("following_title"))),
+            builder: (_) => StreamPlayerScreen(
+              apiCache: TwitchApiCache(
+                clientLoader: () async => TwitchApiClient(
+                  clientId: "client-123",
+                  accessToken: "token-123",
+                  httpClient: _flowHttpClient(),
+                ),
+              ),
+              channel: followingStore.liveChannels.first,
+              videoId: videoId,
+              playbackUriLoader: (_) async => throw StateError("No native playback in this test"),
+              viewerCountLoader: (_) async => null,
+            ),
+          );
+          await tester.pumpAndSettle();
+          expect(search.focusNode!.hasFocus, isFalse);
+          await tester.drag(
+            find.byKey(const ValueKey("player_viewport")),
+            const Offset(0, 200),
+          );
+          await tester.pumpAndSettle();
+
+          expect(find.byKey(const ValueKey("following_title")), findsOneWidget);
+          expect(search.focusNode!.hasFocus, isFalse);
+          expect(tester.testTextInput.isVisible, isFalse);
+          expect(
+            find.byKey(const ValueKey("player_mini")),
+            miniPlayerEnabled ? findsOneWidget : findsNothing,
+          );
+          host.dismiss();
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Browse")));
+          await tester.pumpAndSettle();
+          expect(tester.widget<TextField>(searchField).focusNode, same(search.focusNode));
+          await tester.tap(searchField);
+          await tester.pumpAndSettle();
+          expect(search.focusNode!.hasFocus, isTrue);
+          expect(tester.testTextInput.isVisible, isTrue);
+        },
+        variant: TargetPlatformVariant.only(TargetPlatform.android),
+      );
+    }
+  }
 
   testWidgets("scroll-links the header while the footer transitions at its midpoint", (
     tester,
