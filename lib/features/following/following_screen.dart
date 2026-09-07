@@ -1271,59 +1271,65 @@ class OfflineChannelRow extends StatelessWidget {
         children: [
           Padding(
             padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
-            child: Row(
-              children: [
-                AvatarRing(
-                  initials: channel.initials,
-                  size: 54,
-                  avatarColors: channel.avatarColors,
-                  imageUrl: channel.avatarImageUrl,
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        channel.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w800,
-                          color: theme.colorScheme.onSurface,
-                          height: 1.1,
+            child: IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  AspectRatio(
+                    aspectRatio: 1,
+                    child: AvatarRing(
+                      initials: channel.initials,
+                      size: 54,
+                      avatarColors: channel.avatarColors,
+                      imageUrl: channel.avatarImageUrl,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          channel.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w800,
+                            color: theme.colorScheme.onSurface,
+                            height: 1.2,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        channel.lastLive,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: mutedColor,
-                          fontWeight: FontWeight.w600,
-                          height: 1.1,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      GestureDetector(
-                        onTap: canOpenCategory ? onCategoryTap : null,
-                        child: Text(
-                          channel.category,
-                          key: ValueKey("offline_channel_category_${channel.name}"),
+                        const SizedBox(height: 3),
+                        Text(
+                          channel.lastLive,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodyMedium?.copyWith(
-                            color: canOpenCategory ? theme.colorScheme.primary : mutedColor,
-                            fontWeight: FontWeight.w500,
-                            height: 1.1,
+                            color: mutedColor,
+                            fontWeight: FontWeight.w600,
+                            height: 1.2,
                           ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 2),
+                        GestureDetector(
+                          onTap: canOpenCategory ? onCategoryTap : null,
+                          child: Text(
+                            channel.category,
+                            key: ValueKey("offline_channel_category_${channel.name}"),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: canOpenCategory ? theme.colorScheme.primary : mutedColor,
+                              fontWeight: FontWeight.w500,
+                              height: 1.2,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           if (showDivider)
