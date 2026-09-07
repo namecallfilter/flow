@@ -1,6 +1,7 @@
 import "dart:async";
 import "dart:math" as math;
 
+import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/spacing.dart";
@@ -9,6 +10,8 @@ import "package:flow/features/browse/browse_screen.dart";
 import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/player/media3_player_controller.dart";
 import "package:flow/features/player/media3_player_view.dart";
+import "package:flow/features/player/player_navigation.dart";
+import "package:flow/features/player/vod_player_footer.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
@@ -16,6 +19,7 @@ import "package:flow/shared/widgets/avatar_ring.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
+import "package:mobx/mobx.dart" hide Listener;
 
 typedef PlaybackUriLoader = Future<Uri> Function(String login);
 typedef ViewerCountLoader = Future<int?> Function(String login);
@@ -62,6 +66,7 @@ class StreamPlayerScreen extends StatefulWidget {
     required this.apiCache,
     required this.channel,
     super.key,
+    this.videoId,
     this.playbackUriLoader,
     this.viewerCountLoader,
     this.playerSurfaceBuilder,
@@ -72,6 +77,7 @@ class StreamPlayerScreen extends StatefulWidget {
 
   final TwitchApiCache apiCache;
   final StreamChannel channel;
+  final String? videoId;
   final PlaybackUriLoader? playbackUriLoader;
   final ViewerCountLoader? viewerCountLoader;
   final PlayerSurfaceBuilder? playerSurfaceBuilder;
@@ -87,6 +93,7 @@ class StreamPlayerScreen extends StatefulWidget {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<TwitchApiCache>("apiCache", apiCache));
     properties.add(DiagnosticsProperty<StreamChannel>("channel", channel));
+    properties.add(StringProperty("videoId", videoId));
     properties.add(
       ObjectFlagProperty<PlaybackUriLoader?>.has("playbackUriLoader", playbackUriLoader),
     );
@@ -114,6 +121,14 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   TwitchPlayerController? _playerController;
   StreamSubscription<TwitchPlayerEvent>? _playerEvents;
   Timer? _controlsTimer;
+  final _controlsPointers = <int>{};
+  Timer? _seekFeedbackTimer;
+  int? _seekFeedbackSeconds;
+  bool _seekFeedbackVisible = false;
+  bool _controlsBeforeSeek = true;
+  bool _seekForward = true;
+  TwitchVodSeekMetadata? _seekMetadata;
+  bool _hideChrome = false;
   Timer? _uptimeTimer;
   Timer? _viewerTimer;
   Uri? _playbackUri;
@@ -129,15 +144,26 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   bool _isBuffering = true;
   bool _playWhenReady = true;
   bool _controlsVisible = true;
-  bool _wasPlayingBeforeBackground = false;
   bool _viewerRefreshInFlight = false;
   bool _appIsResumed = true;
   bool _openingDestination = false;
   bool _playerForcedLandscape = false;
   bool _playbackReloadInFlight = false;
+  bool _audioOnly = false;
   int _loadGeneration = 0;
   int _playbackSessionGeneration = 0;
   Future<void> _displayModeTail = Future<void>.value();
+  PlaybackHost? _host;
+  PlaybackMode _mode = PlaybackMode.expanded;
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
+  Duration? _seekPosition;
+  AppSettingsStore? _settingsStore;
+  ReactionDisposer? _pipSettingsReaction;
+  bool _pictureInPictureEnabled = true;
+  bool _miniPlayerEnabled = true;
+
+  bool get _isLive => widget.videoId == null;
 
   bool get _playbackSupported =>
       widget.playerSurfaceBuilder != null || Media3PlayerView.isSupported;
@@ -156,6 +182,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         setState(() {});
       }
     });
+    unawaited(_loadSeekMetadata());
     unawaited(_refreshViewerCount());
     _viewerTimer = Timer.periodic(const Duration(seconds: 30), (_) {
       if (_appIsResumed) {
@@ -172,42 +199,116 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused) {
-      _appIsResumed = false;
-      if (_playWhenReady) {
-        _wasPlayingBeforeBackground = true;
-      }
-      final controller = _playerController;
-      if (controller == null) {
-        return;
-      }
-      unawaited(controller.pause());
-    } else if (state == AppLifecycleState.resumed) {
-      _appIsResumed = true;
+    _appIsResumed = state == AppLifecycleState.resumed;
+    if (_appIsResumed) {
       unawaited(_refreshViewerCount());
-      final resumePlayback = _wasPlayingBeforeBackground;
-      _wasPlayingBeforeBackground = false;
-      if (resumePlayback && !_openingDestination && _playerController != null) {
-        unawaited(_playerController!.play());
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final presentation = PlaybackPresentation.maybeOf(context);
+    _host = presentation?.host;
+    _hideChrome = presentation?.hideChrome ?? false;
+    _miniPlayerEnabled = presentation?.miniPlayerEnabled ?? false;
+    final settings = AppSettingsScope.maybeOf(context);
+    if (settings != _settingsStore) {
+      _pipSettingsReaction?.call();
+      _settingsStore = settings;
+      if (settings != null) {
+        _pipSettingsReaction = reaction<bool>(
+          (_) => settings.pictureInPictureEnabled,
+          (enabled) {
+            _pictureInPictureEnabled = enabled;
+            unawaited(_playerController?.setPictureInPictureEnabled(enabled: enabled));
+          },
+          fireImmediately: true,
+        );
       }
     }
+    final mode = presentation?.mode ?? PlaybackMode.expanded;
+    if (_mode != mode && mode == PlaybackMode.mini && _playerForcedLandscape) {
+      _playerForcedLandscape = false;
+      unawaited(_queueDisplayMode(widget.displayModeController.restore));
+    }
+    _mode = mode;
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _controlsTimer?.cancel();
+    _seekFeedbackTimer?.cancel();
     _uptimeTimer?.cancel();
     _viewerTimer?.cancel();
     unawaited(_playerEvents?.cancel());
+    unawaited(_playerController?.pause());
     _playerController?.dispose();
     _playerController = null;
     _qualitySettings.dispose();
+    _pipSettingsReaction?.call();
     unawaited(_queueDisplayMode(widget.displayModeController.restore));
     super.dispose();
   }
 
+  Future<void> _loadSeekMetadata() async {
+    final videoId = widget.videoId;
+    if (videoId == null) {
+      return;
+    }
+    try {
+      final metadata = await widget.apiCache.fetchVodSeekMetadata(videoId);
+      if (mounted) {
+        setState(() => _seekMetadata = metadata);
+      }
+    } on Object {
+      // Seek previews are optional; playback remains available without them.
+    }
+  }
+
+  void _seekByTenSeconds() {
+    if (_duration <= Duration.zero) {
+      return;
+    }
+    final seconds = _seekForward ? 10 : -10;
+    final position = Duration(
+      milliseconds: (_position.inMilliseconds + seconds * 1000).clamp(0, _duration.inMilliseconds),
+    );
+    if (_seekFeedbackSeconds == null) {
+      _controlsBeforeSeek = _controlsVisible;
+    }
+    _controlsTimer?.cancel();
+    setState(() {
+      _position = position;
+      _seekFeedbackSeconds =
+          (_seekFeedbackSeconds?.sign == seconds.sign ? _seekFeedbackSeconds! : 0) + seconds;
+      _seekFeedbackVisible = true;
+    });
+    unawaited(_playerController?.seekTo(position));
+    _seekFeedbackTimer?.cancel();
+    _seekFeedbackTimer = Timer(const Duration(milliseconds: 800), () {
+      if (mounted) {
+        setState(() => _seekFeedbackVisible = false);
+        _seekFeedbackTimer = Timer(const Duration(milliseconds: 160), () {
+          if (mounted) {
+            setState(() {
+              _seekFeedbackSeconds = null;
+              _controlsVisible = _controlsBeforeSeek;
+            });
+            if (_controlsVisible && _isPlaying) {
+              _scheduleControlsHide();
+            }
+          }
+        });
+      }
+    });
+  }
+
   Future<Uri> _fetchPlaybackUri() {
+    if (widget.videoId case final videoId?) {
+      return (widget.playbackUriLoader ?? widget.apiCache.fetchVodPlaybackUri)(videoId);
+    }
     final loader = widget.playbackUriLoader ?? widget.apiCache.fetchLivePlaybackUri;
     return loader(widget.channel.login);
   }
@@ -264,6 +365,9 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   }
 
   Future<List<String>> _loadProxyUrls() async {
+    if (!_isLive) {
+      return const [];
+    }
     final settingsStore = widget.preferences == null ? AppSettingsScope.maybeOf(context) : null;
     if (widget.playbackUriLoader != null && widget.preferences == null && settingsStore == null) {
       return const [];
@@ -335,7 +439,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   }
 
   Future<void> _refreshViewerCount() async {
-    if (_viewerRefreshInFlight) {
+    if (!_isLive || _viewerRefreshInFlight) {
       return;
     }
     _viewerRefreshInFlight = true;
@@ -374,6 +478,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     unawaited(_playerEvents?.cancel());
     _playerController?.dispose();
     _playerController = controller;
+    unawaited(controller.setPictureInPictureEnabled(enabled: _pictureInPictureEnabled));
     _playerEvents = controller.events.listen(
       _handlePlayerEvent,
       onError: (Object error) {
@@ -387,7 +492,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         }
       },
     );
-    if (_openingDestination || !_appIsResumed || !_playWhenReady) {
+    if (!_playWhenReady) {
       unawaited(controller.pause());
     }
   }
@@ -414,18 +519,26 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         :final isPlaying,
         :final isBuffering,
         :final playWhenReady,
+        :final position,
+        :final duration,
+        :final isEnded,
       ):
+        final startedPlaying = isPlaying && !isBuffering && (!_isPlaying || _isBuffering);
         setState(() {
           _isPlaying = isPlaying;
           _isBuffering = isBuffering;
-          _playWhenReady = playWhenReady;
-          if (!playWhenReady || isBuffering) {
+          _playWhenReady = playWhenReady && !isEnded;
+          if (_seekFeedbackSeconds == null) {
+            _position = position;
+          }
+          _duration = duration;
+          if (!playWhenReady || isBuffering || isEnded) {
             _controlsVisible = true;
           }
         });
-        if (isPlaying && !isBuffering) {
+        if (startedPlaying) {
           _scheduleControlsHide();
-        } else {
+        } else if (!isPlaying || isBuffering) {
           _controlsTimer?.cancel();
         }
       case TwitchPlayerErrorEvent(:final message):
@@ -436,13 +549,20 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
           _errorMessage = message;
         });
       case TwitchQualitiesEvent(:final qualities, :final selectedId, :final currentLabel):
+        setState(() => _audioOnly = selectedId == "audio_only");
         _qualitySettings.value = _QualitySettingsState(
           qualities: List.unmodifiable(qualities),
           selectedId: selectedId,
           currentLabel: currentLabel,
         );
+      case TwitchPictureInPictureTransitionEvent(:final active):
+        _host?.setPictureInPictureTransition(active: active);
+      case TwitchPictureInPictureEvent(:final active):
+        _host?.setPictureInPicture(active: active);
+      case TwitchPlaybackDismissedEvent():
+        _host?.dismiss();
       case TwitchPlaybackReloadEvent():
-        if (!_playbackReloadInFlight && _appIsResumed && !_openingDestination) {
+        if (!_playbackReloadInFlight) {
           _playbackReloadInFlight = true;
           unawaited(
             _loadPlaybackUri(refresh: true).whenComplete(() => _playbackReloadInFlight = false),
@@ -453,11 +573,25 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
 
   void _scheduleControlsHide() {
     _controlsTimer?.cancel();
+    if (_seekFeedbackSeconds != null || _controlsPointers.isNotEmpty) {
+      return;
+    }
     _controlsTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted && _isPlaying && !_isBuffering && _errorMessage == null) {
+      if (mounted &&
+          _isPlaying &&
+          !_isBuffering &&
+          _errorMessage == null &&
+          _seekPosition == null) {
         setState(() => _controlsVisible = false);
       }
     });
+  }
+
+  void _handleControlsPointerEnd(PointerEvent event) {
+    _controlsPointers.remove(event.pointer);
+    if (_controlsPointers.isEmpty && _controlsVisible && _isPlaying) {
+      _scheduleControlsHide();
+    }
   }
 
   void _toggleControls() {
@@ -538,21 +672,23 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       return;
     }
 
-    await _openDestination(
-      () => Navigator.of(context, rootNavigator: true).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => ChannelScreen(
-            apiCache: widget.apiCache,
-            initialChannel: ChannelPreview(
-              login: login,
-              displayName: widget.channel.name,
-              avatarImageUrl: widget.channel.avatarImageUrl,
-              isLive: true,
+    await _openDestination(() async {
+      unawaited(
+        Navigator.of(context, rootNavigator: true).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => ChannelScreen(
+              apiCache: widget.apiCache,
+              initialChannel: ChannelPreview(
+                login: login,
+                displayName: widget.channel.name,
+                avatarImageUrl: widget.channel.avatarImageUrl,
+                isLive: _isLive,
+              ),
             ),
           ),
         ),
-      ),
-    );
+      );
+    });
   }
 
   Future<void> _openCategory() async {
@@ -589,12 +725,14 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
           imageUrl: twitchBoxArtUrl(category.boxArtUrl),
           colors: colorsForText(category.id),
         );
-        await Navigator.of(context, rootNavigator: true).push<void>(
-          MaterialPageRoute<void>(
-            builder: (_) => CategoryStreamsScreen(
-              apiCache: widget.apiCache,
-              category: destination,
-              preferences: widget.preferences ?? AppSettingsScope.maybeOf(context)?.preferences,
+        unawaited(
+          Navigator.of(context, rootNavigator: true).push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => CategoryStreamsScreen(
+                apiCache: widget.apiCache,
+                category: destination,
+                preferences: widget.preferences ?? AppSettingsScope.maybeOf(context)?.preferences,
+              ),
             ),
           ),
         );
@@ -612,13 +750,10 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     }
     _openingDestination = true;
     _controlsTimer?.cancel();
-    final resumeOnReturn = _playWhenReady;
-    final restoreLandscapeOnReturn = _playerForcedLandscape;
+    _host?.minimize();
     try {
-      if (resumeOnReturn) {
-        await _playerController?.pause();
-      }
-      if (restoreLandscapeOnReturn) {
+      if (_playerForcedLandscape) {
+        _playerForcedLandscape = false;
         await _queueDisplayMode(widget.displayModeController.restore);
       }
       if (!mounted) {
@@ -627,18 +762,6 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       await open();
     } finally {
       _openingDestination = false;
-      if (mounted && restoreLandscapeOnReturn && ModalRoute.of(context)?.isCurrent == true) {
-        await _queueDisplayMode(
-          () => widget.displayModeController.setLandscape(landscape: true),
-        );
-      }
-      if (mounted && resumeOnReturn && ModalRoute.of(context)?.isCurrent == true) {
-        if (_appIsResumed) {
-          await _playerController?.play();
-        } else {
-          _wasPlayingBeforeBackground = true;
-        }
-      }
     }
   }
 
@@ -651,7 +774,9 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   @override
   Widget build(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
-    final isLandscape = mediaQuery.size.width > mediaQuery.size.height;
+    final compact = _mode == PlaybackMode.mini || _mode == PlaybackMode.pip || _hideChrome;
+    final embedded = _mode != PlaybackMode.expanded;
+    final isLandscape = !embedded && mediaQuery.size.width > mediaQuery.size.height;
     final playbackSessionGeneration = _playbackSessionGeneration;
     final viewport = _PlayerViewport(
       channel: widget.channel,
@@ -667,7 +792,29 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         playbackSessionGeneration,
       ),
       isLandscape: isLandscape,
-      controlsVisible: _controlsVisible,
+      compact: compact,
+      onRestore: _mode == PlaybackMode.mini ? _host?.restore : null,
+      audioOnly: _audioOnly,
+      isLive: _isLive,
+      pictureInPictureEnabled: _pictureInPictureEnabled,
+      miniPlayerEnabled: _miniPlayerEnabled,
+      position: _seekPosition ?? _position,
+      duration: _duration,
+      seekMetadata: _seekMetadata,
+      seeking: _seekPosition != null,
+      onSeekChanged: (position) {
+        _controlsTimer?.cancel();
+        setState(() => _seekPosition = position);
+      },
+      onSeekEnd: (position) {
+        setState(() {
+          _seekPosition = null;
+          _position = position;
+        });
+        unawaited(_playerController?.seekTo(position));
+        _scheduleControlsHide();
+      },
+      controlsVisible: _controlsVisible && _seekFeedbackSeconds == null,
       isBuffering: _isBuffering,
       playWhenReady: _playWhenReady,
       latencyMs: _latencyMs,
@@ -676,7 +823,20 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       liveDuration: _liveDuration,
       errorMessage: _errorMessage,
       onSurfaceTap: _toggleControls,
-      onBack: Navigator.of(context).maybePop,
+      onDoubleTapDown: _isLive
+          ? null
+          : (details) => _seekForward = details.localPosition.dx >= mediaQuery.size.width / 2,
+      onDoubleTap: _isLive ? null : _seekByTenSeconds,
+      onSeekTapUp: _isLive
+          ? null
+          : (details) {
+              _seekForward = details.localPosition.dx >= mediaQuery.size.width / 2;
+              _seekByTenSeconds();
+            },
+      seekFeedbackSeconds: _seekFeedbackSeconds,
+      seekFeedbackVisible: _seekFeedbackVisible,
+      onBack: _host?.minimize ?? Navigator.of(context).maybePop,
+      onDismiss: _host?.dismiss ?? Navigator.of(context).maybePop,
       onTogglePlayback: _togglePlayback,
       onJumpToLive: _jumpToLive,
       onRefresh: () => _loadPlaybackUri(refresh: true),
@@ -688,15 +848,17 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
 
     return Scaffold(
       key: ValueKey("player_page_${widget.channel.login}"),
-      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+      backgroundColor: _host == null
+          ? Theme.of(context).scaffoldBackgroundColor
+          : Colors.transparent,
       body: SafeArea(
-        top: !isLandscape,
+        top: _host == null && !isLandscape && !embedded,
         bottom: false,
         left: false,
         right: false,
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final viewportHeight = isLandscape
+            final viewportHeight = isLandscape || _mode == PlaybackMode.pip
                 ? constraints.maxHeight
                 : constraints.maxWidth * 9 / 16;
             return Align(
@@ -704,7 +866,15 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
               child: SizedBox(
                 width: constraints.maxWidth,
                 height: viewportHeight,
-                child: viewport,
+                child: Listener(
+                  onPointerDown: (event) {
+                    _controlsPointers.add(event.pointer);
+                    _controlsTimer?.cancel();
+                  },
+                  onPointerUp: _handleControlsPointerEnd,
+                  onPointerCancel: _handleControlsPointerEnd,
+                  child: viewport,
+                ),
               ),
             );
           },
@@ -762,6 +932,18 @@ class _PlayerViewport extends StatelessWidget {
     required this.playbackUriRefresher,
     required this.onControllerCreated,
     required this.isLandscape,
+    required this.compact,
+    required this.onRestore,
+    required this.audioOnly,
+    required this.isLive,
+    required this.pictureInPictureEnabled,
+    required this.miniPlayerEnabled,
+    required this.position,
+    required this.duration,
+    required this.seekMetadata,
+    required this.seeking,
+    required this.onSeekChanged,
+    required this.onSeekEnd,
     required this.controlsVisible,
     required this.isBuffering,
     required this.playWhenReady,
@@ -771,7 +953,13 @@ class _PlayerViewport extends StatelessWidget {
     required this.liveDuration,
     required this.errorMessage,
     required this.onSurfaceTap,
+    required this.onDoubleTapDown,
+    required this.onDoubleTap,
+    required this.onSeekTapUp,
+    required this.seekFeedbackSeconds,
+    required this.seekFeedbackVisible,
     required this.onBack,
+    required this.onDismiss,
     required this.onTogglePlayback,
     required this.onJumpToLive,
     required this.onRefresh,
@@ -791,6 +979,18 @@ class _PlayerViewport extends StatelessWidget {
   final Future<Uri> Function() playbackUriRefresher;
   final ValueChanged<TwitchPlayerController> onControllerCreated;
   final bool isLandscape;
+  final bool compact;
+  final VoidCallback? onRestore;
+  final bool audioOnly;
+  final bool isLive;
+  final bool pictureInPictureEnabled;
+  final bool miniPlayerEnabled;
+  final Duration position;
+  final Duration duration;
+  final TwitchVodSeekMetadata? seekMetadata;
+  final bool seeking;
+  final ValueChanged<Duration> onSeekChanged;
+  final ValueChanged<Duration> onSeekEnd;
   final bool controlsVisible;
   final bool isBuffering;
   final bool playWhenReady;
@@ -800,7 +1000,13 @@ class _PlayerViewport extends StatelessWidget {
   final Duration? liveDuration;
   final String? errorMessage;
   final VoidCallback onSurfaceTap;
+  final GestureTapDownCallback? onDoubleTapDown;
+  final VoidCallback? onDoubleTap;
+  final GestureTapUpCallback? onSeekTapUp;
+  final int? seekFeedbackSeconds;
+  final bool seekFeedbackVisible;
   final VoidCallback onBack;
+  final VoidCallback onDismiss;
   final Future<void> Function() onTogglePlayback;
   final Future<void> Function() onJumpToLive;
   final Future<void> Function() onRefresh;
@@ -844,89 +1050,163 @@ class _PlayerViewport extends StatelessWidget {
                       playbackUriRefresher: playbackUriRefresher,
                       proxyUrls: proxyUrls,
                       initialQualityId: initialQualityId,
+                      mediaTitle: channel.title,
+                      mediaArtist: channel.name,
+                      isLive: isLive,
+                      pictureInPictureEnabled: pictureInPictureEnabled,
                       onControllerCreated: onControllerCreated,
                     )
                   : playerSurfaceBuilder!(context, uri, onControllerCreated),
             ),
-          KeyedSubtree(
-            key: ValueKey("player_chrome_${isLandscape ? "landscape" : "portrait"}"),
-            child: RepaintBoundary(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  AnimatedOpacity(
-                    key: const ValueKey("player_scrim"),
-                    opacity: controlsVisible ? 1 : 0,
-                    duration: const Duration(milliseconds: 160),
-                    child: const IgnorePointer(child: _PlayerScrim()),
-                  ),
-                  Positioned.fill(
-                    child: GestureDetector(
-                      key: const ValueKey("player_surface_tap_target"),
-                      behavior: HitTestBehavior.opaque,
-                      onTap: onSurfaceTap,
-                    ),
-                  ),
-                  AnimatedOpacity(
-                    opacity: controlsVisible ? 1 : 0,
-                    duration: const Duration(milliseconds: 160),
-                    child: IgnorePointer(
-                      ignoring: !controlsVisible,
-                      child: Padding(
-                        key: const ValueKey("player_overlay_padding"),
-                        padding: EdgeInsets.symmetric(
-                          horizontal: horizontalPadding,
-                          vertical: verticalPadding,
-                        ),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            _PlayerHeader(
-                              channel: channel,
-                              onBack: onBack,
-                              onSettings: onSettings,
-                              onProfileTap: onProfileTap,
-                              onCategoryTap: onCategoryTap,
-                            ),
-                            TooltipTheme(
-                              data: TooltipTheme.of(context).copyWith(
-                                preferBelow: isLandscape ? null : false,
-                              ),
-                              child: _PlayerFooter(
-                                viewers: viewerText,
-                                liveDuration: liveDuration,
-                                latencyMs: latencyMs,
-                                isLandscape: isLandscape,
-                                onJumpToLive: onJumpToLive,
-                                onRefresh: onRefresh,
-                                onToggleLandscape: onToggleLandscape,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  if (playbackSupported)
-                    if (errorMessage case final message?)
-                      Center(
-                        child: _PlayerError(message: message, onRetry: onRefresh),
-                      )
-                    else
-                      Center(
-                        key: const ValueKey("player_center_control"),
-                        child: _CenterPlaybackControl(
-                          playWhenReady: playWhenReady,
-                          isBuffering: isBuffering,
-                          visible: controlsVisible,
-                          onPressed: onTogglePlayback,
-                        ),
-                      ),
-                ],
+          if (audioOnly)
+            const IgnorePointer(
+              child: ColoredBox(
+                color: Colors.black,
+                child: Center(
+                  child: Icon(Icons.headphones_rounded, color: Colors.white70, size: 40),
+                ),
               ),
             ),
-          ),
-          if (activeAd case final ad?)
+          if (compact && onRestore != null)
+            Semantics(
+              label: "Mini-player. Tap to restore, swipe left or right to dismiss.",
+              onTap: onRestore,
+              onDismiss: onDismiss,
+              child: GestureDetector(
+                key: const ValueKey("player_mini"),
+                behavior: HitTestBehavior.opaque,
+                onTap: onRestore,
+              ),
+            ),
+          if (compact &&
+              playbackSupported &&
+              isBuffering &&
+              playWhenReady &&
+              errorMessage == null &&
+              !seeking)
+            Center(
+              child: _CenterPlaybackControl(
+                playWhenReady: playWhenReady,
+                isBuffering: isBuffering,
+                visible: false,
+                onPressed: onTogglePlayback,
+              ),
+            ),
+          if (!compact)
+            KeyedSubtree(
+              key: ValueKey("player_chrome_${isLandscape ? "landscape" : "portrait"}"),
+              child: TooltipVisibility(
+                visible: controlsVisible,
+                child: RepaintBoundary(
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      AnimatedOpacity(
+                        key: const ValueKey("player_scrim"),
+                        opacity: controlsVisible ? 1 : 0,
+                        duration: const Duration(milliseconds: 160),
+                        child: const IgnorePointer(child: _PlayerScrim()),
+                      ),
+                      Positioned.fill(
+                        child: GestureDetector(
+                          key: const ValueKey("player_surface_tap_target"),
+                          behavior: HitTestBehavior.opaque,
+                          onTap: seekFeedbackSeconds == null ? onSurfaceTap : null,
+                          onTapUp: seekFeedbackSeconds != null ? onSeekTapUp : null,
+                          onDoubleTapDown: seekFeedbackSeconds == null ? onDoubleTapDown : null,
+                          onDoubleTap: seekFeedbackSeconds == null ? onDoubleTap : null,
+                        ),
+                      ),
+                      AnimatedOpacity(
+                        opacity: controlsVisible ? 1 : 0,
+                        duration: const Duration(milliseconds: 160),
+                        child: IgnorePointer(
+                          ignoring: !controlsVisible,
+                          child: Padding(
+                            key: const ValueKey("player_overlay_padding"),
+                            padding: EdgeInsets.symmetric(
+                              horizontal: horizontalPadding,
+                              vertical: verticalPadding,
+                            ),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                _PlayerHeader(
+                                  channel: channel,
+                                  onBack: onBack,
+                                  miniPlayerEnabled: miniPlayerEnabled,
+                                  onSettings: onSettings,
+                                  onProfileTap: onProfileTap,
+                                  onCategoryTap: onCategoryTap,
+                                ),
+                                TooltipTheme(
+                                  data: TooltipTheme.of(context).copyWith(
+                                    preferBelow: isLandscape ? null : false,
+                                  ),
+                                  child: isLive
+                                      ? _PlayerFooter(
+                                          viewers: viewerText,
+                                          liveDuration: liveDuration,
+                                          latencyMs: latencyMs,
+                                          isLandscape: isLandscape,
+                                          onJumpToLive: onJumpToLive,
+                                          onRefresh: onRefresh,
+                                          onToggleLandscape: onToggleLandscape,
+                                        )
+                                      : VodPlayerFooter(
+                                          position: position,
+                                          duration: duration,
+                                          onChangeStart: onSeekChanged,
+                                          onChanged: onSeekChanged,
+                                          metadata: seekMetadata,
+                                          seeking: seeking,
+                                          onChangeEnd: onSeekEnd,
+                                          onToggleFullscreen: onToggleLandscape,
+                                        ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      if (playbackSupported && !seeking)
+                        if (errorMessage case final message?)
+                          Center(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: _PlayerError(message: message, onRetry: onRefresh),
+                            ),
+                          )
+                        else
+                          Center(
+                            key: const ValueKey("player_center_control"),
+                            child: _CenterPlaybackControl(
+                              playWhenReady: playWhenReady,
+                              isBuffering: isBuffering,
+                              visible: controlsVisible,
+                              onPressed: onTogglePlayback,
+                            ),
+                          ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          if (!compact && seekFeedbackSeconds != null)
+            IgnorePointer(
+              child: AnimatedOpacity(
+                key: const ValueKey("player_seek_feedback"),
+                opacity: seekFeedbackVisible ? 1 : 0,
+                duration: const Duration(milliseconds: 160),
+                child: Align(
+                  alignment: seekFeedbackSeconds! < 0
+                      ? const Alignment(-.65, 0)
+                      : const Alignment(.65, 0),
+                  child: _SeekFeedback(seconds: seekFeedbackSeconds!),
+                ),
+              ),
+            ),
+          if (!compact && activeAd != null)
             AnimatedPositioned(
               key: const ValueKey("player_ad_position"),
               duration: const Duration(milliseconds: 160),
@@ -937,7 +1217,7 @@ class _PlayerViewport extends StatelessWidget {
               child: IgnorePointer(
                 child: Align(
                   alignment: Alignment.topCenter,
-                  child: _AdProgressPill(ad: ad),
+                  child: _AdProgressPill(ad: activeAd!),
                 ),
               ),
             ),
@@ -950,6 +1230,8 @@ class _PlayerViewport extends StatelessWidget {
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<StreamChannel>("channel", channel));
+    properties.add(DiagnosticsProperty<bool>("pictureInPictureEnabled", pictureInPictureEnabled));
+    properties.add(DiagnosticsProperty<bool>("miniPlayerEnabled", miniPlayerEnabled));
     properties.add(DiagnosticsProperty<Uri?>("playbackUri", playbackUri));
     properties.add(IntProperty("proxyUrlCount", proxyUrls.length));
     properties.add(StringProperty("initialQualityId", initialQualityId));
@@ -980,6 +1262,16 @@ class _PlayerViewport extends StatelessWidget {
       ),
     );
     properties.add(FlagProperty("isLandscape", value: isLandscape, ifTrue: "landscape"));
+    properties.add(DiagnosticsProperty<bool>("compact", compact));
+    properties.add(ObjectFlagProperty<VoidCallback?>.has("onRestore", onRestore));
+    properties.add(DiagnosticsProperty<bool>("audioOnly", audioOnly));
+    properties.add(DiagnosticsProperty<bool>("isLive", isLive));
+    properties.add(DiagnosticsProperty<Duration>("position", position));
+    properties.add(DiagnosticsProperty<Duration>("duration", duration));
+    properties.add(DiagnosticsProperty<TwitchVodSeekMetadata?>("seekMetadata", seekMetadata));
+    properties.add(DiagnosticsProperty<bool>("seeking", seeking));
+    properties.add(ObjectFlagProperty<ValueChanged<Duration>>.has("onSeekChanged", onSeekChanged));
+    properties.add(ObjectFlagProperty<ValueChanged<Duration>>.has("onSeekEnd", onSeekEnd));
     properties.add(
       FlagProperty("controlsVisible", value: controlsVisible, ifTrue: "controls visible"),
     );
@@ -995,7 +1287,17 @@ class _PlayerViewport extends StatelessWidget {
     properties.add(ObjectFlagProperty<VoidCallback>.has("onProfileTap", onProfileTap));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onCategoryTap", onCategoryTap));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onSurfaceTap", onSurfaceTap));
+    properties.add(
+      ObjectFlagProperty<GestureTapDownCallback?>.has("onDoubleTapDown", onDoubleTapDown),
+    );
+    properties.add(ObjectFlagProperty<VoidCallback?>.has("onDoubleTap", onDoubleTap));
+    properties.add(ObjectFlagProperty<GestureTapUpCallback?>.has("onSeekTapUp", onSeekTapUp));
+    properties.add(IntProperty("seekFeedbackSeconds", seekFeedbackSeconds));
+    properties.add(
+      FlagProperty("seekFeedbackVisible", value: seekFeedbackVisible, ifTrue: "visible"),
+    );
     properties.add(ObjectFlagProperty<VoidCallback>.has("onBack", onBack));
+    properties.add(ObjectFlagProperty<VoidCallback>.has("onDismiss", onDismiss));
     properties.add(
       ObjectFlagProperty<Future<void> Function()>.has(
         "onTogglePlayback",
@@ -1016,6 +1318,85 @@ class _PlayerViewport extends StatelessWidget {
     );
     properties.add(
       ObjectFlagProperty<Future<void> Function()>.has("onSettings", onSettings),
+    );
+  }
+}
+
+class _SeekFeedback extends StatefulWidget {
+  const _SeekFeedback({required this.seconds});
+
+  final int seconds;
+
+  @override
+  State<_SeekFeedback> createState() => _SeekFeedbackState();
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(IntProperty("seconds", seconds));
+  }
+}
+
+class _SeekFeedbackState extends State<_SeekFeedback> with SingleTickerProviderStateMixin {
+  late final _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 300),
+  )..forward();
+
+  @override
+  void didUpdateWidget(_SeekFeedback oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.seconds != widget.seconds) {
+      unawaited(_pulse.forward(from: 0));
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final forward = widget.seconds > 0;
+    final arrow = Icon(
+      forward ? Icons.chevron_right_rounded : Icons.chevron_left_rounded,
+      color: Colors.white,
+      size: 24,
+    );
+    return AnimatedBuilder(
+      animation: _pulse,
+      builder: (context, child) {
+        final slidingArrow = Transform.translate(
+          offset: Offset(
+            (forward ? -8 : 8) * (1 - Curves.easeInOutCubic.transform(_pulse.value)),
+            0,
+          ),
+          child: arrow,
+        );
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          textDirection: TextDirection.ltr,
+          children: [
+            if (!forward) ...[slidingArrow, const SizedBox(width: 12)],
+            Transform.scale(
+              scale: 1 - .12 * math.sin(math.pi * _pulse.value),
+              child: child,
+            ),
+            if (forward) ...[const SizedBox(width: 12), slidingArrow],
+          ],
+        );
+      },
+      child: Text(
+        forward ? "+${widget.seconds}" : "${widget.seconds}",
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 20,
+          fontWeight: FontWeight.w700,
+          shadows: [Shadow(blurRadius: 2, color: Colors.black54)],
+        ),
+      ),
     );
   }
 }
@@ -1088,6 +1469,7 @@ class _PlayerHeader extends StatelessWidget {
   const _PlayerHeader({
     required this.channel,
     required this.onBack,
+    required this.miniPlayerEnabled,
     required this.onSettings,
     required this.onProfileTap,
     required this.onCategoryTap,
@@ -1095,6 +1477,7 @@ class _PlayerHeader extends StatelessWidget {
 
   final StreamChannel channel;
   final VoidCallback onBack;
+  final bool miniPlayerEnabled;
   final Future<void> Function() onSettings;
   final VoidCallback onProfileTap;
   final VoidCallback onCategoryTap;
@@ -1105,8 +1488,8 @@ class _PlayerHeader extends StatelessWidget {
     children: [
       _OverlayIconButton(
         key: const ValueKey("player_back_button"),
-        tooltip: "Back",
-        icon: Icons.adaptive.arrow_back,
+        tooltip: miniPlayerEnabled ? "Minimize player" : "Back",
+        icon: miniPlayerEnabled ? Icons.keyboard_arrow_down_rounded : Icons.arrow_back_rounded,
         onPressed: onBack,
       ),
       const SizedBox(width: AppSpacing.xs),
@@ -1213,6 +1596,7 @@ class _PlayerHeader extends StatelessWidget {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<StreamChannel>("channel", channel));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onBack", onBack));
+    properties.add(DiagnosticsProperty<bool>("miniPlayerEnabled", miniPlayerEnabled));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onProfileTap", onProfileTap));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onCategoryTap", onCategoryTap));
     properties.add(

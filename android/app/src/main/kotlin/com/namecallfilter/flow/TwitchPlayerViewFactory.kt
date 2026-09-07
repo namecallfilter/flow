@@ -8,15 +8,21 @@ import io.flutter.plugin.platform.PlatformViewFactory
 
 internal class TwitchPlayerViewFactory(
     private val messenger: BinaryMessenger,
+    private val activity: MainActivity,
 ) : PlatformViewFactory(StandardMessageCodec.INSTANCE) {
     override fun create(context: Context, viewId: Int, args: Any?): PlatformView {
         val creationParams = args as? Map<*, *>
         return TwitchPlayerView(
             context = context,
+            activity = activity,
             messenger = messenger,
             viewId = viewId,
             initialUrl = creationParams?.get("url") as? String,
             initialQualityId = creationParams?.get("qualityId") as? String ?: "auto",
+            mediaTitle = creationParams?.get("title") as? String ?: "Flow",
+            mediaArtist = creationParams?.get("artist") as? String ?: "",
+            isLive = creationParams?.get("isLive") as? Boolean ?: true,
+            pictureInPictureEnabled = creationParams?.get("pictureInPictureEnabled") as? Boolean ?: true,
             proxyUrls = (creationParams?.get("proxyUrls") as? List<*>)
                 ?.filterIsInstance<String>()
                 .orEmpty(),

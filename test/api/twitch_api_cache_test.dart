@@ -9,6 +9,30 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  test("VOD seek metadata is cached per video and supports refresh", () async {
+    var requests = 0;
+    final cache = TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(
+        clientId: "client",
+        accessToken: "token",
+        httpClient: MockClient((_) async {
+          requests++;
+          return _jsonResponse({
+            "data": {
+              "video": {"seekPreviewsURL": null, "muteInfo": null},
+            },
+          });
+        }),
+      ),
+    );
+    final first = await cache.fetchVodSeekMetadata("123456");
+    expect(await cache.fetchVodSeekMetadata(" 123456 "), same(first));
+    expect(requests, 1);
+    await cache.fetchVodSeekMetadata("654321");
+    await cache.fetchVodSeekMetadata("123456", refresh: true);
+    expect(requests, 3);
+  });
+
   test("live directory cache and cursors are isolated by server ordering", () async {
     final requests = <Map<String, Object?>>[];
     final client = TwitchApiClient(

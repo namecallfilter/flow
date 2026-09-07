@@ -12,6 +12,7 @@ import "package:flow/features/browse/browse_store.dart";
 import "package:flow/features/following/following_screen.dart";
 import "package:flow/features/following/following_store.dart";
 import "package:flow/features/following/twitch_login_offer_screen.dart";
+import "package:flow/features/player/player_navigation.dart";
 import "package:flow/features/settings/settings_screen.dart";
 import "package:flow/shared/external_url_opener.dart";
 import "package:flow/shared/preferences/preferences.dart";
@@ -333,7 +334,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
   }
 
   TwitchAuthController _buildDefaultAuthController() {
-    const config = TwitchAuthConfig.fromEnvironment();
+    const config = TwitchAuthConfig();
     return TwitchAuthController(
       config: config,
       secureStore: const SecureTwitchStore(),
@@ -358,6 +359,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
       return;
     }
 
+    PlaybackHost.maybeOf(context)?.minimize();
     _revealFooter();
     setState(() {
       _visitedRoutes.add(nextRoute);
@@ -650,7 +652,10 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
 
     return Offstage(
       offstage: !isVisible,
-      child: TickerMode(enabled: isVisible, child: tab),
+      child: ExcludeFocus(
+        excluding: routeName != _tabsStore.currentRoute,
+        child: TickerMode(enabled: isVisible, child: tab),
+      ),
     );
   }
 
@@ -780,6 +785,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
       if (!mounted) {
         return;
       }
+      PlaybackHost.maybeOf(context)?.minimize();
       setState(() {});
     });
   }

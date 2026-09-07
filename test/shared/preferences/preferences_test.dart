@@ -3,6 +3,25 @@ import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  test("playback modes default on and persist independent selections", () async {
+    final store = _MemoryPreferencesStore();
+    final preferences = SharedPreferencesFlowPreferences(store: store);
+    expect(await preferences.readPictureInPictureEnabled(), isTrue);
+    expect(await preferences.readMiniPlayerEnabled(), isTrue);
+
+    await preferences.savePictureInPictureEnabled(enabled: false);
+    final reloaded = SharedPreferencesFlowPreferences(store: store);
+    expect(await reloaded.readPictureInPictureEnabled(), isFalse);
+    expect(await reloaded.readMiniPlayerEnabled(), isTrue);
+
+    await reloaded.saveMiniPlayerEnabled(enabled: false);
+    await reloaded.savePictureInPictureEnabled(enabled: true);
+    expect(await preferences.readPictureInPictureEnabled(), isTrue);
+    expect(await preferences.readMiniPlayerEnabled(), isFalse);
+    await reloaded.saveMiniPlayerEnabled(enabled: true);
+    expect(await preferences.readMiniPlayerEnabled(), isTrue);
+  });
+
   test("migrates saved sort names without changing their selected order", () async {
     final store = _MemoryPreferencesStore()
       ..strings["category_sort"] = "viewers"

@@ -1,4 +1,11 @@
-query FlowPlaybackAccessToken($login: String!, $platform: String!, $playerType: String!) {
+query FlowPlaybackAccessToken(
+  $login: String!
+  $isLive: Boolean!
+  $vodID: ID!
+  $isVod: Boolean!
+  $platform: String!
+  $playerType: String!
+) {
   streamPlaybackAccessToken(
     channelName: $login
     params: {
@@ -6,12 +13,23 @@ query FlowPlaybackAccessToken($login: String!, $platform: String!, $playerType: 
       playerBackend: "mediaplayer"
       playerType: $playerType
     }
-  ) {
+  ) @include(if: $isLive) {
     value
     signature
     authorization {
       isForbidden
       forbiddenReasonCode
     }
+  }
+  videoPlaybackAccessToken(
+    id: $vodID
+    params: {
+      platform: $platform
+      playerBackend: "mediaplayer"
+      playerType: $playerType
+    }
+  ) @include(if: $isVod) {
+    value
+    signature
   }
 }

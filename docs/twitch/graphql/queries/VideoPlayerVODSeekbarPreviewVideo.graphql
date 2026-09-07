@@ -1,3 +1,8 @@
+# Verified 2026-09-06 on public VOD 2866119887: seekPreviewsURL returns a JSON
+# array with width, height, cols, rows, count, interval (seconds), and images.
+# Image paths resolve relative to this URL; each sheet stores frames row-major.
+# High spec: 220x124 pixels, 5 columns, 10 rows, 200 frames, 183-second interval.
+# A currently recording VOD's storyboard URL can return 403 until processed.
 query VideoPlayer_VODSeekbarPreviewVideo ($videoID: ID, $includePrivate: Boolean = false) {
   video(id: $videoID, options: { includePrivate: $includePrivate }) {
     id

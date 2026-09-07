@@ -8,6 +8,43 @@ import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  testWidgets("Playback switches save independently and reload their values", (tester) async {
+    final preferences = MemoryFlowPreferences();
+    final settingsStore = AppSettingsStore(preferences: preferences);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: SettingsScreen(settingsStore: settingsStore),
+      ),
+    );
+    await tester.pumpAndSettle();
+    for (final key in ["settings_picture_in_picture_toggle", "settings_mini_player_toggle"]) {
+      final toggle = find.byKey(ValueKey(key));
+      await Scrollable.ensureVisible(tester.element(toggle), alignment: 0.5);
+      await tester.pumpAndSettle();
+      expect(tester.widget<Switch>(toggle).value, isTrue);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(tester.widget<Switch>(toggle).value, isFalse);
+    }
+    final reloaded = AppSettingsStore(preferences: preferences);
+    await reloaded.load();
+    expect(reloaded.pictureInPictureEnabled, isFalse);
+    expect(reloaded.miniPlayerEnabled, isFalse);
+
+    for (final key in ["settings_picture_in_picture_toggle", "settings_mini_player_toggle"]) {
+      final toggle = find.byKey(ValueKey(key));
+      await Scrollable.ensureVisible(tester.element(toggle), alignment: 0.5);
+      await tester.pumpAndSettle();
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(tester.widget<Switch>(toggle).value, isTrue);
+    }
+    expect(await preferences.readPictureInPictureEnabled(), isTrue);
+    expect(await preferences.readMiniPlayerEnabled(), isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets("blocks overlapping settings edits while saving", (tester) async {
     final preferencesStore = _DelayedWritesPreferencesStore();
     final settingsStore = AppSettingsStore(

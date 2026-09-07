@@ -7,10 +7,16 @@ import 'package:graphql/client.dart' as graphql;
 class Variables$Query$FlowPlaybackAccessToken {
   factory Variables$Query$FlowPlaybackAccessToken({
     required String login,
+    required bool isLive,
+    required String vodID,
+    required bool isVod,
     required String platform,
     required String playerType,
   }) => Variables$Query$FlowPlaybackAccessToken._({
     r'login': login,
+    r'isLive': isLive,
+    r'vodID': vodID,
+    r'isVod': isVod,
     r'platform': platform,
     r'playerType': playerType,
   });
@@ -23,6 +29,12 @@ class Variables$Query$FlowPlaybackAccessToken {
     final result$data = <String, dynamic>{};
     final l$login = data['login'];
     result$data['login'] = (l$login as String);
+    final l$isLive = data['isLive'];
+    result$data['isLive'] = (l$isLive as bool);
+    final l$vodID = data['vodID'];
+    result$data['vodID'] = (l$vodID as String);
+    final l$isVod = data['isVod'];
+    result$data['isVod'] = (l$isVod as bool);
     final l$platform = data['platform'];
     result$data['platform'] = (l$platform as String);
     final l$playerType = data['playerType'];
@@ -34,6 +46,12 @@ class Variables$Query$FlowPlaybackAccessToken {
 
   String get login => (_$data['login'] as String);
 
+  bool get isLive => (_$data['isLive'] as bool);
+
+  String get vodID => (_$data['vodID'] as String);
+
+  bool get isVod => (_$data['isVod'] as bool);
+
   String get platform => (_$data['platform'] as String);
 
   String get playerType => (_$data['playerType'] as String);
@@ -42,6 +60,12 @@ class Variables$Query$FlowPlaybackAccessToken {
     final result$data = <String, dynamic>{};
     final l$login = login;
     result$data['login'] = l$login;
+    final l$isLive = isLive;
+    result$data['isLive'] = l$isLive;
+    final l$vodID = vodID;
+    result$data['vodID'] = l$vodID;
+    final l$isVod = isVod;
+    result$data['isVod'] = l$isVod;
     final l$platform = platform;
     result$data['platform'] = l$platform;
     final l$playerType = playerType;
@@ -63,6 +87,21 @@ class Variables$Query$FlowPlaybackAccessToken {
     if (l$login != lOther$login) {
       return false;
     }
+    final l$isLive = isLive;
+    final lOther$isLive = other.isLive;
+    if (l$isLive != lOther$isLive) {
+      return false;
+    }
+    final l$vodID = vodID;
+    final lOther$vodID = other.vodID;
+    if (l$vodID != lOther$vodID) {
+      return false;
+    }
+    final l$isVod = isVod;
+    final lOther$isVod = other.isVod;
+    if (l$isVod != lOther$isVod) {
+      return false;
+    }
     final l$platform = platform;
     final lOther$platform = other.platform;
     if (l$platform != lOther$platform) {
@@ -79,19 +118,36 @@ class Variables$Query$FlowPlaybackAccessToken {
   @override
   int get hashCode {
     final l$login = login;
+    final l$isLive = isLive;
+    final l$vodID = vodID;
+    final l$isVod = isVod;
     final l$platform = platform;
     final l$playerType = playerType;
-    return Object.hashAll([l$login, l$platform, l$playerType]);
+    return Object.hashAll([
+      l$login,
+      l$isLive,
+      l$vodID,
+      l$isVod,
+      l$platform,
+      l$playerType,
+    ]);
   }
 }
 
 class Query$FlowPlaybackAccessToken {
-  Query$FlowPlaybackAccessToken({this.streamPlaybackAccessToken});
+  Query$FlowPlaybackAccessToken({
+    this.streamPlaybackAccessToken,
+    this.videoPlaybackAccessToken,
+  });
 
   factory Query$FlowPlaybackAccessToken.fromJson(Map<String, dynamic> json) {
     final l$streamPlaybackAccessToken =
         json.containsKey('streamPlaybackAccessToken')
         ? json['streamPlaybackAccessToken']
+        : null;
+    final l$videoPlaybackAccessToken =
+        json.containsKey('videoPlaybackAccessToken')
+        ? json['videoPlaybackAccessToken']
         : null;
     return Query$FlowPlaybackAccessToken(
       streamPlaybackAccessToken: l$streamPlaybackAccessToken == null
@@ -99,16 +155,27 @@ class Query$FlowPlaybackAccessToken {
           : Query$FlowPlaybackAccessToken$streamPlaybackAccessToken.fromJson(
               (l$streamPlaybackAccessToken as Map<String, dynamic>),
             ),
+      videoPlaybackAccessToken: l$videoPlaybackAccessToken == null
+          ? null
+          : Query$FlowPlaybackAccessToken$videoPlaybackAccessToken.fromJson(
+              (l$videoPlaybackAccessToken as Map<String, dynamic>),
+            ),
     );
   }
 
   final Query$FlowPlaybackAccessToken$streamPlaybackAccessToken?
   streamPlaybackAccessToken;
 
+  final Query$FlowPlaybackAccessToken$videoPlaybackAccessToken?
+  videoPlaybackAccessToken;
+
   Map<String, dynamic> toJson() {
     final _resultData = <String, dynamic>{};
     final l$streamPlaybackAccessToken = streamPlaybackAccessToken;
     _resultData['streamPlaybackAccessToken'] = l$streamPlaybackAccessToken
+        ?.toJson();
+    final l$videoPlaybackAccessToken = videoPlaybackAccessToken;
+    _resultData['videoPlaybackAccessToken'] = l$videoPlaybackAccessToken
         ?.toJson();
     return _resultData;
   }
@@ -116,7 +183,11 @@ class Query$FlowPlaybackAccessToken {
   @override
   int get hashCode {
     final l$streamPlaybackAccessToken = streamPlaybackAccessToken;
-    return Object.hashAll([l$streamPlaybackAccessToken]);
+    final l$videoPlaybackAccessToken = videoPlaybackAccessToken;
+    return Object.hashAll([
+      l$streamPlaybackAccessToken,
+      l$videoPlaybackAccessToken,
+    ]);
   }
 
   @override
@@ -133,6 +204,11 @@ class Query$FlowPlaybackAccessToken {
     if (l$streamPlaybackAccessToken != lOther$streamPlaybackAccessToken) {
       return false;
     }
+    final l$videoPlaybackAccessToken = videoPlaybackAccessToken;
+    final lOther$videoPlaybackAccessToken = other.videoPlaybackAccessToken;
+    if (l$videoPlaybackAccessToken != lOther$videoPlaybackAccessToken) {
+      return false;
+    }
     return true;
   }
 }
@@ -146,6 +222,30 @@ const documentNodeQueryFlowPlaybackAccessToken = DocumentNode(
         VariableDefinitionNode(
           variable: VariableNode(name: NameNode(value: 'login')),
           type: NamedTypeNode(name: NameNode(value: 'String'), isNonNull: true),
+          defaultValue: DefaultValueNode(value: null),
+          directives: [],
+        ),
+        VariableDefinitionNode(
+          variable: VariableNode(name: NameNode(value: 'isLive')),
+          type: NamedTypeNode(
+            name: NameNode(value: 'Boolean'),
+            isNonNull: true,
+          ),
+          defaultValue: DefaultValueNode(value: null),
+          directives: [],
+        ),
+        VariableDefinitionNode(
+          variable: VariableNode(name: NameNode(value: 'vodID')),
+          type: NamedTypeNode(name: NameNode(value: 'ID'), isNonNull: true),
+          defaultValue: DefaultValueNode(value: null),
+          directives: [],
+        ),
+        VariableDefinitionNode(
+          variable: VariableNode(name: NameNode(value: 'isVod')),
+          type: NamedTypeNode(
+            name: NameNode(value: 'Boolean'),
+            isNonNull: true,
+          ),
           defaultValue: DefaultValueNode(value: null),
           directives: [],
         ),
@@ -196,7 +296,17 @@ const documentNodeQueryFlowPlaybackAccessToken = DocumentNode(
                 ),
               ),
             ],
-            directives: [],
+            directives: [
+              DirectiveNode(
+                name: NameNode(value: 'include'),
+                arguments: [
+                  ArgumentNode(
+                    name: NameNode(value: 'if'),
+                    value: VariableNode(name: NameNode(value: 'isLive')),
+                  ),
+                ],
+              ),
+            ],
             selectionSet: SelectionSetNode(
               selections: [
                 FieldNode(
@@ -236,6 +346,67 @@ const documentNodeQueryFlowPlaybackAccessToken = DocumentNode(
                       ),
                     ],
                   ),
+                ),
+              ],
+            ),
+          ),
+          FieldNode(
+            name: NameNode(value: 'videoPlaybackAccessToken'),
+            alias: null,
+            arguments: [
+              ArgumentNode(
+                name: NameNode(value: 'id'),
+                value: VariableNode(name: NameNode(value: 'vodID')),
+              ),
+              ArgumentNode(
+                name: NameNode(value: 'params'),
+                value: ObjectValueNode(
+                  fields: [
+                    ObjectFieldNode(
+                      name: NameNode(value: 'platform'),
+                      value: VariableNode(name: NameNode(value: 'platform')),
+                    ),
+                    ObjectFieldNode(
+                      name: NameNode(value: 'playerBackend'),
+                      value: StringValueNode(
+                        value: 'mediaplayer',
+                        isBlock: false,
+                      ),
+                    ),
+                    ObjectFieldNode(
+                      name: NameNode(value: 'playerType'),
+                      value: VariableNode(name: NameNode(value: 'playerType')),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            directives: [
+              DirectiveNode(
+                name: NameNode(value: 'include'),
+                arguments: [
+                  ArgumentNode(
+                    name: NameNode(value: 'if'),
+                    value: VariableNode(name: NameNode(value: 'isVod')),
+                  ),
+                ],
+              ),
+            ],
+            selectionSet: SelectionSetNode(
+              selections: [
+                FieldNode(
+                  name: NameNode(value: 'value'),
+                  alias: null,
+                  arguments: [],
+                  directives: [],
+                  selectionSet: null,
+                ),
+                FieldNode(
+                  name: NameNode(value: 'signature'),
+                  alias: null,
+                  arguments: [],
+                  directives: [],
+                  selectionSet: null,
                 ),
               ],
             ),
@@ -533,6 +704,68 @@ class Query$FlowPlaybackAccessToken$streamPlaybackAccessToken$authorization {
     final l$forbiddenReasonCode = forbiddenReasonCode;
     final lOther$forbiddenReasonCode = other.forbiddenReasonCode;
     if (l$forbiddenReasonCode != lOther$forbiddenReasonCode) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowPlaybackAccessToken$videoPlaybackAccessToken {
+  Query$FlowPlaybackAccessToken$videoPlaybackAccessToken({
+    this.value,
+    this.signature,
+  });
+
+  factory Query$FlowPlaybackAccessToken$videoPlaybackAccessToken.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$value = json.containsKey('value') ? json['value'] : null;
+    final l$signature = json.containsKey('signature')
+        ? json['signature']
+        : null;
+    return Query$FlowPlaybackAccessToken$videoPlaybackAccessToken(
+      value: (l$value as String?),
+      signature: (l$signature as String?),
+    );
+  }
+
+  final String? value;
+
+  final String? signature;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$value = value;
+    _resultData['value'] = l$value;
+    final l$signature = signature;
+    _resultData['signature'] = l$signature;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$value = value;
+    final l$signature = signature;
+    return Object.hashAll([l$value, l$signature]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other is! Query$FlowPlaybackAccessToken$videoPlaybackAccessToken ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$value = value;
+    final lOther$value = other.value;
+    if (l$value != lOther$value) {
+      return false;
+    }
+    final l$signature = signature;
+    final lOther$signature = other.signature;
+    if (l$signature != lOther$signature) {
       return false;
     }
     return true;

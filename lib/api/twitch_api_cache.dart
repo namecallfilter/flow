@@ -116,6 +116,18 @@ class TwitchApiCache {
     return client.fetchLivePlaybackUri(login);
   }
 
+  Future<Uri> fetchVodPlaybackUri(String videoId) async {
+    final client = await clientLoader();
+    return client.fetchVodPlaybackUri(videoId);
+  }
+
+  Future<TwitchVodSeekMetadata> fetchVodSeekMetadata(String videoId, {bool refresh = false}) =>
+      _cached(
+        _cacheKey("vodSeekMetadata", {"videoId": videoId.trim()}),
+        (client) => client.fetchVodSeekMetadata(videoId),
+        refresh: refresh,
+      );
+
   Future<bool> fetchChannelSubscriptionStatus(String login) async {
     final client = await clientLoader();
     return client.fetchChannelSubscriptionStatus(login);

@@ -433,8 +433,8 @@ interface HypeTrainReward {
 }
 
 interface MutedSegmentConnection_Node {
-  duration: String
-  offset: String
+  duration: Int
+  offset: Int
 }
 
 interface OnsiteNotificationContent {
@@ -4499,8 +4499,8 @@ type VideoMomentEdge {
 }
 
 type VideoMutedSegment implements MutedSegmentConnection_Node {
-  duration: String
-  offset: String
+  duration: Int
+  offset: Int
 }
 
 type VideoOverlay {

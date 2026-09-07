@@ -1,238 +1,932 @@
 import "dart:async";
 
+import "package:flow/api/twitch_api.dart";
+import "package:flow/api/twitch_api_cache.dart";
+import "package:flow/features/player/media3_player_controller.dart";
 import "package:flow/features/player/player_navigation.dart";
+import "package:flow/features/player/player_screen.dart";
+import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
-  testWidgets(
-    "new streams retain only the latest root destination and preserve the nested tab stack",
-    (
-      tester,
-    ) async {
-      final rootNavigator = GlobalKey<NavigatorState>();
-      final tabNavigator = GlobalKey<NavigatorState>();
-      Widget page(String name) => Scaffold(key: ValueKey(name), body: Text(name));
-
-      await tester.pumpWidget(
-        MaterialApp(
-          navigatorKey: rootNavigator,
-          home: Scaffold(
-            body: Navigator(
-              key: tabNavigator,
-              onGenerateRoute: (_) => MaterialPageRoute<void>(builder: (_) => page("tab root")),
-            ),
-          ),
-        ),
-      );
-      unawaited(
-        tabNavigator.currentState!.push<void>(
-          MaterialPageRoute<void>(builder: (_) => page("tab category")),
-        ),
-      );
-      await tester.pumpAndSettle();
-      final originalCategory = tester.element(find.byKey(const ValueKey("tab category")));
-
-      unawaited(openStreamPlayer(originalCategory, builder: (_) => page("stream A")));
-      await tester.pumpAndSettle();
-      expect(rootNavigator.currentState!.canPop(), isTrue);
-      expect(tabNavigator.currentState!.canPop(), isTrue);
-
-      Element? retainedDestination;
-      for (final (destination, nextStream) in [
-        ("player category", "stream B"),
-        ("player channel", "stream C"),
-      ]) {
-        if (destination == "player category") {
-          unawaited(
-            rootNavigator.currentState!.push<void>(
-              MaterialPageRoute<void>(builder: (_) => page("intermediate profile")),
-            ),
-          );
-          await tester.pumpAndSettle();
-        }
-        unawaited(
-          rootNavigator.currentState!.push<void>(
-            MaterialPageRoute<void>(builder: (_) => page(destination)),
-          ),
-        );
-        await tester.pumpAndSettle();
-        retainedDestination = tester.element(find.byKey(ValueKey(destination)));
-        unawaited(
-          openStreamPlayer(
-            retainedDestination,
-            builder: (_) => page(nextStream),
-          ),
-        );
-        await tester.pumpAndSettle();
-        expect(find.byKey(ValueKey(destination), skipOffstage: false), findsOneWidget);
-        expect(find.byKey(const ValueKey("stream A"), skipOffstage: false), findsNothing);
-        expect(
-          find.byKey(const ValueKey("intermediate profile"), skipOffstage: false),
-          findsNothing,
-        );
-      }
-
-      expect(find.byKey(const ValueKey("stream B"), skipOffstage: false), findsNothing);
-      expect(find.byKey(const ValueKey("player category"), skipOffstage: false), findsNothing);
-      expect(find.byKey(const ValueKey("stream C")), findsOneWidget);
-      rootNavigator.currentState!.pop();
-      await tester.pumpAndSettle();
-      expect(
-        tester.element(find.byKey(const ValueKey("player channel"))),
-        same(retainedDestination),
-      );
-      expect(rootNavigator.currentState!.canPop(), isTrue);
-
-      // Reopening from the retained page must not remove that same page.
-      unawaited(openStreamPlayer(retainedDestination!, builder: (_) => page("stream D")));
-      await tester.pumpAndSettle();
-      rootNavigator.currentState!.pop();
-      await tester.pumpAndSettle();
-      expect(
-        tester.element(find.byKey(const ValueKey("player channel"))),
-        same(retainedDestination),
-      );
-      rootNavigator.currentState!.pop();
-      await tester.pumpAndSettle();
-
-      expect(rootNavigator.currentState!.canPop(), isFalse);
-      expect(tabNavigator.currentState!.canPop(), isTrue);
-      expect(tester.element(find.byKey(const ValueKey("tab category"))), same(originalCategory));
-
-      // Previously popped anchors cannot affect a fresh stream or a direct switch.
-      unawaited(openStreamPlayer(originalCategory, builder: (_) => page("stream E")));
-      await tester.pumpAndSettle();
-      unawaited(
-        openStreamPlayer(
-          tester.element(find.byKey(const ValueKey("stream E"))),
-          builder: (_) => page("stream F"),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey("stream E"), skipOffstage: false), findsNothing);
-      rootNavigator.currentState!.pop();
-      await tester.pumpAndSettle();
-      expect(rootNavigator.currentState!.canPop(), isFalse);
-      expect(tester.element(find.byKey(const ValueKey("tab category"))), same(originalCategory));
-      tabNavigator.currentState!.pop();
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey("tab root")), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  for (final (identity, hasIntermediate) in [
-    ("category:509658", false),
-    ("category:509658", true),
-  ]) {
+  for (final videoId in <String?>[null, "123456"]) {
     testWidgets(
-      "retained $identity replaces its original tab route with intermediate=$hasIntermediate",
+      "${videoId == null ? "Live" : "VOD"} quality scrim stays above playback through every animation frame",
       (tester) async {
-        final rootNavigator = GlobalKey<NavigatorState>();
-        final tabNavigator = GlobalKey<NavigatorState>();
-        final otherTabNavigator = GlobalKey<NavigatorState>();
-        Widget page(String name) => Scaffold(key: ValueKey(name), body: Text(name));
-        Route<void> destination(String name, String identity) => MaterialPageRoute<void>(
-          builder: (context) {
-            registerPlayerDestination(context, identity);
-            return page(name);
-          },
-        );
-
+        final host = PlaybackHost();
+        final player = _PlaybackProbe();
         await tester.pumpWidget(
           MaterialApp(
-            navigatorKey: rootNavigator,
-            home: Scaffold(
-              body: IndexedStack(
-                children: [
-                  Navigator(
-                    key: tabNavigator,
-                    onGenerateRoute: (_) => MaterialPageRoute<void>(
-                      builder: (_) => page("tab root"),
-                    ),
-                  ),
-                  Navigator(
-                    key: otherTabNavigator,
-                    onGenerateRoute: (_) => MaterialPageRoute<void>(
-                      builder: (_) => page("other tab root"),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            navigatorObservers: [host],
+            home: const Scaffold(body: Text("Browse Flow")),
           ),
         );
-        unawaited(otherTabNavigator.currentState!.push<void>(destination("other tab", identity)));
-        var originalCompleted = false;
-        unawaited(
-          tabNavigator.currentState!
-              .push<void>(destination("original", identity))
-              .then((_) => originalCompleted = true),
+        await tester.pumpAndSettle();
+        await openStreamPlayer(
+          tester.element(find.text("Browse Flow")),
+          builder: (_) => player.screen("creator", videoId: videoId),
         );
         await tester.pumpAndSettle();
-        final otherTab = tester.element(
-          find.byKey(const ValueKey("other tab"), skipOffstage: false),
-        );
-        if (hasIntermediate) {
-          unawaited(
-            tabNavigator.currentState!.push<void>(
-              destination("unrelated channel", "channel:another"),
-            ),
+        player.emitQuality("auto");
+        await tester.pump();
+        final surface = tester.element(find.byType(_PlayerSurface));
+        final barrier = find.byType(AnimatedModalBarrier);
+
+        await tester.tap(find.byKey(const ValueKey("player_settings_button")));
+        for (var frame = 0; frame < 25; frame++) {
+          await tester.pump(Duration(milliseconds: frame == 0 ? 0 : 16));
+          expect(barrier, findsOneWidget);
+          _expectPaintsAbove(tester, barrier, find.byType(_PlayerSurface));
+          expect(
+            find
+                .byKey(const ValueKey("player_surface_tap_target"))
+                .hitTestable(at: const Alignment(0, -0.6)),
+            findsNothing,
           );
-          await tester.pumpAndSettle();
         }
-        final source = tester.element(
-          find.byKey(ValueKey(hasIntermediate ? "unrelated channel" : "original")),
-        );
-        unawaited(openStreamPlayer(source, builder: (_) => page("stream A")));
-        await tester.pumpAndSettle();
-        unawaited(rootNavigator.currentState!.push<void>(destination("retained", identity)));
-        await tester.pumpAndSettle();
-        final retained = tester.element(find.byKey(const ValueKey("retained")));
-        unawaited(openStreamPlayer(retained, builder: (_) => page("stream B")));
-        await tester.pumpAndSettle();
 
-        expect(originalCompleted, isTrue);
-        expect(find.byKey(const ValueKey("original"), skipOffstage: false), findsNothing);
-        expect(find.byKey(const ValueKey("stream A"), skipOffstage: false), findsNothing);
-        expect(
-          tester.element(find.byKey(const ValueKey("other tab"), skipOffstage: false)),
-          same(otherTab),
-        );
-        rootNavigator.currentState!.pop();
-        await tester.pumpAndSettle();
-        expect(tester.element(find.byKey(const ValueKey("retained"))), same(retained));
-        rootNavigator.currentState!.pop();
-        await tester.pumpAndSettle();
-        expect(rootNavigator.currentState!.canPop(), isFalse);
-        if (hasIntermediate) {
-          expect(tester.element(find.byKey(const ValueKey("unrelated channel"))), same(source));
-          expect(tabNavigator.currentState!.canPop(), isTrue);
-          tabNavigator.currentState!.pop();
-          await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey("player_quality_video:720")));
+        var closingFrames = 0;
+        for (var frame = 0; frame < 25; frame++) {
+          await tester.pump(const Duration(milliseconds: 16));
+          if (barrier.evaluate().isNotEmpty) {
+            closingFrames++;
+            _expectPaintsAbove(tester, barrier, find.byType(_PlayerSurface));
+          }
         }
-        expect(find.byKey(const ValueKey("tab root")), findsOneWidget);
-        expect(tabNavigator.currentState!.canPop(), isFalse);
-
-        // A fresh journey from another tab replaces the previous origin.
-        unawaited(tabNavigator.currentState!.push<void>(destination("new original", identity)));
+        expect(closingFrames, greaterThan(0));
+        expect(barrier, findsNothing);
+        expect(player.selectedQualities, ["video:720"]);
+        expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+        expect(player.loads, 1);
+        expect(player.surfaces, 1);
+        expect(player.pauses, 0);
+        expect(player.plays, 0);
+        host.dismiss();
         await tester.pumpAndSettle();
-        unawaited(openStreamPlayer(otherTab, builder: (_) => page("stream C")));
-        await tester.pumpAndSettle();
-        unawaited(rootNavigator.currentState!.push<void>(destination("new retained", identity)));
-        await tester.pumpAndSettle();
-        unawaited(
-          openStreamPlayer(
-            tester.element(find.byKey(const ValueKey("new retained"))),
-            builder: (_) => page("stream D"),
-          ),
-        );
-        await tester.pumpAndSettle();
-        expect(find.byKey(const ValueKey("other tab"), skipOffstage: false), findsNothing);
-        expect(find.byKey(const ValueKey("new original"), skipOffstage: false), findsOneWidget);
-        expect(tester.takeException(), isNull);
       },
     );
   }
+
+  for (final videoId in <String?>[null, "123456"]) {
+    testWidgets(
+      "${videoId == null ? "Live" : "VOD"} loading stays visible through a swipe to mini",
+      (
+        tester,
+      ) async {
+        tester.view.physicalSize = const Size(400, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final uri = Completer<Uri>();
+        final host = PlaybackHost();
+        final player = _PlaybackProbe()
+          ..pendingUri = uri.future
+          ..startsBuffering = true;
+        await tester.pumpWidget(
+          MaterialApp(
+            navigatorObservers: [host],
+            home: const Scaffold(body: Text("Browse Flow")),
+          ),
+        );
+        await openStreamPlayer(
+          tester.element(find.text("Browse Flow")),
+          builder: (_) => player.screen("creator", videoId: videoId),
+        );
+        await tester.pump();
+        final screen = tester.element(find.byType(StreamPlayerScreen));
+        final viewport = find.byKey(const ValueKey("player_viewport"));
+        final spinner = find.byType(CircularProgressIndicator);
+        expect(spinner, findsOneWidget);
+        expect(find.byType(_PlayerSurface), findsNothing);
+
+        final gesture = await tester.startGesture(tester.getCenter(viewport));
+        await gesture.moveBy(const Offset(0, 60));
+        await tester.pump();
+        expect(spinner, findsOneWidget);
+        await gesture.moveBy(const Offset(0, 140));
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(spinner, findsOneWidget);
+        expect(tester.getSize(viewport).width, allOf(greaterThan(200), lessThan(400)));
+        expect(tester.element(find.byType(StreamPlayerScreen)), same(screen));
+
+        uri.complete(Uri.parse("https://example.com/late.m3u8"));
+        await tester.pump();
+        await tester.pump();
+        final surface = tester.element(find.byType(_PlayerSurface));
+        expect(spinner, findsOneWidget);
+        expect(player.surfaces, 1);
+        await gesture.up();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.pump();
+        expect(host.mode, PlaybackMode.mini);
+        expect(tester.getSize(viewport), const Size(200, 112.5));
+        expect(spinner, findsOneWidget);
+        expect(find.byKey(const ValueKey("player_mini")).hitTestable(), findsOneWidget);
+        expect(find.byKey(const ValueKey("player_play_pause_button")), findsNothing);
+
+        player.eventsController.add(
+          const TwitchPlaybackStateEvent(
+            isPlaying: true,
+            isBuffering: false,
+            playWhenReady: true,
+          ),
+        );
+        await tester.pump();
+        expect(spinner, findsNothing);
+        expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+        await tester.tap(find.byKey(const ValueKey("player_mini")));
+        await tester.pumpAndSettle();
+        expect(host.mode, PlaybackMode.expanded);
+        expect(tester.element(find.byType(StreamPlayerScreen)), same(screen));
+        expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+        expect(player.loads, 1);
+        expect(player.surfaces, 1);
+        expect(player.pauses, 0);
+        expect(player.plays, 0);
+        expect(player.disposals, 0);
+        host.dismiss();
+        await tester.pumpAndSettle();
+      },
+    );
+  }
+
+  testWidgets("swiping down dismisses playback smoothly when mini-player is disabled", (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final host = PlaybackHost()..setMiniPlayerEnabled(enabled: false);
+    final player = _PlaybackProbe();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorObservers: [host],
+        home: const Scaffold(body: Text("Browse Flow")),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await openStreamPlayer(
+      tester.element(find.text("Browse Flow")),
+      builder: (_) => player.screen("creator"),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .getSemantics(find.byKey(const ValueKey("player_back_button")))
+          .getSemanticsData()
+          .tooltip,
+      "Back",
+    );
+    expect(find.byTooltip("Minimize player"), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey("player_back_button")),
+        matching: find.byIcon(Icons.arrow_back_rounded),
+      ),
+      findsOneWidget,
+    );
+    final surface = tester.element(find.byType(_PlayerSurface));
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const ValueKey("player_surface_tap_target"))),
+    );
+    await gesture.moveBy(const Offset(0, 60));
+    await tester.pump();
+    await gesture.moveBy(const Offset(0, 140));
+    await tester.pump();
+    expect(tester.getTopLeft(find.byKey(const ValueKey("player_page_creator"))).dy, greaterThan(0));
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey("player_page_background"))).dy,
+      tester.getTopLeft(find.byKey(const ValueKey("player_page_creator"))).dy,
+    );
+    expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+    expect(player.disposals, 0);
+    await gesture.up();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 140));
+    expect(find.byType(_PlayerSurface), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(find.byType(_PlayerSurface), findsNothing);
+    expect(find.byKey(const ValueKey("player_mini")), findsNothing);
+    expect(find.text("Browse Flow"), findsOneWidget);
+    expect(player.loads, 1);
+    expect(player.disposals, 1);
+    expect(player.pauses, 1);
+    semantics.dispose();
+  });
+
+  testWidgets("short downward drags restore and completed swipes minimize the same player", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    tester.view.padding = const FakeViewPadding(top: 24);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPadding);
+    final host = PlaybackHost();
+    final player = _PlaybackProbe();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorObservers: [host],
+        home: const Scaffold(body: Text("Browse Flow")),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await openStreamPlayer(
+      tester.element(find.text("Browse Flow")),
+      builder: (_) => player.screen("creator"),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byTooltip("Minimize player"), findsOneWidget);
+    final page = find.byKey(const ValueKey("player_page_creator"));
+    final background = find.byKey(const ValueKey("player_page_background"));
+    final target = find.byKey(const ValueKey("player_surface_tap_target"));
+    final screen = tester.element(find.byType(StreamPlayerScreen));
+    final surface = tester.element(find.byType(_PlayerSurface));
+    expect(tester.getSize(background), const Size(400, 776));
+    expect(tester.getSize(page), const Size(400, 225));
+    expect(tester.getTopLeft(background).dy, tester.getTopLeft(page).dy);
+    final shortDrag = await tester.startGesture(tester.getCenter(target));
+    await shortDrag.moveBy(const Offset(0, 30));
+    await tester.pump();
+    expect(background, findsOneWidget);
+    await shortDrag.moveBy(const Offset(0, 20));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(tester.getTopLeft(page).dy, greaterThan(0));
+    expect(tester.getSize(page).width, lessThan(400));
+    expect(tester.getTopLeft(background).dy, greaterThan(0));
+    expect(tester.getTopLeft(background).dx, tester.getTopLeft(page).dx);
+    expect(tester.getSize(background).width, tester.getSize(page).width);
+    expect(tester.getTopLeft(background), tester.getTopLeft(page));
+    expect(tester.getBottomLeft(background).dy, lessThan(800));
+    final heldBackgroundTop = tester.getTopLeft(background).dy;
+    final heldBackgroundBottom = tester.getBottomLeft(background).dy;
+    await shortDrag.up();
+    await tester.pump();
+    expect(tester.getTopLeft(background).dy, heldBackgroundTop);
+    await tester.pump(const Duration(milliseconds: 140));
+    expect(tester.getTopLeft(background).dy, allOf(greaterThan(24), lessThan(heldBackgroundTop)));
+    expect(tester.getTopLeft(background), tester.getTopLeft(page));
+    expect(tester.getBottomLeft(background).dy, greaterThan(heldBackgroundBottom));
+    await tester.pumpAndSettle();
+    expect(host.mode, PlaybackMode.expanded);
+    expect(tester.getTopLeft(page).dy, 24);
+    expect(tester.getSize(background), const Size(400, 776));
+    expect(tester.element(find.byType(StreamPlayerScreen)), same(screen));
+    expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+
+    final completedDrag = await tester.startGesture(tester.getCenter(target));
+    await completedDrag.moveBy(const Offset(0, 60));
+    await tester.pump(const Duration(milliseconds: 16));
+    await completedDrag.moveBy(const Offset(0, 140));
+    await tester.pump(const Duration(milliseconds: 16));
+    final heldWidth = tester.getSize(page).width;
+    expect(heldWidth, allOf(greaterThan(200), lessThan(400)));
+    expect(tester.getSize(page).height, closeTo(heldWidth * 9 / 16, .01));
+    expect(tester.getTopLeft(background).dy, greaterThan(0));
+    await completedDrag.moveBy(const Offset(0, 100));
+    await tester.pump();
+    expect(tester.getSize(page).width, lessThan(heldWidth));
+    expect(tester.element(find.byType(StreamPlayerScreen)), same(screen));
+    expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+    await completedDrag.moveBy(const Offset(0, 250));
+    await tester.pump();
+    expect(tester.getTopLeft(background), tester.getTopLeft(page));
+    final panelClip = tester.widget<ClipRRect>(
+      find.ancestor(of: background, matching: find.byType(ClipRRect)).first,
+    );
+    final videoClip = tester.widget<ClipRRect>(
+      find.ancestor(of: page, matching: find.byType(ClipRRect)).first,
+    );
+    expect(panelClip.borderRadius, BorderRadius.circular(10));
+    expect(panelClip.borderRadius, videoClip.borderRadius);
+    expect(tester.getBottomLeft(background).dy, lessThan(heldBackgroundBottom));
+    expect(tester.getBottomLeft(background).dy, greaterThan(tester.getBottomLeft(page).dy));
+    await completedDrag.up();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 140));
+    expect(host.mode, PlaybackMode.mini);
+    expect(tester.getSize(page).width, allOf(greaterThan(200), lessThan(400)));
+    expect(tester.getTopLeft(background).dy, allOf(greaterThan(0), lessThan(800)));
+    await tester.pumpAndSettle();
+    expect(tester.getSize(page).width, 200);
+    final miniBottom = tester.getBottomLeft(page).dy;
+    expect(tester.getRect(background), tester.getRect(page));
+    expect(background.hitTestable(), findsNothing);
+    expect(find.text("Browse Flow"), findsOneWidget);
+    expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+    await tester.tap(find.byKey(const ValueKey("player_mini")));
+    await tester.pump();
+    expect(tester.getRect(background), tester.getRect(page));
+    await tester.pump(const Duration(milliseconds: 140));
+    expect(tester.getTopLeft(background).dy, allOf(greaterThan(0), lessThan(800)));
+    expect(tester.getSize(background).height, greaterThan(tester.getSize(page).height));
+    expect(tester.getBottomLeft(background).dy, allOf(greaterThan(miniBottom), lessThan(800)));
+    await tester.pumpAndSettle();
+    expect(host.mode, PlaybackMode.expanded);
+    expect(tester.getSize(page).width, 400);
+    expect(tester.getSize(background), const Size(400, 776));
+    expect(tester.element(find.byType(StreamPlayerScreen)), same(screen));
+    expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+    expect(player.loads, 1);
+    expect(player.surfaces, 1);
+    expect(player.pauses, 0);
+    expect(player.plays, 0);
+    expect(player.disposals, 0);
+    host.dismiss();
+    await tester.pumpAndSettle();
+  });
+
+  for (final direction in [-1.0, 1.0]) {
+    testWidgets("mini-player follows horizontal drags and dismisses toward $direction", (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final host = PlaybackHost();
+      final player = _PlaybackProbe();
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorObservers: [host],
+          home: const Scaffold(body: Text("Browse Flow")),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await openStreamPlayer(
+        tester.element(find.text("Browse Flow")),
+        builder: (_) => player.screen("creator"),
+      );
+      await tester.pumpAndSettle();
+      host.minimize();
+      await tester.pumpAndSettle();
+      final mini = find.byKey(const ValueKey("player_mini"));
+      final page = find.byKey(const ValueKey("player_page_creator"));
+      final rest = tester.getRect(page);
+      final screen = tester.element(find.byType(StreamPlayerScreen));
+      final surface = tester.element(find.byType(_PlayerSurface));
+
+      final shortDrag = await tester.startGesture(tester.getCenter(mini));
+      await shortDrag.moveBy(const Offset(-30, 0));
+      await tester.pump();
+      final beforeMove = tester.getRect(page);
+      await shortDrag.moveBy(const Offset(-30, 0));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(tester.getRect(page), beforeMove.shift(const Offset(-30, 0)));
+      await shortDrag.up();
+      await tester.pumpAndSettle();
+      expect(tester.getRect(page), rest);
+      expect(host.mode, PlaybackMode.mini);
+
+      final cancelledDrag = await tester.startGesture(tester.getCenter(mini));
+      await cancelledDrag.moveBy(const Offset(30, 0));
+      await tester.pump();
+      await cancelledDrag.moveBy(const Offset(40, 0));
+      await tester.pump();
+      expect(tester.getTopLeft(page).dx, greaterThan(rest.left));
+      await cancelledDrag.cancel();
+      await tester.pumpAndSettle();
+      expect(tester.getRect(page), rest);
+
+      final verticalDrag = await tester.startGesture(tester.getCenter(mini));
+      await verticalDrag.moveBy(const Offset(0, -60));
+      await tester.pump();
+      await verticalDrag.moveBy(const Offset(0, -100));
+      await tester.pump();
+      expect(tester.getRect(page), rest);
+      await verticalDrag.up();
+      await tester.pumpAndSettle();
+      expect(tester.getRect(page), rest);
+      expect(host.mode, PlaybackMode.mini);
+      expect(tester.element(find.byType(StreamPlayerScreen)), same(screen));
+      expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+
+      final dismissDrag = await tester.startGesture(tester.getCenter(mini));
+      await dismissDrag.moveBy(Offset(40 * direction, 0));
+      await tester.pump();
+      await dismissDrag.moveBy(Offset(220 * direction, 0));
+      await tester.pump();
+      final heldLeft = tester.getTopLeft(page).dx;
+      expect((heldLeft - rest.left) * direction, greaterThan(80));
+      expect(
+        tester
+            .widget<AnimatedOpacity>(
+              find.ancestor(of: page, matching: find.byType(AnimatedOpacity)).first,
+            )
+            .opacity,
+        1,
+      );
+      expect(player.disposals, 0);
+      await dismissDrag.up();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 140));
+      expect((tester.getTopLeft(page).dx - heldLeft) * direction, greaterThan(0));
+      final panelFade = tester.widget<FadeTransition>(
+        find
+            .ancestor(
+              of: find.byKey(const ValueKey("player_page_background")),
+              matching: find.byType(FadeTransition),
+            )
+            .first,
+      );
+      final videoFade = tester.widget<FadeTransition>(
+        find.ancestor(of: page, matching: find.byType(FadeTransition)).first,
+      );
+      expect(panelFade.opacity.value, allOf(greaterThan(0), lessThan(1)));
+      expect(panelFade.opacity.value, videoFade.opacity.value);
+      expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+      expect(player.disposals, 0);
+      await tester.pumpAndSettle();
+      expect(find.byType(_PlayerSurface), findsNothing);
+      expect(player.loads, 1);
+      expect(player.surfaces, 1);
+      expect(player.disposals, 1);
+      expect(player.pauses, 1);
+    });
+  }
+
+  for (final miniEnabled in [true, false]) {
+    for (final videoId in <String?>[null, "123456"]) {
+      testWidgets(
+        "reopening ${videoId == null ? "live" : "VOD"} after swipe dismissal restores the page (mini: $miniEnabled)",
+        (
+          tester,
+        ) async {
+          tester.view.physicalSize = const Size(400, 800);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          final host = PlaybackHost()..setMiniPlayerEnabled(enabled: miniEnabled);
+          final first = _PlaybackProbe();
+          final reopened = _PlaybackProbe();
+          await tester.pumpWidget(
+            MaterialApp(
+              navigatorObservers: [host],
+              home: const Scaffold(body: Text("Browse Flow")),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final browse = tester.element(find.text("Browse Flow"));
+          await openStreamPlayer(browse, builder: (_) => first.screen("creator", videoId: videoId));
+          await tester.pumpAndSettle();
+          if (miniEnabled) {
+            host.minimize();
+            await tester.pumpAndSettle();
+            await tester.drag(find.byKey(const ValueKey("player_mini")), const Offset(-200, 0));
+          } else {
+            await tester.dragFrom(
+              tester.getRect(find.byKey(const ValueKey("player_surface_tap_target"))).centerLeft +
+                  const Offset(50, 0),
+              const Offset(0, 200),
+            );
+          }
+          await tester.pumpAndSettle();
+          expect(find.byType(_PlayerSurface), findsNothing);
+          expect(first.disposals, 1);
+
+          await openStreamPlayer(
+            browse,
+            builder: (_) => reopened.screen("creator", videoId: videoId),
+          );
+          await tester.pumpAndSettle();
+          expect(host.mode, PlaybackMode.expanded);
+          expect(find.byKey(const ValueKey("player_page_background")), findsOneWidget);
+          expect(
+            find.byKey(const ValueKey("player_settings_button")).hitTestable(),
+            findsOneWidget,
+          );
+          expect(
+            tester.getSize(find.byKey(const ValueKey("player_page_creator"))),
+            const Size(400, 225),
+          );
+          expect(find.text("Browse Flow").hitTestable(), findsNothing);
+          expect(reopened.loads, 1);
+          expect(reopened.surfaces, 1);
+          expect(reopened.disposals, 0);
+          expect(reopened.pauses, 0);
+          host.dismiss();
+          await tester.pumpAndSettle();
+        },
+      );
+    }
+  }
+
+  testWidgets("browsing, restoring and PiP preserve one player and its audio quality", (
+    tester,
+  ) async {
+    final host = PlaybackHost();
+    final navigator = GlobalKey<NavigatorState>();
+    final player = _PlaybackProbe();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigator,
+        navigatorObservers: [host],
+        home: const Scaffold(body: Text("Browse Flow")),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await openStreamPlayer(
+      tester.element(find.text("Browse Flow")),
+      builder: (_) => player.screen("creator"),
+    );
+    await tester.pumpAndSettle();
+    player.emitQuality("video:720");
+    await tester.pump();
+    final surface = tester.element(find.byType(_PlayerSurface));
+
+    await tester.tap(find.byKey(const ValueKey("player_settings_button")));
+    await tester.pumpAndSettle();
+    player.eventsController.add(const TwitchPictureInPictureEvent(active: true));
+    await tester.pumpAndSettle();
+    expect(host.mode, PlaybackMode.pip);
+    expect(find.byKey(const ValueKey("player_quality_audio_only")).hitTestable(), findsNothing);
+    player.eventsController.add(const TwitchPictureInPictureEvent(active: false));
+    await tester.pumpAndSettle();
+    expect(host.mode, PlaybackMode.expanded);
+    expect(find.byKey(const ValueKey("player_quality_audio_only")).hitTestable(), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey("player_quality_audio_only")));
+    await tester.pumpAndSettle();
+    expect(player.selectedQualities, ["audio_only"]);
+
+    await tester.tap(find.byKey(const ValueKey("player_back_button")));
+    await tester.pumpAndSettle();
+    expect(host.mode, PlaybackMode.mini);
+    expect(find.byKey(const ValueKey("player_mini")), findsOneWidget);
+    expect(find.byType(IconButton), findsNothing);
+    expect(find.text("Browse Flow"), findsOneWidget);
+    unawaited(
+      navigator.currentState!.push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text("Another channel")),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text("Another channel"), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey("player_mini")));
+    await tester.pumpAndSettle();
+    expect(host.mode, PlaybackMode.expanded);
+
+    player.eventsController.add(const TwitchPictureInPictureEvent(active: true));
+    await tester.pumpAndSettle();
+    expect(host.mode, PlaybackMode.pip);
+    expect(find.byType(IconButton), findsNothing);
+    player.eventsController.add(const TwitchPictureInPictureEvent(active: false));
+    await tester.pumpAndSettle();
+    expect(host.mode, PlaybackMode.expanded);
+    expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+    expect(player.loads, 1);
+    expect(player.surfaces, 1);
+    expect(player.pauses, 0);
+    expect(player.plays, 0);
+    expect(player.disposals, 0);
+
+    await tester.tap(find.byKey(const ValueKey("player_settings_button")));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey("player_quality_audio_only")),
+        matching: find.byIcon(Icons.check_rounded),
+      ),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey("player_quality_video:720")));
+    await tester.pumpAndSettle();
+    expect(player.selectedQualities, ["audio_only", "video:720"]);
+    expect(player.loads, 1);
+    expect(player.surfaces, 1);
+
+    host.minimize();
+    await tester.pumpAndSettle();
+    await tester.drag(find.byKey(const ValueKey("player_mini")), const Offset(-160, 0));
+    await tester.pumpAndSettle();
+    expect(find.byType(_PlayerSurface), findsNothing);
+    expect(find.text("Another channel"), findsOneWidget);
+    expect(player.disposals, 1);
+    expect(player.pauses, 1);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets("PiP hides chrome before entry and resizes the same player without animation", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final host = PlaybackHost();
+    final player = _PlaybackProbe();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorObservers: [host],
+        home: const Scaffold(body: Text("Browse Flow")),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await openStreamPlayer(
+      tester.element(find.text("Browse Flow")),
+      builder: (_) => player.screen("creator"),
+    );
+    await tester.pumpAndSettle();
+    final page = find.byKey(const ValueKey("player_page_creator"));
+    final background = find.byKey(const ValueKey("player_page_background"));
+    final screen = tester.element(find.byType(StreamPlayerScreen));
+    final surface = tester.element(find.byType(_PlayerSurface));
+    expect(find.byKey(const ValueKey("player_settings_button")), findsOneWidget);
+
+    for (final mode in [PlaybackMode.expanded, PlaybackMode.mini]) {
+      if (mode == PlaybackMode.mini) {
+        host.minimize();
+        await tester.pumpAndSettle();
+      }
+      final beforePip = tester.getRect(page);
+      player.eventsController.add(const TwitchPictureInPictureTransitionEvent(active: true));
+      await tester.idle();
+      await tester.pump();
+      expect(host.mode, mode);
+      expect(tester.getRect(page), beforePip);
+      if (mode == PlaybackMode.expanded) {
+        expect(tester.getSize(background), const Size(400, 800));
+      }
+      expect(find.byType(IconButton), findsNothing);
+      expect(tester.element(find.byType(StreamPlayerScreen)), same(screen));
+      expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+
+      player.eventsController.add(const TwitchPictureInPictureEvent(active: true));
+      await tester.idle();
+      await tester.pump();
+      expect(host.mode, PlaybackMode.pip);
+      expect(tester.getRect(page), beforePip);
+      expect(background, findsNothing);
+      tester.view.physicalSize = const Size(240, 135);
+      await tester.pump();
+      expect(tester.getRect(page), const Rect.fromLTWH(0, 0, 240, 135));
+      await tester.pump(const Duration(milliseconds: 140));
+      expect(tester.getRect(page), const Rect.fromLTWH(0, 0, 240, 135));
+
+      tester.view.physicalSize = const Size(400, 800);
+      player.eventsController.add(const TwitchPictureInPictureEvent(active: false));
+      await tester.idle();
+      await tester.pump();
+      expect(host.mode, mode);
+      expect(tester.getRect(page), beforePip);
+      if (mode == PlaybackMode.expanded) {
+        expect(tester.getSize(background), const Size(400, 800));
+        expect(find.byKey(const ValueKey("player_settings_button")), findsOneWidget);
+      }
+      expect(tester.element(find.byType(StreamPlayerScreen)), same(screen));
+      expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+    }
+    expect(player.loads, 1);
+    expect(player.surfaces, 1);
+    expect(player.disposals, 0);
+    expect(player.pauses, 0);
+    expect(player.plays, 0);
+    host.dismiss();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets("reopening the active stream retains it and switching disposes only that stream", (
+    tester,
+  ) async {
+    final host = PlaybackHost();
+    final navigator = GlobalKey<NavigatorState>();
+    final tabNavigator = GlobalKey<NavigatorState>();
+    final first = _PlaybackProbe();
+    final reopened = _PlaybackProbe();
+    final next = _PlaybackProbe();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigator,
+        navigatorObservers: [host],
+        home: Navigator(
+          key: tabNavigator,
+          onGenerateRoute: (_) => MaterialPageRoute<void>(
+            builder: (_) => const Scaffold(body: Text("Tab root")),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    unawaited(
+      tabNavigator.currentState!.push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text("Category")),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final category = tester.element(find.text("Category"));
+    await openStreamPlayer(category, builder: (_) => first.screen("creator"));
+    await tester.pumpAndSettle();
+    navigator.currentState!.pop();
+    await tester.pumpAndSettle();
+    expect(host.mode, PlaybackMode.mini);
+    expect(tester.element(find.text("Category")), same(category));
+    await openStreamPlayer(category, builder: (_) => reopened.screen("Creator"));
+    await tester.pumpAndSettle();
+    expect(first.loads, 1);
+    expect(first.disposals, 0);
+    expect(reopened.loads, 0);
+    await openStreamPlayer(category, builder: (_) => next.screen("another"));
+    await tester.pumpAndSettle();
+    expect(first.disposals, 1);
+    expect(first.pauses, 1);
+    expect(next.loads, 1);
+    expect(next.surfaces, 1);
+    expect(find.byType(_PlayerSurface), findsOneWidget);
+    host.dismiss();
+    await tester.pumpAndSettle();
+    expect(next.disposals, 1);
+    expect(tester.element(find.text("Category")), same(category));
+    expect(tabNavigator.currentState!.canPop(), isTrue);
+    expect(navigator.currentState!.canPop(), isFalse);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets("VOD opens a full player page and keeps its surface across playback modes", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final host = PlaybackHost();
+    final navigator = GlobalKey<NavigatorState>();
+    final player = _PlaybackProbe();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigator,
+        navigatorObservers: [host],
+        home: const Scaffold(body: Text("Channel VOD")),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final channel = tester.element(find.text("Channel VOD"));
+    await openStreamPlayer(channel, builder: (_) => player.screen("creator", videoId: "123456"));
+    await tester.pumpAndSettle();
+    expect(host.mode, PlaybackMode.expanded);
+    expect(navigator.currentState!.canPop(), isTrue);
+    expect(
+      tester.getSize(find.byKey(const ValueKey("player_page_background"))),
+      const Size(400, 800),
+    );
+    expect(tester.getSize(find.byKey(const ValueKey("player_page_creator"))), const Size(400, 225));
+    expect(find.text("Channel VOD").hitTestable(), findsNothing);
+    expect(player.loadedIds, ["123456"]);
+    final surface = tester.element(find.byType(_PlayerSurface));
+    await tester.tap(find.byKey(const ValueKey("player_back_button")));
+    await tester.pumpAndSettle();
+    expect(host.mode, PlaybackMode.mini);
+    expect(tester.element(find.text("Channel VOD")), same(channel));
+    await tester.tap(find.byKey(const ValueKey("player_mini")));
+    await tester.pumpAndSettle();
+    expect(host.mode, PlaybackMode.expanded);
+    expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+    host.minimize();
+    await tester.pumpAndSettle();
+    host.setPictureInPicture(active: true);
+    await tester.pumpAndSettle();
+    host.setPictureInPicture(active: false);
+    await tester.pumpAndSettle();
+    expect(host.mode, PlaybackMode.mini);
+    await openStreamPlayer(channel, builder: (_) => player.screen("creator", videoId: "123456"));
+    await tester.pumpAndSettle();
+    expect(host.mode, PlaybackMode.expanded);
+    expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+    expect(player.loads, 1);
+    expect(player.surfaces, 1);
+    expect(player.pauses, 0);
+    expect(player.plays, 0);
+    player.eventsController.add(const TwitchPlaybackDismissedEvent());
+    await tester.pumpAndSettle();
+    expect(find.byType(_PlayerSurface), findsNothing);
+    expect(player.disposals, 1);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+}
+
+void _expectPaintsAbove(WidgetTester tester, Finder above, Finder below) {
+  List<RenderObject> ancestors(RenderObject object) {
+    final result = <RenderObject>[];
+    for (RenderObject? current = object; current != null; current = current.parent) {
+      result.add(current);
+    }
+    return result;
+  }
+
+  final upper = ancestors(tester.renderObject(above));
+  final lower = ancestors(tester.renderObject(below));
+  final common = upper.firstWhere(lower.contains);
+  final siblings = <RenderObject>[];
+  common.visitChildren(siblings.add);
+  expect(
+    siblings.indexOf(upper[upper.indexOf(common) - 1]),
+    greaterThan(siblings.indexOf(lower[lower.indexOf(common) - 1])),
+    reason: "The popup must paint above playback, including during reverse animation.",
+  );
+}
+
+class _PlaybackProbe implements TwitchPlayerController {
+  final eventsController = StreamController<TwitchPlayerEvent>.broadcast();
+  final selectedQualities = <String>[];
+  final loadedIds = <String>[];
+  Future<Uri>? pendingUri;
+  bool startsBuffering = false;
+  int loads = 0;
+  int surfaces = 0;
+  int pauses = 0;
+  int plays = 0;
+  int disposals = 0;
+
+  StreamPlayerScreen screen(String login, {String? videoId}) => StreamPlayerScreen(
+    apiCache: TwitchApiCache(
+      clientLoader: () async => TwitchApiClient(clientId: "client", accessToken: "token"),
+    ),
+    channel: StreamChannel(
+      login: login,
+      name: login,
+      initials: "CR",
+      title: "Stream title",
+      category: "Just Chatting",
+      viewers: "12K",
+      avatarColors: const [Colors.purple, Colors.pink],
+      thumbnailColors: const [Colors.black, Colors.grey],
+    ),
+    videoId: videoId,
+    playbackUriLoader: (id) async {
+      loads++;
+      loadedIds.add(id);
+      return pendingUri ?? Uri.parse("https://example.com/$id.m3u8");
+    },
+    viewerCountLoader: (_) async => null,
+    playerSurfaceBuilder: (_, _, onCreated) => _PlayerSurface(this, onCreated),
+  );
+
+  void emitQuality(String id) => eventsController.add(
+    TwitchQualitiesEvent(
+      qualities: const [
+        TwitchQualityOption(id: "video:720", label: "720p"),
+        TwitchQualityOption(id: "audio_only", label: "Audio only"),
+      ],
+      selectedId: id,
+    ),
+  );
+
+  @override
+  Stream<TwitchPlayerEvent> get events => eventsController.stream;
+  @override
+  void dispose() => disposals++;
+  @override
+  Future<void> pause() async => pauses++;
+  @override
+  Future<void> play() async => plays++;
+  @override
+  Future<void> setQuality(String id) async {
+    selectedQualities.add(id);
+    emitQuality(id);
+  }
+
+  @override
+  Future<void> setPictureInPictureEnabled({required bool enabled}) async {}
+
+  @override
+  Future<void> jumpToLive() async {}
+  @override
+  Future<void> seekTo(Duration position) async {}
+  @override
+  Future<void> togglePlayback() async {}
+}
+
+class _PlayerSurface extends StatefulWidget {
+  const _PlayerSurface(this._player, this._onCreated);
+  final _PlaybackProbe _player;
+  final ValueChanged<TwitchPlayerController> _onCreated;
+  @override
+  State<_PlayerSurface> createState() => _PlayerSurfaceState();
+}
+
+class _PlayerSurfaceState extends State<_PlayerSurface> {
+  @override
+  void initState() {
+    super.initState();
+    widget._player.surfaces++;
+    widget._onCreated(widget._player);
+    widget._player.eventsController.add(
+      TwitchPlaybackStateEvent(
+        isPlaying: !widget._player.startsBuffering,
+        isBuffering: widget._player.startsBuffering,
+        playWhenReady: true,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) => const ColoredBox(color: Colors.black);
 }

@@ -70,7 +70,7 @@ class _TwitchLoginOfferScreenState extends State<TwitchLoginOfferScreen> {
     try {
       if (!widget.authController.config.isConfigured) {
         throw TwitchAuthException(
-          "Set TWITCH_CLIENT_ID with --dart-define-from-file=.env to start Twitch auth.",
+          "Twitch sign-in is unavailable in this build.",
         );
       }
       final opener = widget.openTwitchLogin ?? openTwitchLoginScreen;

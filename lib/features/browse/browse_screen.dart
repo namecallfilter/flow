@@ -224,7 +224,7 @@ class _BrowseScreenState extends State<BrowseScreen> {
   }
 
   TwitchAuthController _buildDefaultAuthController() {
-    const config = TwitchAuthConfig.fromEnvironment();
+    const config = TwitchAuthConfig();
     return TwitchAuthController(
       config: config,
       secureStore: const SecureTwitchStore(),
@@ -1418,15 +1418,6 @@ class _CategoryStreamsScreenState extends State<CategoryStreamsScreen> {
     _scrollController.addListener(_loadMoreWhenNearBottom);
     if (!_store.loaded) {
       unawaited(_store.loadStreams(reset: true));
-    }
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final categoryId = widget.category.id.trim();
-    if (categoryId.isNotEmpty) {
-      registerPlayerDestination(context, "category:$categoryId");
     }
   }
 

@@ -77,21 +77,35 @@ class _ChannelScreenState extends State<ChannelScreen> {
   }
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final login = widget.initialChannel.login.trim().toLowerCase();
-    if (login.isNotEmpty) {
-      registerPlayerDestination(context, "channel:$login");
-    }
-  }
-
-  @override
   void dispose() {
     _scrollController.dispose();
     super.dispose();
   }
 
   Future<void> _refresh() => _store.load(refresh: true);
+
+  void _openBroadcast(TwitchChannelDetails channel, TwitchPastBroadcast broadcast) {
+    final name = _displayName(channel, widget.initialChannel);
+    final screen = StreamPlayerScreen(
+      apiCache: widget.apiCache,
+      videoId: broadcast.id,
+      channel: StreamChannel(
+        id: channel.id,
+        login: channel.login,
+        name: name,
+        initials: initialsForName(name),
+        title: broadcast.title,
+        category: broadcast.category,
+        categoryId: broadcast.categoryId,
+        viewers: formatCompactCount(broadcast.viewCount),
+        avatarColors: colorsForText(channel.id),
+        thumbnailColors: colorsForText(broadcast.id, count: 3),
+        avatarImageUrl: channel.profileImageUrl ?? widget.initialChannel.avatarImageUrl,
+        thumbnailUrl: broadcast.thumbnailUrl,
+      ),
+    );
+    unawaited(openStreamPlayer(context, builder: (_) => screen));
+  }
 
   void _openLiveStream(StreamChannel channel) {
     if (channel.login.trim().isEmpty) {
@@ -211,6 +225,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
                       for (var index = 0; index < channel.pastBroadcasts.length; index++)
                         _PastBroadcastCard(
                           broadcast: channel.pastBroadcasts[index],
+                          onPlay: () => _openBroadcast(channel, channel.pastBroadcasts[index]),
                           loadedAt: _store.loadedAt,
                           now: _store.now,
                           liveStartedAt: channel.liveStream?.startedAt,
@@ -815,6 +830,7 @@ class _LiveBadge extends StatelessWidget {
 class _PastBroadcastCard extends StatelessWidget {
   const _PastBroadcastCard({
     required this.broadcast,
+    required this.onPlay,
     required this.loadedAt,
     required this.now,
     required this.liveStartedAt,
@@ -823,6 +839,7 @@ class _PastBroadcastCard extends StatelessWidget {
   });
 
   final TwitchPastBroadcast broadcast;
+  final VoidCallback onPlay;
   final DateTime? loadedAt;
   final DateTime Function() now;
   final DateTime? liveStartedAt;
@@ -856,30 +873,34 @@ class _PastBroadcastCard extends StatelessWidget {
             children: [
               TableCell(
                 verticalAlignment: TableCellVerticalAlignment.fill,
-                child: Stack(
-                  key: ValueKey("past_broadcast_thumbnail_${broadcast.id}"),
-                  children: [
-                    Positioned.fill(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(AppRadius.sm),
-                        child: _BroadcastThumbnail(broadcast: broadcast),
+                child: InkWell(
+                  onTap: onPlay,
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                  child: Stack(
+                    key: ValueKey("past_broadcast_thumbnail_${broadcast.id}"),
+                    children: [
+                      Positioned.fill(
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                          child: _BroadcastThumbnail(broadcast: broadcast),
+                        ),
                       ),
-                    ),
-                    Positioned(
-                      left: 6,
-                      bottom: 5,
-                      child: _DurationBadge(
-                        key: ValueKey("past_broadcast_duration_${broadcast.id}"),
-                        duration: broadcast.duration,
-                        startedAt: !isLive
-                            ? null
-                            : startedAt != null && startedAt.isBefore(snapshotStart)
-                            ? startedAt
-                            : snapshotStart,
-                        now: now,
+                      Positioned(
+                        left: 6,
+                        bottom: 5,
+                        child: _DurationBadge(
+                          key: ValueKey("past_broadcast_duration_${broadcast.id}"),
+                          duration: broadcast.duration,
+                          startedAt: !isLive
+                              ? null
+                              : startedAt != null && startedAt.isBefore(snapshotStart)
+                              ? startedAt
+                              : snapshotStart,
+                          now: now,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(width: AppSpacing.md),
@@ -894,14 +915,17 @@ class _PastBroadcastCard extends StatelessWidget {
                       message: broadcast.title,
                       triggerMode: TooltipTriggerMode.longPress,
                       enableFeedback: true,
-                      child: Text(
-                        broadcast.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          color: theme.colorScheme.onSurface,
-                          fontWeight: FontWeight.w900,
-                          height: 1.15,
+                      child: InkWell(
+                        onTap: onPlay,
+                        child: Text(
+                          broadcast.title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            color: theme.colorScheme.onSurface,
+                            fontWeight: FontWeight.w900,
+                            height: 1.15,
+                          ),
                         ),
                       ),
                     ),
@@ -976,6 +1000,7 @@ class _PastBroadcastCard extends StatelessWidget {
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<TwitchPastBroadcast>("broadcast", broadcast));
+    properties.add(ObjectFlagProperty<VoidCallback>.has("onPlay", onPlay));
     properties.add(DiagnosticsProperty<DateTime?>("loadedAt", loadedAt));
     properties.add(DiagnosticsProperty<DateTime?>("liveStartedAt", liveStartedAt));
     properties.add(ObjectFlagProperty<DateTime Function()>.has("now", now));

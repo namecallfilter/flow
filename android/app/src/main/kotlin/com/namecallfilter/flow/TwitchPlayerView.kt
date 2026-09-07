@@ -2,6 +2,9 @@ package com.namecallfilter.flow
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.Rect
+import android.media.MediaMetadata
+import android.media.session.PlaybackState
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -9,6 +12,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewTreeObserver
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Format
@@ -19,6 +23,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.Clock
 import androidx.media3.common.util.UnstableApi
@@ -34,7 +39,6 @@ import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
-import androidx.media3.exoplayer.upstream.experimental.ExperimentalBandwidthMeter
 import androidx.media3.ui.PlayerView
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
@@ -44,15 +48,21 @@ import java.io.IOException
 import java.net.URI
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 @UnstableApi
 internal class TwitchPlayerView(
     context: Context,
+    private val activity: MainActivity,
     messenger: BinaryMessenger,
     viewId: Int,
     private val initialUrl: String?,
+    private val mediaTitle: String,
+    private val mediaArtist: String,
     initialQualityId: String,
+    private val isLive: Boolean,
+    private var pictureInPictureEnabled: Boolean,
     private val proxyUrls: List<String>,
 ) : PlatformView {
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -63,6 +73,10 @@ internal class TwitchPlayerView(
     ) as PlayerView
     private val methodChannel = MethodChannel(messenger, "flow/twitch_player/$viewId")
     private val eventChannel = EventChannel(messenger, "flow/twitch_player/$viewId/events")
+    private val layoutObserver = activity.window.decorView.viewTreeObserver
+    private val pictureInPictureLayoutListener = ViewTreeObserver.OnGlobalLayoutListener {
+        activity.updatePictureInPicture()
+    }
     private val liveSpeedControl = TwitchLatencyPlaybackSpeedControl()
     private val latencyCorrection = LiveLatencyCorrectionCoordinator(
         maximumSeekAttempts = MAX_CORRECTION_SEEK_ATTEMPTS,
@@ -91,12 +105,54 @@ internal class TwitchPlayerView(
     private var pausedAtRealtimeMs: Long? = null
     private var correctionRequestedAtRealtimeMs: Long? = null
     private var recoveryRequested = false
+    private var resumeOnForeground = false
+    private var pictureInPicture = false
+    val isAudioOnly: Boolean
+        get() = selectedQualityId == AUDIO_ONLY_QUALITY_ID
+    val canPublishMediaSession: Boolean
+        get() = !disposed && player.playbackState != Player.STATE_ENDED && player.playerError == null
+    val mediaMetadata: MediaMetadata
+        get() = MediaMetadata.Builder()
+            .putString(MediaMetadata.METADATA_KEY_TITLE, mediaTitle)
+            .putString(MediaMetadata.METADATA_KEY_ARTIST, mediaArtist)
+            .apply {
+                if (!isLive && player.duration > 0) putLong(MediaMetadata.METADATA_KEY_DURATION, player.duration)
+            }
+            .build()
+    val mediaPlaybackState: PlaybackState
+        get() {
+            val state = when {
+                player.playbackState == Player.STATE_ENDED -> PlaybackState.STATE_STOPPED
+                !player.playWhenReady -> PlaybackState.STATE_PAUSED
+                player.playbackState == Player.STATE_IDLE || player.playbackState == Player.STATE_BUFFERING ->
+                    PlaybackState.STATE_BUFFERING
+                else -> PlaybackState.STATE_PLAYING
+            }
+            val actions = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or PlaybackState.ACTION_PLAY_PAUSE
+            return PlaybackState.Builder()
+                .setActions(if (canSeekInPictureInPicture) actions or PlaybackState.ACTION_SEEK_TO else actions)
+                .setState(
+                    state,
+                    if (isLive) PlaybackState.PLAYBACK_POSITION_UNKNOWN else player.currentPosition,
+                    if (player.isPlaying) player.playbackParameters.speed else 0f,
+                )
+                .build()
+        }
+    val canEnterPictureInPicture: Boolean
+        get() = pictureInPictureEnabled && !isAudioOnly && !disposed && initialized && player.playWhenReady &&
+            player.playbackState != Player.STATE_IDLE && player.playbackState != Player.STATE_ENDED &&
+            player.playerError == null
+    val pictureInPicturePlaying: Boolean
+        get() = player.playWhenReady && player.playbackState != Player.STATE_ENDED
+    val canSeekInPictureInPicture: Boolean
+        get() = !isLive && player.isCurrentMediaItemSeekable
     private val adProgressTicker = object : Runnable {
         override fun run() {
             if (disposed) {
                 return
             }
             updateAdProgress()
+            if (!isLive) emitState()
             val correctionStartedAt = correctionRequestedAtRealtimeMs
             if (
                 player.playWhenReady &&
@@ -157,6 +213,7 @@ internal class TwitchPlayerView(
         override fun onPlayerError(error: PlaybackException) {
             latestError = error.message ?: "The stream could not be played."
             Log.e(LOG_TAG, "playback failed", error)
+            activity.updatePictureInPicture()
             emitError(latestError!!)
         }
 
@@ -167,6 +224,7 @@ internal class TwitchPlayerView(
 
         override fun onTimelineChanged(timeline: Timeline, reason: Int) {
             maybeApplyPendingLatencyCorrection()
+            activity.updatePictureInPicture()
         }
 
         override fun onTracksChanged(tracks: Tracks) {
@@ -177,7 +235,7 @@ internal class TwitchPlayerView(
     init {
         val trackSelector = DefaultTrackSelector(
             context,
-            adaptiveTrackSelectionFactory(),
+            adaptiveTrackSelectionFactory(isLive = isLive),
         )
         // Auto follows decoder support and connection capacity, including source
         // renditions above the display size and transitions between AVC and HEVC.
@@ -185,22 +243,13 @@ internal class TwitchPlayerView(
             .clearViewportSizeConstraints()
             .setAllowVideoMixedMimeTypeAdaptiveness(true)
             .build()
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(
-                MIN_BUFFER_MS,
-                MAX_BUFFER_MS,
-                BUFFER_FOR_PLAYBACK_MS,
-                BUFFER_AFTER_REBUFFER_MS,
-            )
-            .setPrioritizeTimeOverSizeThresholds(true)
-            .build()
         // Live startup may fetch only one completed segment before reaching
         // server-paced prefetch. Use Media3's first-sample estimator instead of
         // waiting for DefaultBandwidthMeter's 512 KiB / two-second threshold.
-        val bandwidthMeter = ExperimentalBandwidthMeter.Builder(context).build()
+        val bandwidthMeter = activity.playbackBandwidthMeter
         player = ExoPlayer.Builder(context)
             .setTrackSelector(trackSelector)
-            .setLoadControl(loadControl)
+            .setLoadControl(playbackLoadControl(isLive))
             .setBandwidthMeter(bandwidthMeter)
             .setLivePlaybackSpeedControl(liveSpeedControl)
             .build()
@@ -244,6 +293,7 @@ internal class TwitchPlayerView(
                     emitLatency(latestLatencyMs)
                     emitQualities()
                     emit(latestAdEvent)
+                    setPictureInPicture(pictureInPicture)
                     latestError?.let(::emitError)
                 }
 
@@ -273,7 +323,7 @@ internal class TwitchPlayerView(
                 }
 
                 "togglePlayback" -> {
-                    if (player.playWhenReady) player.pause() else resumeAtLiveEdge()
+                    togglePlayback()
                     result.success(null)
                 }
 
@@ -282,12 +332,35 @@ internal class TwitchPlayerView(
                     result.success(null)
                 }
 
+                "seekTo" -> {
+                    val positionMs = (call.arguments as? Number)?.toLong()
+                    if (isLive || positionMs == null || positionMs < 0) {
+                        result.error("invalid_seek", "A recording position is required.", null)
+                    } else {
+                        seekTo(positionMs)
+                        result.success(null)
+                    }
+                }
+
                 "setQuality" -> setQuality(call.arguments as? String, result)
+
+                "setPictureInPictureEnabled" -> {
+                    val enabled = call.arguments as? Boolean
+                    if (enabled == null) {
+                        result.error("invalid_pip_setting", "A picture-in-picture preference is required.", null)
+                    } else {
+                        pictureInPictureEnabled = enabled
+                        activity.updatePictureInPicture()
+                        result.success(null)
+                    }
+                }
 
                 else -> result.notImplemented()
             }
         }
 
+        layoutObserver.addOnGlobalLayoutListener(pictureInPictureLayoutListener)
+        activity.registerPlayer(this)
         mainHandler.post(adProgressTicker)
     }
 
@@ -295,6 +368,8 @@ internal class TwitchPlayerView(
 
     override fun dispose() {
         disposed = true
+        if (layoutObserver.isAlive) layoutObserver.removeOnGlobalLayoutListener(pictureInPictureLayoutListener)
+        activity.unregisterPlayer(this)
         mainHandler.removeCallbacks(adProgressTicker)
         sessionGeneration++
         liveSpeedControl.reset()
@@ -311,11 +386,65 @@ internal class TwitchPlayerView(
         player.release()
     }
 
+    fun pauseForBackground(resumeOnReturn: Boolean) {
+        resumeOnForeground = resumeOnReturn && player.playWhenReady && player.playbackState != Player.STATE_ENDED
+        player.pause()
+    }
+
+    fun togglePlayback() {
+        if (player.playWhenReady && (isLive || player.playbackState != Player.STATE_ENDED)) {
+            player.pause()
+        } else {
+            resumeAtLiveEdge()
+        }
+    }
+
+    fun seekBy(offsetMs: Long) {
+        seekTo(player.currentPosition + offsetMs)
+    }
+
+    fun seekTo(positionMs: Long) {
+        if (!isLive) {
+            player.seekTo(positionMs.coerceIn(0L, player.duration.coerceAtLeast(0L)))
+            emitState()
+        }
+    }
+
+    fun resumeFromBackground() {
+        if (resumeOnForeground) {
+            resumeOnForeground = false
+            resumeAtLiveEdge()
+        }
+    }
+
+    fun setPictureInPicture(active: Boolean) {
+        pictureInPicture = active
+        emit(mapOf("type" to "pip", "active" to active))
+    }
+
+    fun beginPictureInPictureTransition() {
+        emit(mapOf("type" to "pipTransition", "active" to true))
+    }
+
+    fun pictureInPictureSourceRect(): Rect? = Rect().takeIf { rect ->
+        playerView.videoSurfaceView?.getGlobalVisibleRect(rect) == true && !rect.isEmpty
+    }
+
+    fun isVideoViewReady(width: Int, height: Int): Boolean = playerView.videoSurfaceView?.let {
+        it.isShown && abs(it.width - width) <= 1 && abs(it.height - height) <= 1
+    } ?: true
+
+    fun dismissPictureInPicture() {
+        emit(mapOf("type" to "dismissed"))
+    }
+
     private fun load(url: String) {
         val playbackUrl = withDeviceSupportedTwitchCodecs(url)
         val generation = ++sessionGeneration
         liveSpeedControl.reset()
         latencyCorrection.reset()
+        recoveryRequested = false
+        correctionRequestedAtRealtimeMs = null
         latestLatencyMs = null
         lastPrimaryLatencyRealtimeMs = null
         latestError = null
@@ -324,11 +453,29 @@ internal class TwitchPlayerView(
         stitchedAdLatencyFallback.reset()
         qualityOverrides.clear()
         currentQualityLabel = null
-        clearVideoTrackOverride()
+        player.trackSelectionParameters = qualityParameters(player.trackSelectionParameters, selectedQualityId)
         hasRenderedFirstFrame = false
         latestCorrectionMeasurement = null
         correctionMeasurementSequence = 0L
         lastCorrectionWaitReason = null
+        if (!isLive) {
+            val dataSourceFactory = DefaultDataSource.Factory(
+                playerView.context,
+                DefaultHttpDataSource.Factory().setUserAgent(USER_AGENT),
+            )
+            player.setMediaSource(
+                HlsMediaSource.Factory(dataSourceFactory).createMediaSource(
+                    MediaItem.Builder()
+                        .setUri(Uri.parse(playbackUrl))
+                        .setMimeType(MimeTypes.APPLICATION_M3U8)
+                        .build(),
+                ),
+                // Media3 treats zero as the placeholder default and moves EVENT VODs to the live edge.
+                1L,
+            )
+            player.prepare()
+            return
+        }
         latencyCorrection.arm(
             reason = LiveLatencyCorrectionReason.STARTUP,
             targetLatencyMs = TARGET_LIVE_OFFSET_MS,
@@ -505,11 +652,16 @@ internal class TwitchPlayerView(
     }
 
     private fun resumeAtLiveEdge() {
+        if (!isLive) {
+            if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
+            player.play()
+            return
+        }
         requestLatencyCorrection(LiveLatencyCorrectionReason.RESUME)
     }
 
     private fun jumpToLiveEdge() {
-        requestLatencyCorrection(LiveLatencyCorrectionReason.EXPLICIT_JUMP)
+        if (isLive) requestLatencyCorrection(LiveLatencyCorrectionReason.EXPLICIT_JUMP)
     }
 
     private fun requestLatencyCorrection(reason: LiveLatencyCorrectionReason) {
@@ -562,7 +714,34 @@ internal class TwitchPlayerView(
         correctionRequestedAtRealtimeMs = null
         latencyCorrection.reset()
         Log.d(LOG_TAG, "reloading playback: $reason")
-        emit(mapOf("type" to "reload"))
+        if (isAudioOnly) {
+            val generation = sessionGeneration
+            methodChannel.invokeMethod("refreshPlaybackUri", null, object : MethodChannel.Result {
+                override fun success(result: Any?) {
+                    if (disposed || generation != sessionGeneration) return
+                    val url = result as? String
+                    val uri = url?.let { runCatching { URI(it) }.getOrNull() }
+                    if (url.isNullOrBlank() || uri?.scheme != "https" || uri.host.isNullOrBlank()) {
+                        error("invalid_playback_uri", "Flutter returned an invalid playback URI", null)
+                        return
+                    }
+                    load(url)
+                }
+
+                override fun error(code: String, message: String?, details: Any?) {
+                    if (disposed || generation != sessionGeneration) return
+                    recoveryRequested = false
+                    latestError = message ?: "Playback URI refresh failed ($code)"
+                    emitError(latestError!!)
+                }
+
+                override fun notImplemented() {
+                    error("unavailable", "Playback URI refresh is unavailable", null)
+                }
+            })
+        } else {
+            emit(mapOf("type" to "reload"))
+        }
     }
 
     private fun maybeApplyPendingLatencyCorrection(): Boolean {
@@ -570,7 +749,7 @@ internal class TwitchPlayerView(
             return false
         }
         if (
-            !hasRenderedFirstFrame ||
+            (!hasRenderedFirstFrame && selectedQualityId != AUDIO_ONLY_QUALITY_ID) ||
             player.playbackState != Player.STATE_READY ||
             !player.playWhenReady
         ) {
@@ -805,14 +984,15 @@ internal class TwitchPlayerView(
         }
         val visibleQualities = deduplicateQualities(qualities, selectedQualityId)
         val selectedQualityIsVisible = visibleQualities.any { it["id"] == selectedQualityId }
-        if (selectedQualityId != AUTO_QUALITY_ID && visibleQualities.isNotEmpty()) {
+        if (
+            selectedQualityId != AUTO_QUALITY_ID && selectedQualityId != AUDIO_ONLY_QUALITY_ID &&
+            visibleQualities.isNotEmpty()
+        ) {
             val override = qualityOverrides[selectedQualityId]
             if (override != null) {
-                player.trackSelectionParameters = player.trackSelectionParameters
-                    .buildUpon()
-                    .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
-                    .setOverrideForType(override)
-                    .build()
+                player.trackSelectionParameters = qualityParameters(
+                    player.trackSelectionParameters, selectedQualityId, override,
+                )
             } else if (!selectedQualityIsVisible) {
                 clearVideoTrackOverride()
                 selectedQualityId = AUTO_QUALITY_ID
@@ -823,7 +1003,7 @@ internal class TwitchPlayerView(
                 "id" to quality["id"],
                 "label" to quality["label"],
             )
-        }
+        } + mapOf("id" to AUDIO_ONLY_QUALITY_ID, "label" to "Audio only")
         emitQualities()
     }
 
@@ -832,9 +1012,9 @@ internal class TwitchPlayerView(
             result.success(null)
             return
         }
-        if (id == AUTO_QUALITY_ID) {
-            clearVideoTrackOverride()
-            finishQualityChange(AUTO_QUALITY_ID, result)
+        if (id == AUTO_QUALITY_ID || id == AUDIO_ONLY_QUALITY_ID) {
+            player.trackSelectionParameters = qualityParameters(player.trackSelectionParameters, id)
+            finishQualityChange(id, result)
             return
         }
 
@@ -843,28 +1023,26 @@ internal class TwitchPlayerView(
             result.error("invalid_quality", "That video quality is no longer available.", null)
             return
         }
-        player.trackSelectionParameters = player.trackSelectionParameters
-            .buildUpon()
-            .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
-            .setOverrideForType(override)
-            .build()
+        player.trackSelectionParameters = qualityParameters(player.trackSelectionParameters, id, override)
         finishQualityChange(id, result)
     }
 
     private fun finishQualityChange(id: String, result: MethodChannel.Result) {
+        val wasAudioOnly = selectedQualityId == AUDIO_ONLY_QUALITY_ID
         selectedQualityId = id
+        activity.updatePictureInPicture()
         emitQualities()
-        if (player.playWhenReady) {
+        if (id == AUDIO_ONLY_QUALITY_ID || wasAudioOnly) {
+            latencyCorrection.reset()
+            correctionRequestedAtRealtimeMs = null
+        } else if (isLive && player.playWhenReady) {
             requestLatencyCorrection(LiveLatencyCorrectionReason.QUALITY_CHANGE)
         }
         result.success(null)
     }
 
     private fun clearVideoTrackOverride() {
-        player.trackSelectionParameters = player.trackSelectionParameters
-            .buildUpon()
-            .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
-            .build()
+        player.trackSelectionParameters = qualityParameters(player.trackSelectionParameters, AUTO_QUALITY_ID)
     }
 
     private fun qualityLabel(format: Format): String {
@@ -888,12 +1066,16 @@ internal class TwitchPlayerView(
     }
 
     private fun emitState() {
+        activity.updatePictureInPicture()
         emit(
             mapOf(
                 "type" to "state",
                 "isPlaying" to player.isPlaying,
                 "isBuffering" to (player.playbackState == Player.STATE_BUFFERING),
                 "playWhenReady" to player.playWhenReady,
+                "positionMs" to player.currentPosition,
+                "durationMs" to player.duration.coerceAtLeast(0),
+                "isEnded" to (player.playbackState == Player.STATE_ENDED),
             ),
         )
     }
@@ -904,7 +1086,7 @@ internal class TwitchPlayerView(
                 "type" to "qualities",
                 "qualities" to latestQualities,
                 "selectedId" to selectedQualityId,
-                "currentLabel" to currentQualityLabel,
+                "currentLabel" to if (selectedQualityId == AUDIO_ONLY_QUALITY_ID) "Audio only" else currentQualityLabel,
             ),
         )
     }
@@ -946,11 +1128,41 @@ internal class TwitchPlayerView(
     }
 
     companion object {
-        internal fun adaptiveTrackSelectionFactory(clock: Clock = Clock.DEFAULT) =
+        internal fun playbackLoadControl(isLive: Boolean): DefaultLoadControl =
+            if (isLive) {
+                DefaultLoadControl.Builder()
+                    .setBufferDurationsMs(
+                        MIN_BUFFER_MS,
+                        MAX_BUFFER_MS,
+                        BUFFER_FOR_PLAYBACK_MS,
+                        BUFFER_AFTER_REBUFFER_MS,
+                    )
+                    .setPrioritizeTimeOverSizeThresholds(true)
+                    .build()
+            } else {
+                // VOD HLS subtracts a complete segment from the buffer before
+                // adapting. The six-second live buffer cannot cover a 10s segment.
+                DefaultLoadControl()
+            }
+
+        internal fun qualityParameters(
+            parameters: TrackSelectionParameters,
+            id: String,
+            override: TrackSelectionOverride? = null,
+        ): TrackSelectionParameters = parameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, id == AUDIO_ONLY_QUALITY_ID)
+            .apply { if (override != null) setOverrideForType(override) }
+            .build()
+
+        internal fun adaptiveTrackSelectionFactory(clock: Clock = Clock.DEFAULT, isLive: Boolean = true) =
             AdaptiveTrackSelection.Factory(
                 AUTO_QUALITY_MIN_DURATION_FOR_INCREASE_MS,
                 AUTO_QUALITY_MAX_DURATION_FOR_DECREASE_MS,
                 AUTO_QUALITY_MIN_DURATION_TO_RETAIN_MS,
+                // VOD upgrades should not wait behind an entire buffer of lower-resolution HD.
+                if (isLive) AdaptiveTrackSelection.DEFAULT_MAX_WIDTH_TO_DISCARD else Int.MAX_VALUE,
+                if (isLive) AdaptiveTrackSelection.DEFAULT_MAX_HEIGHT_TO_DISCARD else Int.MAX_VALUE,
                 AUTO_QUALITY_BANDWIDTH_FRACTION,
                 AUTO_QUALITY_BUFFERED_FRACTION_TO_LIVE_EDGE,
                 clock,
@@ -959,6 +1171,7 @@ internal class TwitchPlayerView(
         const val LOG_TAG = "FlowTwitchPlayer"
         const val USER_AGENT = "Flow/1.0 (Android Media3)"
         const val AUTO_QUALITY_ID = "auto"
+        const val AUDIO_ONLY_QUALITY_ID = "audio_only"
         // Twitch's promoted prefetch segments distort Media3's calculated live
         // offset. HLS startup, action seeks, and playback speed therefore share
         // this validated transc_r target.

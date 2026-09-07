@@ -10,6 +10,7 @@ import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/channel/channel_store.dart";
 import "package:flow/features/following/following_screen.dart";
 import "package:flow/features/following/following_store.dart";
+import "package:flow/features/player/player_navigation.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/widgets/app_bottom_nav.dart";
 import "package:flutter/material.dart";
@@ -18,6 +19,80 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  testWidgets("opens a VOD player page and reuses playback when it is selected again", (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 844);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final navigatorKey = GlobalKey<NavigatorState>();
+    final host = PlaybackHost();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigatorKey,
+        navigatorObservers: [host],
+        theme: buildFlowTheme(Brightness.dark),
+        home: ChannelScreen(
+          apiCache: TwitchApiCache(
+            clientLoader: () async => TwitchApiClient(
+              clientId: "client-123",
+              accessToken: "token-123",
+              httpClient: MockClient((_) async => _channelDetailsResponse(isLive: false)),
+            ),
+          ),
+          initialChannel: const ChannelPreview(login: "jason", displayName: "Jason"),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.longPress(find.byKey(const ValueKey("past_broadcast_title_preview_vod-1")));
+    await tester.pump(const Duration(milliseconds: 160));
+    expect(find.text("2025 Japan Trip"), findsNWidgets(2));
+    await tester.tap(find.byKey(const ValueKey("past_broadcast_title_preview_vod-1")));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    await tester.pumpAndSettle();
+
+    final playerFinder = find.byType(StreamPlayerScreen);
+    final player = tester.widget<StreamPlayerScreen>(playerFinder);
+    final playerState = tester.state(playerFinder);
+    expect(player.videoId, "vod-1");
+    expect(player.channel.login, "jason");
+    expect(player.channel.title, "2025 Japan Trip");
+    expect(
+      find.byKey(const ValueKey("past_broadcast_thumbnail_vod-1")).hitTestable(),
+      findsNothing,
+    );
+    expect(host.mode, PlaybackMode.expanded);
+    expect(navigatorKey.currentState!.canPop(), isTrue);
+
+    host.minimize();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("channel_page_jason")), findsOneWidget);
+    expect(navigatorKey.currentState!.canPop(), isFalse);
+    expect(tester.state(playerFinder), same(playerState));
+
+    await tester.tap(find.byKey(const ValueKey("past_broadcast_thumbnail_vod-1")));
+    await tester.pumpAndSettle();
+    expect(host.mode, PlaybackMode.expanded);
+    expect(navigatorKey.currentState!.canPop(), isTrue);
+    expect(tester.state(playerFinder), same(playerState));
+
+    host.minimize();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey("past_broadcast_category_button_vod-1")));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("category_streams_page_Just Chatting")), findsOneWidget);
+    expect(tester.state(playerFinder), same(playerState));
+    expect(host.mode, PlaybackMode.mini);
+
+    host.dismiss();
+    await tester.pumpAndSettle();
+    expect(playerFinder, findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets("opens channel after player return and live Following reorder", (tester) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(390, 844);

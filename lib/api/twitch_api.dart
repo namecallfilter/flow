@@ -1,4 +1,5 @@
 import "dart:async";
+import "dart:convert";
 import "dart:math" as math;
 
 import "package:flow/api/twitch_cookie_extractor.dart";
@@ -14,6 +15,7 @@ import "package:flow/graphql/FlowSearchChannels.graphql.dart";
 import "package:flow/graphql/FlowTopGames.graphql.dart";
 import "package:flow/graphql/FlowTopStreams.graphql.dart";
 import "package:flow/graphql/FlowUsers.graphql.dart";
+import "package:flow/graphql/FlowVodSeekMetadata.graphql.dart";
 import "package:flow/graphql/schema.graphqls.dart";
 import "package:flow/shared/twitch/stream_sort.dart";
 import "package:graphql/client.dart" as graphql;
@@ -229,6 +231,55 @@ class TwitchPage<T> {
 
   final List<T> data;
   final String? cursor;
+}
+
+class TwitchMutedSegment {
+  const TwitchMutedSegment({required this.offset, required this.duration});
+
+  final Duration offset;
+  final Duration duration;
+  Duration get end => offset + duration;
+}
+
+class TwitchVodSeekMetadata {
+  const TwitchVodSeekMetadata({this.mutedSegments = const [], this.storyboard});
+
+  final List<TwitchMutedSegment> mutedSegments;
+  final TwitchVodStoryboard? storyboard;
+}
+
+class TwitchVodStoryboard {
+  const TwitchVodStoryboard({
+    required this.imageUrls,
+    required this.width,
+    required this.height,
+    required this.columns,
+    required this.rows,
+    required this.count,
+    required this.interval,
+  });
+
+  final List<String> imageUrls;
+  final int width;
+  final int height;
+  final int columns;
+  final int rows;
+  final int count;
+  final Duration interval;
+
+  ({String imageUrl, int column, int row})? frameAt(Duration position) {
+    final frameCount = math.min(count, imageUrls.length * columns * rows);
+    if (frameCount <= 0 || columns <= 0 || rows <= 0 || interval <= Duration.zero) {
+      return null;
+    }
+    final frame = (position.inMicroseconds ~/ interval.inMicroseconds).clamp(0, frameCount - 1);
+    final cell = frame % (columns * rows);
+    return (
+      imageUrl: imageUrls[frame ~/ (columns * rows)],
+      column: cell % columns,
+      row: cell ~/ columns,
+    );
+  }
 }
 
 class TwitchApiClient {
@@ -739,6 +790,123 @@ class TwitchApiClient {
     );
   }
 
+  Future<Uri> fetchVodPlaybackUri(String videoId) async {
+    final normalizedVideoId = _nonEmptyValue(videoId);
+    if (normalizedVideoId == null) {
+      throw TwitchApiException("Video ID is required.");
+    }
+
+    final data = await _fetchPlaybackAccessToken(normalizedVideoId, isVod: true);
+    final access = data.videoPlaybackAccessToken;
+    final token = _nonEmptyValue(access?.value);
+    final signature = _nonEmptyValue(access?.signature);
+    if (token == null || signature == null) {
+      throw TwitchApiException(
+        "Twitch returned no playback access token for video $normalizedVideoId.",
+      );
+    }
+
+    return Uri(
+      scheme: "https",
+      host: "usher.ttvnw.net",
+      pathSegments: ["vod", "v2", "$normalizedVideoId.m3u8"],
+      queryParameters: {
+        "allow_audio_only": "true",
+        "allow_source": "true",
+        "playlist_include_framerate": "true",
+        "player": "twitchweb",
+        "p": math.Random().nextInt(10_000_000).toString(),
+        "nauthsig": signature,
+        "nauth": token,
+        "type": "any",
+      },
+    );
+  }
+
+  Future<TwitchVodSeekMetadata> fetchVodSeekMetadata(String videoId) async {
+    final normalizedVideoId = _nonEmptyValue(videoId);
+    if (normalizedVideoId == null) {
+      throw TwitchApiException("Video ID is required.");
+    }
+    final data = await _query(
+      () => _graphQlClient.query$FlowVodSeekMetadata(
+        Options$Query$FlowVodSeekMetadata(
+          variables: Variables$Query$FlowVodSeekMetadata(videoId: normalizedVideoId),
+          fetchPolicy: graphql.FetchPolicy.noCache,
+        ),
+      ),
+      "FlowVodSeekMetadata",
+    );
+    final video = _mapValue(data.toJson()["video"]);
+    final muteInfo = _mapValue(video?["muteInfo"]);
+    final connection = _mapValue(muteInfo?["mutedSegmentConnection"]);
+    return TwitchVodSeekMetadata(
+      mutedSegments: [
+        for (final node in _mapList(connection?["nodes"]))
+          if (node["offset"] != null &&
+              _intValue(node["offset"]) >= 0 &&
+              _intValue(node["duration"]) > 0)
+            TwitchMutedSegment(
+              offset: Duration(seconds: _intValue(node["offset"])),
+              duration: Duration(seconds: _intValue(node["duration"])),
+            ),
+      ],
+      storyboard: await _fetchVodStoryboard(video?["seekPreviewsURL"] as String?),
+    );
+  }
+
+  Future<TwitchVodStoryboard?> _fetchVodStoryboard(String? url) async {
+    final uri = Uri.tryParse(url ?? "");
+    if (uri == null || (uri.scheme != "https" && uri.scheme != "http")) {
+      return null;
+    }
+    try {
+      final response = await _httpClient.get(uri).timeout(const Duration(seconds: 10));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return null;
+      }
+      TwitchVodStoryboard? selected;
+      for (final spec in _mapList(jsonDecode(response.body))) {
+        final width = _intValue(spec["width"]);
+        final height = _intValue(spec["height"]);
+        final columns = _intValue(spec["cols"]);
+        final rows = _intValue(spec["rows"]);
+        final count = _intValue(spec["count"]);
+        final seconds = double.tryParse(spec["interval"]?.toString() ?? "") ?? 0;
+        final images = spec["images"];
+        if (width <= 0 ||
+            height <= 0 ||
+            columns <= 0 ||
+            rows <= 0 ||
+            count <= 0 ||
+            !seconds.isFinite ||
+            seconds <= 0 ||
+            images is! List<Object?> ||
+            images.isEmpty ||
+            images.any((image) => image is! String || image.trim().isEmpty)) {
+          continue;
+        }
+        final interval = Duration(microseconds: (seconds * Duration.microsecondsPerSecond).round());
+        if (interval <= Duration.zero || (selected != null && selected.width >= width)) {
+          continue;
+        }
+        selected = TwitchVodStoryboard(
+          imageUrls: [for (final image in images.cast<String>()) uri.resolve(image).toString()],
+          width: width,
+          height: height,
+          columns: columns,
+          rows: rows,
+          count: count,
+          interval: interval,
+        );
+      }
+      return selected;
+    } on Object {
+      // Storyboards can be unavailable while a VOD is still processing.
+      return null;
+    }
+  }
+
   Future<bool> fetchChannelSubscriptionStatus(String login) async {
     final normalizedLogin = _nonEmptyValue(login);
     if (normalizedLogin == null) {
@@ -976,10 +1144,16 @@ class TwitchApiClient {
     return "${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}";
   }
 
-  Future<Query$FlowPlaybackAccessToken> _fetchPlaybackAccessToken(String login) async {
+  Future<Query$FlowPlaybackAccessToken> _fetchPlaybackAccessToken(
+    String channelOrVideoId, {
+    bool isVod = false,
+  }) async {
     final options = Options$Query$FlowPlaybackAccessToken(
       variables: Variables$Query$FlowPlaybackAccessToken(
-        login: login,
+        login: isVod ? "" : channelOrVideoId,
+        isLive: !isVod,
+        vodID: isVod ? channelOrVideoId : "",
+        isVod: isVod,
         platform: "web",
         playerType: "site",
       ),
