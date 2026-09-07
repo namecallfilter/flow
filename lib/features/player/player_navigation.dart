@@ -5,11 +5,14 @@ import "package:flow/features/player/player_screen.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 
+int _openStreamPlayerGeneration = 0;
+
 Future<void> openStreamPlayer(BuildContext context, {required WidgetBuilder builder}) async {
+  final generation = ++_openStreamPlayerGeneration;
   if (Tooltip.dismissAllToolTips()) {
     await Future<void>.delayed(const Duration(milliseconds: 80));
     await WidgetsBinding.instance.endOfFrame;
-    if (!context.mounted) {
+    if (!context.mounted || generation != _openStreamPlayerGeneration) {
       return;
     }
   }
@@ -176,6 +179,10 @@ class PlaybackHost extends NavigatorObserver {
       _mode = PlaybackMode.pip;
     } else if (!active && _mode == PlaybackMode.pip) {
       _mode = _modeBeforePip;
+      if (_mode == PlaybackMode.mini && !miniPlayerEnabled) {
+        dismiss();
+        return;
+      }
     }
     _changed();
     _bringToFront();

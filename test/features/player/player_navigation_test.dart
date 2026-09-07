@@ -10,6 +10,74 @@ import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  testWidgets("a newer stream selection wins while an earlier tooltip is closing", (
+    tester,
+  ) async {
+    final host = PlaybackHost();
+    final first = _PlaybackProbe();
+    final latest = _PlaybackProbe();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorObservers: [host],
+        home: const Scaffold(
+          body: Tooltip(message: "Stream preview", child: Text("Browse Flow")),
+        ),
+      ),
+    );
+    final browse = tester.element(find.text("Browse Flow"));
+    await tester.longPress(find.text("Browse Flow"));
+    await tester.pumpAndSettle();
+    expect(find.text("Stream preview"), findsOneWidget);
+
+    final earlier = openStreamPlayer(browse, builder: (_) => first.screen("first"));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 76));
+    await tester.pump();
+    expect(find.text("Stream preview"), findsNothing);
+    await openStreamPlayer(browse, builder: (_) => latest.screen("latest"));
+    await tester.pump(const Duration(milliseconds: 10));
+    await tester.pumpAndSettle();
+    await earlier;
+
+    expect(find.byKey(const ValueKey("player_page_latest")), findsOneWidget);
+    expect(first.loads, 0);
+    expect(latest.loads, 1);
+    host.dismiss();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets("leaving PiP dismisses a saved mini-player when mini-player was disabled", (
+    tester,
+  ) async {
+    final host = PlaybackHost();
+    final player = _PlaybackProbe();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorObservers: [host],
+        home: const Scaffold(body: Text("Browse Flow")),
+      ),
+    );
+    await openStreamPlayer(
+      tester.element(find.text("Browse Flow")),
+      builder: (_) => player.screen("creator"),
+    );
+    await tester.pumpAndSettle();
+    host.minimize();
+    await tester.pumpAndSettle();
+    host.setPictureInPicture(active: true);
+    host.setMiniPlayerEnabled(enabled: false);
+    await tester.pumpAndSettle();
+    expect(host.mode, PlaybackMode.pip);
+    expect(player.disposals, 0);
+
+    host.setPictureInPicture(active: false);
+    await tester.pumpAndSettle();
+    expect(find.byType(_PlayerSurface), findsNothing);
+    expect(find.byKey(const ValueKey("player_mini")), findsNothing);
+    expect(player.disposals, 1);
+    expect(player.pauses, 1);
+  });
+
   for (final videoId in <String?>[null, "123456"]) {
     testWidgets(
       "${videoId == null ? "Live" : "VOD"} quality scrim stays above playback through every animation frame",

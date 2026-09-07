@@ -126,6 +126,7 @@ class TwitchApiCache {
         _cacheKey("vodSeekMetadata", {"videoId": videoId.trim()}),
         (client) => client.fetchVodSeekMetadata(videoId),
         refresh: refresh,
+        cacheWhen: (metadata) => metadata.storyboard != null,
       );
 
   Future<bool> fetchChannelSubscriptionStatus(String login) async {
@@ -152,6 +153,7 @@ class TwitchApiCache {
     String key,
     Future<T> Function(TwitchApiClient client) load, {
     required bool refresh,
+    bool Function(T value)? cacheWhen,
   }) async {
     if (!refresh && _values.containsKey(key)) {
       final value = _values.remove(key);
@@ -173,7 +175,9 @@ class TwitchApiCache {
       final value = await future;
       if (identical(_inFlight[key], future)) {
         _values.remove(key);
-        _values[key] = value;
+        if (cacheWhen?.call(value) ?? true) {
+          _values[key] = value;
+        }
         while (_values.length > maxEntries) {
           _values.remove(_values.keys.first);
         }
