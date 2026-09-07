@@ -26,9 +26,18 @@ class TwitchAuthException implements Exception {
 
 class TwitchAuthConfig {
   const TwitchAuthConfig({
-    this.clientId = "deh8tdsvcsptv5sby686y9gamadiuo",
-    this.graphQlClientId = TwitchApiClient.defaultGraphQlClientId,
-    this.redirectUri = defaultRedirectUri,
+    this.clientId = const String.fromEnvironment(
+      "TWITCH_CLIENT_ID",
+      defaultValue: "deh8tdsvcsptv5sby686y9gamadiuo",
+    ),
+    this.graphQlClientId = const String.fromEnvironment(
+      "TWITCH_GQL_CLIENT_ID",
+      defaultValue: TwitchApiClient.defaultGraphQlClientId,
+    ),
+    this.redirectUri = const String.fromEnvironment(
+      "TWITCH_REDIRECT_URI",
+      defaultValue: defaultRedirectUri,
+    ),
     this.scope = "user:read:follows",
   });
 

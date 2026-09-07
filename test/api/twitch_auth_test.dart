@@ -9,15 +9,30 @@ import "package:http/testing.dart";
 
 void main() {
   tearDown(() => TwitchApiClient.restoreWebSessionDeviceId(null));
-  test("default configuration starts Twitch sign-in without environment defines", () {
+  test("sign-in uses optional environment defines with bundled defaults", () {
     const config = TwitchAuthConfig();
     final uri = config.authorizationUri(state: "state-123");
 
     expect(config.isConfigured, isTrue);
     expect(uri.host, "id.twitch.tv");
-    expect(uri.queryParameters["client_id"], "deh8tdsvcsptv5sby686y9gamadiuo");
-    expect(uri.queryParameters["redirect_uri"], "https://twitch.tv/login");
-    expect(config.graphQlClientId, TwitchApiClient.defaultGraphQlClientId);
+    expect(
+      uri.queryParameters["client_id"],
+      const String.fromEnvironment(
+        "TWITCH_CLIENT_ID",
+        defaultValue: "deh8tdsvcsptv5sby686y9gamadiuo",
+      ),
+    );
+    expect(
+      uri.queryParameters["redirect_uri"],
+      const String.fromEnvironment("TWITCH_REDIRECT_URI", defaultValue: "https://twitch.tv/login"),
+    );
+    expect(
+      config.graphQlClientId,
+      const String.fromEnvironment(
+        "TWITCH_GQL_CLIENT_ID",
+        defaultValue: TwitchApiClient.defaultGraphQlClientId,
+      ),
+    );
   });
 
   test("rejects OAuth callbacks with mismatched state", () {

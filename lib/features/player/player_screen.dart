@@ -492,7 +492,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         }
       },
     );
-    if (!_playWhenReady) {
+    if (!_playWhenReady || (_host == null && _openingDestination)) {
       unawaited(controller.pause());
     }
   }
@@ -673,21 +673,24 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     }
 
     await _openDestination(() async {
-      unawaited(
-        Navigator.of(context, rootNavigator: true).push<void>(
-          MaterialPageRoute<void>(
-            builder: (_) => ChannelScreen(
-              apiCache: widget.apiCache,
-              initialChannel: ChannelPreview(
-                login: login,
-                displayName: widget.channel.name,
-                avatarImageUrl: widget.channel.avatarImageUrl,
-                isLive: _isLive,
-              ),
+      final route = Navigator.of(context, rootNavigator: true).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => ChannelScreen(
+            apiCache: widget.apiCache,
+            initialChannel: ChannelPreview(
+              login: login,
+              displayName: widget.channel.name,
+              avatarImageUrl: widget.channel.avatarImageUrl,
+              isLive: _isLive,
             ),
           ),
         ),
       );
+      if (_host == null) {
+        await route;
+      } else {
+        unawaited(route);
+      }
     });
   }
 
@@ -725,17 +728,20 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
           imageUrl: twitchBoxArtUrl(category.boxArtUrl),
           colors: colorsForText(category.id),
         );
-        unawaited(
-          Navigator.of(context, rootNavigator: true).push<void>(
-            MaterialPageRoute<void>(
-              builder: (_) => CategoryStreamsScreen(
-                apiCache: widget.apiCache,
-                category: destination,
-                preferences: widget.preferences ?? AppSettingsScope.maybeOf(context)?.preferences,
-              ),
+        final route = Navigator.of(context, rootNavigator: true).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => CategoryStreamsScreen(
+              apiCache: widget.apiCache,
+              category: destination,
+              preferences: widget.preferences ?? AppSettingsScope.maybeOf(context)?.preferences,
             ),
           ),
         );
+        if (_host == null) {
+          await route;
+        } else {
+          unawaited(route);
+        }
       } on Object catch (error) {
         if (mounted) {
           _showDestinationError(browseErrorMessage(error));
@@ -750,8 +756,12 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     }
     _openingDestination = true;
     _controlsTimer?.cancel();
+    final resumeOnReturn = _host == null && _playWhenReady;
     _host?.minimize();
     try {
+      if (resumeOnReturn) {
+        await _playerController?.pause();
+      }
       if (_playerForcedLandscape) {
         _playerForcedLandscape = false;
         await _queueDisplayMode(widget.displayModeController.restore);
@@ -762,6 +772,9 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       await open();
     } finally {
       _openingDestination = false;
+      if (mounted && resumeOnReturn && ModalRoute.of(context)?.isCurrent == true) {
+        await _playerController?.play();
+      }
     }
   }
 

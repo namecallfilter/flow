@@ -1143,6 +1143,36 @@ void main() {
     ("player_profile_button", "channel_page_creator"),
     ("player_category_button", "category_streams_page_Just Chatting"),
   ]) {
+    for (final wasPlaying in [true, false]) {
+      testWidgets("opening $destinationKey without a host restores playing=$wasPlaying", (
+        tester,
+      ) async {
+        final player = _FakePlayerController();
+        await tester.pumpWidget(_playerApp(player: player, apiCache: _navigationApiCache()));
+        await tester.pump();
+        player.emit(
+          TwitchPlaybackStateEvent(
+            isPlaying: wasPlaying,
+            isBuffering: false,
+            playWhenReady: wasPlaying,
+          ),
+        );
+        await tester.pump();
+
+        await tester.tap(find.byKey(ValueKey(buttonKey)));
+        await _pumpNavigation(tester);
+        expect(find.byKey(ValueKey(destinationKey)), findsOneWidget);
+        expect(player._pauseCount, wasPlaying ? 1 : 0);
+        expect(player._playCount, 0);
+        expect(player._disposeCount, 0);
+
+        await tester.pageBack();
+        await _pumpNavigation(tester);
+        expect(player._playCount, wasPlaying ? 1 : 0);
+        expect(player._disposeCount, 0);
+      });
+    }
+
     testWidgets("opening $destinationKey minimizes playback without interrupting it", (
       tester,
     ) async {
@@ -1321,6 +1351,33 @@ void main() {
     expect(player._playCount, 0);
     host.dismiss();
     await _pumpNavigation(tester);
+  });
+
+  testWidgets("a player attaching behind a destination without a host waits until return", (
+    tester,
+  ) async {
+    final player = _FakePlayerController();
+    final playbackUri = Completer<Uri>();
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        apiCache: _navigationApiCache(),
+        playbackUriLoader: (_) => playbackUri.future,
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey("player_profile_button")));
+    await _pumpNavigation(tester);
+
+    playbackUri.complete(Uri.parse("https://example.com/late-live.m3u8"));
+    await _pumpNavigation(tester);
+    expect(find.byKey(const ValueKey("channel_page_creator")), findsOneWidget);
+    expect(player._pauseCount, 1);
+    expect(player._playCount, 0);
+
+    await tester.pageBack();
+    await _pumpNavigation(tester);
+    expect(player._playCount, 1);
   });
 
   testWidgets("updates viewers separately and freezes latency while paused", (tester) async {
