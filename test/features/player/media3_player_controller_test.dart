@@ -7,7 +7,7 @@ import "package:flutter_test/flutter_test.dart";
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test("forwards PiP preference values to the native player", () async {
+  test("forwards PiP preferences and stop to the native player", () async {
     const viewId = 48;
     const channel = MethodChannel("flow/twitch_player/$viewId");
     final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -23,9 +23,11 @@ void main() {
     );
     await controller.setPictureInPictureEnabled(enabled: false);
     await controller.setPictureInPictureEnabled(enabled: true);
+    await controller.stop();
     expect(calls.map((call) => (call.method, call.arguments)), [
       ("setPictureInPictureEnabled", false),
       ("setPictureInPictureEnabled", true),
+      ("stop", null),
     ]);
     controller.dispose();
   });

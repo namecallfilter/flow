@@ -10,6 +10,114 @@ import "package:http/testing.dart";
 void main() {
   tearDown(() => TwitchApiClient.restoreWebSessionDeviceId(null));
 
+  test(
+    "chat profile lookup prefers stable IDs and supports normalized login-only history",
+    () async {
+      final requests = <Map<String, Object?>>[];
+      final client = TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "unused-token",
+        httpClient: MockClient((request) async {
+          expect(request.headers["authorization"], isNull);
+          requests.add(jsonDecode(request.body) as Map<String, Object?>);
+          return _jsonResponse({
+            "data": {
+              "users": [
+                {
+                  "id": "123",
+                  "login": "renamed",
+                  "displayName": "Renamed",
+                  "profileImageURL": "https://example.com/avatar.png",
+                },
+              ],
+            },
+          });
+        }),
+      );
+      final byId = await client.fetchChatUser(userId: "123", login: "previousname");
+      expect(byId!.login, "renamed");
+      expect(byId.profileImageUrl, "https://example.com/avatar.png");
+      expect((requests.last["variables"]! as Map<String, Object?>)["ids"], ["123"]);
+      expect((requests.last["variables"]! as Map<String, Object?>)["logins"], isNull);
+      final byLogin = await client.fetchChatUser(login: " Renamed ");
+      expect(byLogin!.id, "123");
+      expect((requests.last["variables"]! as Map<String, Object?>)["logins"], ["renamed"]);
+      expect(await client.fetchChatUser(userId: "456", login: "renamed"), isNull);
+      final count = requests.length;
+      expect(await client.fetchChatUser(), isNull);
+      expect(requests.length, count);
+    },
+  );
+
+  test(
+    "blocks the selected user through the signed-in web account and confirms the target",
+    () async {
+      final client = TwitchApiClient(
+        clientId: "oauth-client",
+        accessToken: "oauth-token",
+        gqlAccessToken: "web-token",
+        httpClient: MockClient((request) async {
+          expect(request.headers["authorization"], "OAuth web-token");
+          expect(request.headers["client-id"], "kimne78kx3ncx6brgo4mv6wki5h1ko");
+          final payload = jsonDecode(request.body) as Map<String, Object?>;
+          expect(payload["query"], contains("mutation FlowBlockUser"));
+          expect(payload["variables"], {"targetUserID": "123"});
+          return _jsonResponse({
+            "data": {
+              "blockUser": {
+                "targetUser": {"id": "123"},
+              },
+            },
+          });
+        }),
+      );
+      await client.blockUser("123");
+    },
+  );
+
+  test("blocking requires an account and rejects malformed IDs before sending", () async {
+    var calls = 0;
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "",
+      httpClient: MockClient((_) async {
+        calls++;
+        return _jsonResponse({});
+      }),
+    );
+    await expectLater(client.blockUser("123"), throwsA(isA<TwitchApiException>()));
+    await expectLater(client.blockUser("not-an-id"), throwsA(isA<TwitchApiException>()));
+    expect(calls, 0);
+  });
+
+  test("blocking rejects GraphQL errors and unconfirmed targets", () async {
+    for (final response in [
+      {
+        "errors": [
+          {"message": "Not authorized"},
+        ],
+      },
+      {
+        "data": {"blockUser": null},
+      },
+      {
+        "data": {
+          "blockUser": {
+            "targetUser": {"id": "456"},
+          },
+        },
+      },
+    ]) {
+      final client = TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "oauth-token",
+        gqlAccessToken: "web-token",
+        httpClient: MockClient((_) async => _jsonResponse(response)),
+      );
+      await expectLater(client.blockUser("123"), throwsA(isA<TwitchApiException>()));
+    }
+  });
+
   for (final isPartner in [true, false, null]) {
     test("retains explicit partner status across channel queries ($isPartner)", () async {
       final broadcaster = {"id": "creator", "login": "creator", "isPartner": isPartner};

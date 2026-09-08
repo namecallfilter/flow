@@ -2,19 +2,26 @@ import "dart:async";
 import "dart:convert";
 import "dart:math" as math;
 
+import "package:flow/api/twitch_chat_message.dart";
 import "package:flow/api/twitch_cookie_extractor.dart";
+import "package:flow/graphql/FlowBlockUser.graphql.dart";
 import "package:flow/graphql/FlowChannelDetails.graphql.dart";
 import "package:flow/graphql/FlowChannelSubscription.graphql.dart";
+import "package:flow/graphql/FlowChatAssets.graphql.dart";
+import "package:flow/graphql/FlowChatReplies.graphql.dart";
+import "package:flow/graphql/FlowChatters.graphql.dart";
 import "package:flow/graphql/FlowCurrentUser.graphql.dart";
 import "package:flow/graphql/FlowFollowedLiveUsers.graphql.dart";
 import "package:flow/graphql/FlowFollowedUsers.graphql.dart";
 import "package:flow/graphql/FlowGameStreams.graphql.dart";
+import "package:flow/graphql/FlowPinnedChat.graphql.dart";
 import "package:flow/graphql/FlowPlaybackAccessToken.graphql.dart";
 import "package:flow/graphql/FlowSearchCategories.graphql.dart";
 import "package:flow/graphql/FlowSearchChannels.graphql.dart";
 import "package:flow/graphql/FlowTopGames.graphql.dart";
 import "package:flow/graphql/FlowTopStreams.graphql.dart";
 import "package:flow/graphql/FlowUsers.graphql.dart";
+import "package:flow/graphql/FlowVodChat.graphql.dart";
 import "package:flow/graphql/FlowVodSeekMetadata.graphql.dart";
 import "package:flow/graphql/schema.graphqls.dart";
 import "package:flow/shared/twitch/stream_sort.dart";
@@ -240,6 +247,39 @@ class TwitchPage<T> {
 
   final List<T> data;
   final String? cursor;
+}
+
+class TwitchVodChatPage {
+  const TwitchVodChatPage({
+    required this.messages,
+    required this.cursor,
+    required this.hasNextPage,
+  });
+
+  final List<TwitchChatMessage> messages;
+  final String? cursor;
+  final bool hasNextPage;
+}
+
+class TwitchNativeChatAssets {
+  const TwitchNativeChatAssets({
+    required this.channelId,
+    required this.badgeUrls,
+    required this.emoteIdsByName,
+    this.badgeTitles = const {},
+  });
+
+  final String channelId;
+  final Map<String, String> badgeUrls;
+  final Map<String, String> badgeTitles;
+  final Map<String, String> emoteIdsByName;
+}
+
+class TwitchChatters {
+  const TwitchChatters({required this.count, required this.groups});
+
+  final int count;
+  final Map<String, List<String>> groups;
 }
 
 class TwitchMutedSegment {
@@ -480,6 +520,56 @@ class TwitchApiClient {
       }
     }
     return users;
+  }
+
+  Future<TwitchUser?> fetchChatUser({String? userId, String? login}) async {
+    final id = _nonEmptyValue(userId);
+    final normalizedLogin = _nonEmptyValue(login)?.toLowerCase();
+    if (id == null && normalizedLogin == null) {
+      return null;
+    }
+    final data = await _query(
+      () => _graphQlClient.query$FlowUsers(
+        Options$Query$FlowUsers(
+          variables: Variables$Query$FlowUsers(
+            ids: id == null ? null : [id],
+            logins: id == null ? [normalizedLogin!] : null,
+          ),
+          fetchPolicy: graphql.FetchPolicy.noCache,
+        ),
+      ),
+      "FlowUsers",
+    );
+    for (final item in _mapList(data.toJson()["users"])) {
+      final user = _userFromGraphQlUser(item);
+      if (id != null ? user.id == id : user.login.toLowerCase() == normalizedLogin) {
+        return user;
+      }
+    }
+    return null;
+  }
+
+  Future<void> blockUser(String userId) async {
+    final id = userId.trim();
+    if (!RegExp(r"^\d+$").hasMatch(id)) {
+      throw TwitchApiException("Choose a valid Twitch user to block.");
+    }
+    if (_nonEmptyValue(gqlAccessToken) == null) {
+      throw TwitchApiException("Sign in to Twitch before blocking a user.");
+    }
+    final result = await _query(
+      () => _authenticatedGraphQlClient.mutate$FlowBlockUser(
+        Options$Mutation$FlowBlockUser(
+          variables: Variables$Mutation$FlowBlockUser(targetUserID: id),
+          fetchPolicy: graphql.FetchPolicy.noCache,
+        ),
+      ),
+      "FlowBlockUser",
+      retryIntegrityChallenge: true,
+    );
+    if (result.blockUser?.targetUser?.id != id) {
+      throw TwitchApiException("Twitch did not confirm that the user was blocked.");
+    }
   }
 
   Future<Map<String, TwitchChannelInfo>> fetchChannelInfoByBroadcasterIds(
@@ -830,6 +920,247 @@ class TwitchApiClient {
         "type": "any",
       },
     );
+  }
+
+  Future<TwitchNativeChatAssets> fetchChatAssets(String login) async {
+    final data = await _query(
+      () => _graphQlClient.query$FlowChatAssets(
+        Options$Query$FlowChatAssets(
+          variables: Variables$Query$FlowChatAssets(login: login.trim().toLowerCase()),
+          fetchPolicy: graphql.FetchPolicy.noCache,
+        ),
+      ),
+      "FlowChatAssets",
+    );
+    final result = data.toJson();
+    final user = _mapValue(result["user"]);
+    final channelId = _nonEmptyValue(user?["id"] as String?);
+    if (channelId == null || result["badges"] is! List<Object?>) {
+      throw TwitchApiException("Twitch chat badges are unavailable.");
+    }
+    final channel = _mapValue(user?["channel"]);
+    return TwitchNativeChatAssets(
+      channelId: channelId,
+      badgeUrls: {
+        for (final badge in [..._mapList(result["badges"]), ..._mapList(user?["broadcastBadges"])])
+          if (badge["setID"] is String && badge["version"] is String && badge["imageURL"] is String)
+            "${badge["setID"]}/${badge["version"]}": badge["imageURL"]! as String,
+      },
+      badgeTitles: {
+        for (final badge in [..._mapList(result["badges"]), ..._mapList(user?["broadcastBadges"])])
+          if (badge["setID"] is String && badge["version"] is String && badge["title"] is String)
+            "${badge["setID"]}/${badge["version"]}": badge["title"]! as String,
+      },
+      emoteIdsByName: {
+        for (final emote in [
+          ..._mapList(_mapValue(result["emoteSet"])?["emotes"]),
+          for (final product in _mapList(user?["subscriptionProducts"]))
+            ..._mapList(product["emotes"]),
+          for (final set in _mapList(channel?["localEmoteSets"])) ..._mapList(set["emotes"]),
+        ])
+          if (emote["token"] is String && emote["id"] is String)
+            emote["token"]! as String: emote["id"]! as String,
+      },
+    );
+  }
+
+  Future<TwitchChatters> fetchChatters(String login) async {
+    final data = await _query(
+      () => _graphQlClient.query$FlowChatters(
+        Options$Query$FlowChatters(
+          variables: Variables$Query$FlowChatters(login: login.trim().toLowerCase()),
+          fetchPolicy: graphql.FetchPolicy.noCache,
+        ),
+      ),
+      "FlowChatters",
+    );
+    final user = _mapValue(data.toJson()["user"]);
+    final chatters = _mapValue(_mapValue(user?["channel"])?["chatters"]);
+    if (chatters == null || chatters["count"] is! int) {
+      throw TwitchApiException("The chatter list is unavailable right now.");
+    }
+    return TwitchChatters(
+      count: _intValue(chatters["count"]),
+      groups: {
+        for (final role in ["broadcasters", "moderators", "vips", "staff", "viewers"])
+          role: [
+            for (final viewer in _mapList(chatters[role]))
+              ?_nonEmptyValue(viewer["login"] as String?),
+          ],
+      },
+    );
+  }
+
+  Future<TwitchPinnedChat?> fetchPinnedChat(String channelId) async {
+    final data = await _query(
+      () => _graphQlClient.query$FlowPinnedChat(
+        Options$Query$FlowPinnedChat(
+          variables: Variables$Query$FlowPinnedChat(channelID: channelId),
+          fetchPolicy: graphql.FetchPolicy.noCache,
+        ),
+      ),
+      "FlowPinnedChat",
+    );
+    final channel = _mapValue(data.toJson()["channel"]);
+    final edges = _mapValue(channel?["pinnedChatMessages"])?["edges"];
+    if (channel?["id"] != channelId || edges is! List) {
+      throw TwitchApiException("Pinned chat is unavailable for this channel.");
+    }
+    if (edges.isEmpty) {
+      return null;
+    }
+    final pin = _mapValue(_mapValue(edges.first)?["node"]);
+    final message = _mapValue(pin?["pinnedMessage"]);
+    final id = _nonEmptyValue(pin?["id"] as String?);
+    if (id == null || message == null) {
+      throw TwitchApiException("Twitch returned an incomplete pinned message.");
+    }
+    final pinner = _mapValue(pin?["pinnedBy"]);
+    final pinnerId = _nonEmptyValue(pinner?["id"] as String?);
+    return TwitchPinnedChat(
+      id: id,
+      message: _chatMessageFromGraphQl(message),
+      endsAt: _dateTimeValue(pin?["endsAt"]),
+      pinnedBy: pinnerId == null
+          ? null
+          : (
+              id: pinnerId,
+              login: _stringValue(pinner?["login"]),
+              displayName:
+                  _nonEmptyValue(pinner?["displayName"] as String?) ??
+                  _stringValue(pinner?["login"]),
+            ),
+    );
+  }
+
+  Future<List<TwitchChatMessage>> fetchChatReplyThread(String messageId) async {
+    var requestedId = messageId.trim();
+    if (requestedId.isEmpty) {
+      return const [];
+    }
+    final visited = <String>{};
+    late Map<String, Object?> root;
+    while (true) {
+      if (!visited.add(requestedId)) {
+        throw TwitchApiException("Twitch returned an invalid reply thread.");
+      }
+      final data = await _query(
+        () => _graphQlClient.query$FlowChatReplies(
+          Options$Query$FlowChatReplies(
+            variables: Variables$Query$FlowChatReplies(messageID: requestedId),
+            fetchPolicy: graphql.FetchPolicy.noCache,
+          ),
+        ),
+        "FlowChatReplies",
+      );
+      final message = _mapValue(data.toJson()["message"]);
+      if (message == null) {
+        return const [];
+      }
+      root = message;
+      final ancestorId =
+          _nonEmptyValue(_mapValue(root["threadParentMessage"])?["id"] as String?) ??
+          _nonEmptyValue(_mapValue(root["parentMessage"])?["id"] as String?);
+      if (ancestorId == null || ancestorId == requestedId) {
+        break;
+      }
+      requestedId = ancestorId;
+    }
+    final rootId = _stringValue(root["id"]);
+    final rootLogin = _stringValue(_mapValue(root["sender"])?["login"]);
+    return [
+      _chatMessageFromGraphQl(root),
+      for (final reply in _mapList(_mapValue(root["replies"])?["nodes"]))
+        _chatMessageFromGraphQl(reply, threadRootId: rootId, threadRootLogin: rootLogin),
+    ];
+  }
+
+  Future<TwitchVodChatPage> fetchVodChatPage(
+    String videoId, {
+    int? offsetSeconds,
+    String? cursor,
+  }) async {
+    final normalizedVideoId = _nonEmptyValue(videoId);
+    if (normalizedVideoId == null) {
+      throw TwitchApiException("Video ID is required.");
+    }
+    final normalizedCursor = _nonEmptyValue(cursor);
+    final data = await _query(
+      () => _graphQlClient.query$FlowVodChat(
+        Options$Query$FlowVodChat(
+          variables: Variables$Query$FlowVodChat(
+            videoId: normalizedVideoId,
+            offsetSeconds: normalizedCursor == null ? math.max(0, offsetSeconds ?? 0) : null,
+            cursor: normalizedCursor,
+          ),
+          fetchPolicy: graphql.FetchPolicy.noCache,
+        ),
+      ),
+      "FlowVodChat",
+    );
+    final video = _mapValue(data.toJson()["video"]);
+    final comments = _mapValue(video?["comments"]);
+    final edges = comments?["edges"];
+    final hasNextPage = _mapValue(comments?["pageInfo"])?["hasNextPage"];
+    if (edges is! List<Object?> || hasNextPage is! bool) {
+      throw TwitchApiException("Chat replay is unavailable for this video.");
+    }
+    final messages = <TwitchChatMessage>[];
+    for (final edge in edges) {
+      final node = _mapValue(_mapValue(edge)?["node"]);
+      final id = _nonEmptyValue(node?["id"] as String?);
+      final offset = node?["contentOffsetSeconds"];
+      final message = _mapValue(node?["message"]);
+      final fragments = message?["fragments"];
+      if (id == null || offset is! num || offset < 0 || fragments is! List<Object?>) {
+        throw TwitchApiException("Chat replay contains an incomplete message.");
+      }
+      final text = StringBuffer();
+      final emotes = <TwitchChatEmote>[];
+      for (final fragment in fragments) {
+        final part = _mapValue(fragment);
+        final content = part?["text"];
+        if (content is! String) {
+          throw TwitchApiException("Chat replay contains an incomplete message.");
+        }
+        final emoteId = _nonEmptyValue(_mapValue(part?["emote"])?["emoteID"] as String?);
+        if (emoteId != null && content.isNotEmpty) {
+          emotes.add(
+            TwitchChatEmote(id: emoteId, start: text.length, end: text.length + content.length),
+          );
+        }
+        text.write(content);
+      }
+      final commenter = _mapValue(node?["commenter"]);
+      messages.add(
+        TwitchChatMessage(
+          id: id,
+          login: _stringValue(commenter?["login"]),
+          userId: _nonEmptyValue(commenter?["id"] as String?),
+          displayName:
+              _nonEmptyValue(commenter?["displayName"] as String?) ??
+              _nonEmptyValue(commenter?["login"] as String?) ??
+              "Deleted user",
+          text: text.toString(),
+          color: message?["userColor"] as String?,
+          emotes: emotes,
+          badges: [
+            for (final badge in _mapList(message?["userBadges"]))
+              if (_nonEmptyValue(badge["setID"] as String?) case final setId?)
+                "$setId/${_stringValue(badge["version"])}",
+          ],
+          offsetSeconds: offset.toDouble(),
+        ),
+      );
+    }
+    messages.sort((a, b) => a.offsetSeconds!.compareTo(b.offsetSeconds!));
+    final nextCursor = hasNextPage && edges.isNotEmpty
+        ? _nonEmptyValue(_mapValue(edges.last)?["cursor"] as String?)
+        : null;
+    if (hasNextPage && (nextCursor == null || nextCursor == normalizedCursor)) {
+      throw TwitchApiException("Chat replay pagination did not advance.");
+    }
+    return TwitchVodChatPage(messages: messages, cursor: nextCursor, hasNextPage: hasNextPage);
   }
 
   Future<TwitchVodSeekMetadata> fetchVodSeekMetadata(String videoId) async {
@@ -1442,6 +1773,58 @@ class TwitchApiClient {
       return null;
     }
     return trimmed;
+  }
+
+  static TwitchChatMessage _chatMessageFromGraphQl(
+    Map<String, Object?> message, {
+    String? threadRootId,
+    String? threadRootLogin,
+  }) {
+    final sender = _mapValue(message["sender"]);
+    final content = _mapValue(message["content"]);
+    final fragments = _mapList(content?["fragments"]);
+    final buffer = StringBuffer();
+    final emotes = <TwitchChatEmote>[];
+    for (final fragment in fragments) {
+      final text = _stringValue(fragment["text"]);
+      final emoteId = _nonEmptyValue(_mapValue(fragment["content"])?["emoteID"] as String?);
+      if (emoteId != null && text.isNotEmpty) {
+        emotes.add(
+          TwitchChatEmote(id: emoteId, start: buffer.length, end: buffer.length + text.length),
+        );
+      }
+      buffer.write(text);
+    }
+    final text = content?["text"] as String? ?? buffer.toString();
+    final parent = _mapValue(message["parentMessage"]);
+    final parentSender = _mapValue(parent?["sender"]);
+    final thread = _mapValue(message["threadParentMessage"]);
+    return TwitchChatMessage(
+      id: _stringValue(message["id"]),
+      login: _stringValue(sender?["login"]),
+      displayName:
+          _nonEmptyValue(sender?["displayName"] as String?) ??
+          _nonEmptyValue(sender?["login"] as String?) ??
+          "Deleted user",
+      userId: _nonEmptyValue(sender?["id"] as String?),
+      text: text,
+      color: message["senderChatColor"] as String? ?? sender?["chatColor"] as String?,
+      badges: [
+        for (final badge in _mapList(message["senderBadges"] ?? sender?["displayBadges"]))
+          if (_nonEmptyValue(badge["setID"] as String?) case final setId?)
+            "$setId/${_stringValue(badge["version"])}",
+      ],
+      emotes: buffer.toString() == text ? emotes : const [],
+      timestamp: _dateTimeValue(message["sentAt"]),
+      isDeleted: message["deletedAt"] != null,
+      parentMessageId: parent?["id"] as String?,
+      parentUserId: parentSender?["id"] as String?,
+      parentLogin: parentSender?["login"] as String?,
+      parentDisplayName: parentSender?["displayName"] as String?,
+      parentText: _mapValue(parent?["content"])?["text"] as String?,
+      threadRootId: thread?["id"] as String? ?? threadRootId,
+      threadRootLogin: _mapValue(thread?["sender"])?["login"] as String? ?? threadRootLogin,
+    );
   }
 
   static Map<String, Object?>? _mapValue(Object? value) {

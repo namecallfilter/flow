@@ -76,6 +76,24 @@ mixin _$AppSettingsStore on AppSettingsStoreBase, Store {
     });
   }
 
+  late final _$chatPreferencesAtom = Atom(
+    name: 'AppSettingsStoreBase.chatPreferences',
+    context: context,
+  );
+
+  @override
+  ChatPreferences get chatPreferences {
+    _$chatPreferencesAtom.reportRead();
+    return super.chatPreferences;
+  }
+
+  @override
+  set chatPreferences(ChatPreferences value) {
+    _$chatPreferencesAtom.reportWrite(value, super.chatPreferences, () {
+      super.chatPreferences = value;
+    });
+  }
+
   late final _$adProxyEnabledAtom = Atom(
     name: 'AppSettingsStoreBase.adProxyEnabled',
     context: context,
@@ -208,6 +226,18 @@ mixin _$AppSettingsStore on AppSettingsStoreBase, Store {
     );
   }
 
+  late final _$setChatPreferencesAsyncAction = AsyncAction(
+    'AppSettingsStoreBase.setChatPreferences',
+    context: context,
+  );
+
+  @override
+  Future<void> setChatPreferences(ChatPreferences settings) {
+    return _$setChatPreferencesAsyncAction.run(
+      () => super.setChatPreferences(settings),
+    );
+  }
+
   late final _$setAdProxyEnabledAsyncAction = AsyncAction(
     'AppSettingsStoreBase.setAdProxyEnabled',
     context: context,
@@ -265,6 +295,7 @@ mixin _$AppSettingsStore on AppSettingsStoreBase, Store {
 themeMode: ${themeMode},
 pictureInPictureEnabled: ${pictureInPictureEnabled},
 miniPlayerEnabled: ${miniPlayerEnabled},
+chatPreferences: ${chatPreferences},
 adProxyEnabled: ${adProxyEnabled},
 adProxyUrls: ${adProxyUrls},
 adProxyWhitelistedChannels: ${adProxyWhitelistedChannels},

@@ -4,6 +4,7 @@ import "dart:convert";
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
+import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/browse/browse_screen.dart";
 import "package:flow/features/browse/browse_search_store.dart";
@@ -580,11 +581,13 @@ void main() {
   testWidgets("shows partner badges and preserves search result navigation", (
     tester,
   ) async {
+    final settings = AppSettingsStore(preferences: MemoryFlowPreferences());
     final rootNavigator = GlobalKey<NavigatorState>();
     final tabNavigator = GlobalKey<NavigatorState>();
     await tester.pumpWidget(
       MaterialApp(
         navigatorKey: rootNavigator,
+        builder: (_, child) => AppSettingsScope(settingsStore: settings, child: child!),
         theme: buildFlowTheme(Brightness.dark),
         home: Navigator(
           key: tabNavigator,

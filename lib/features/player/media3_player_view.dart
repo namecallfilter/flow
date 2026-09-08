@@ -14,6 +14,7 @@ class Media3PlayerView extends StatelessWidget {
     super.key,
     this.proxyUrls = const [],
     this.initialQualityId = "auto",
+    this.initialPosition = Duration.zero,
     this.mediaTitle = "Flow",
     this.mediaArtist = "",
     this.isLive = true,
@@ -24,6 +25,7 @@ class Media3PlayerView extends StatelessWidget {
   final Future<Uri> Function() playbackUriRefresher;
   final List<String> proxyUrls;
   final String initialQualityId;
+  final Duration initialPosition;
   final String mediaTitle;
   final String mediaArtist;
   final bool isLive;
@@ -65,6 +67,7 @@ class Media3PlayerView extends StatelessWidget {
             "url": uri.toString(),
             "proxyUrls": proxyUrls,
             "qualityId": initialQualityId,
+            "positionMs": initialPosition.inMilliseconds,
             "title": mediaTitle,
             "artist": mediaArtist,
             "isLive": isLive,
@@ -100,6 +103,7 @@ class Media3PlayerView extends StatelessWidget {
     );
     properties.add(IntProperty("proxyUrlCount", proxyUrls.length));
     properties.add(StringProperty("initialQualityId", initialQualityId));
+    properties.add(DiagnosticsProperty<Duration>("initialPosition", initialPosition));
     properties.add(StringProperty("mediaTitle", mediaTitle));
     properties.add(StringProperty("mediaArtist", mediaArtist));
     properties.add(DiagnosticsProperty<bool>("isLive", isLive));

@@ -99,6 +99,8 @@ abstract interface class TwitchPlayerController {
 
   Future<void> pause();
 
+  Future<void> stop();
+
   Future<void> togglePlayback();
 
   Future<void> jumpToLive();
@@ -158,6 +160,9 @@ class MethodChannelTwitchPlayerController implements TwitchPlayerController {
 
   @override
   Future<void> pause() => _invoke("pause");
+
+  @override
+  Future<void> stop() => _invoke("stop");
 
   @override
   Future<void> play() => _invoke("play");

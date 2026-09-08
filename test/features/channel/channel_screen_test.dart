@@ -4,6 +4,7 @@ import "dart:convert";
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
+import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/routes.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/channel/channel_screen.dart";
@@ -12,6 +13,7 @@ import "package:flow/features/following/following_screen.dart";
 import "package:flow/features/following/following_store.dart";
 import "package:flow/features/player/player_navigation.dart";
 import "package:flow/features/player/player_screen.dart";
+import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/widgets/app_bottom_nav.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
@@ -28,10 +30,12 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     final navigatorKey = GlobalKey<NavigatorState>();
     final host = PlaybackHost();
+    final settings = AppSettingsStore(preferences: MemoryFlowPreferences());
     await tester.pumpWidget(
       MaterialApp(
         navigatorKey: navigatorKey,
         navigatorObservers: [host],
+        builder: (_, child) => AppSettingsScope(settingsStore: settings, child: child!),
         theme: buildFlowTheme(Brightness.dark),
         home: ChannelScreen(
           apiCache: TwitchApiCache(
@@ -125,6 +129,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     final rootNavigatorKey = GlobalKey<NavigatorState>();
     final tabNavigatorKey = GlobalKey<NavigatorState>();
+    final settings = AppSettingsStore(preferences: MemoryFlowPreferences());
     final response = Completer<http.Response>();
     final apiCache = TwitchApiCache(
       clientLoader: () async => TwitchApiClient(
@@ -178,6 +183,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         navigatorKey: rootNavigatorKey,
+        builder: (_, child) => AppSettingsScope(settingsStore: settings, child: child!),
         theme: buildFlowTheme(Brightness.dark),
         home: Scaffold(
           body: Navigator(
@@ -511,8 +517,10 @@ void main() {
   testWidgets("opens the live player when the channel avatar is tapped", (
     tester,
   ) async {
+    final settings = AppSettingsStore(preferences: MemoryFlowPreferences());
     await tester.pumpWidget(
       MaterialApp(
+        builder: (_, child) => AppSettingsScope(settingsStore: settings, child: child!),
         theme: buildFlowTheme(Brightness.dark),
         home: ChannelScreen(
           apiCache: TwitchApiCache(

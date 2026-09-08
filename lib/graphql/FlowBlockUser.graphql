@@ -1,0 +1,5 @@
+mutation FlowBlockUser($targetUserID: ID!) {
+  blockUser(input: {targetUserID: $targetUserID}) {
+    targetUser { id }
+  }
+}

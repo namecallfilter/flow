@@ -4,12 +4,15 @@ import "dart:convert";
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
+import "package:flow/api/twitch_chat.dart";
+import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/browse/browse_store.dart";
 import "package:flow/features/following/following_screen.dart";
 import "package:flow/features/following/following_store.dart";
 import "package:flow/features/player/player_navigation.dart";
 import "package:flow/features/player/player_screen.dart";
+import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
@@ -44,6 +47,13 @@ void main() {
                   openStreamPlayer(
                     context,
                     builder: (_) => StreamPlayerScreen(
+                      preferences: MemoryFlowPreferences(),
+                      chatControllerFactory: (channel) => TwitchChatController(
+                        channel: channel,
+                        clientLoader: () async =>
+                            throw StateError("Chat is offline in widget tests"),
+                        autoConnect: false,
+                      ),
                       apiCache: _channelApiCache(),
                       channel: channel,
                       playbackUriLoader: (_) async => Uri.parse("https://example.com/live.m3u8"),
@@ -416,12 +426,15 @@ Future<void> _logInFromMe(WidgetTester tester) async {
 Widget _followingScreen({
   TwitchApiCache? apiCache,
   TwitchLoginOpener? openTwitchLogin,
-}) => MaterialApp(
-  theme: buildFlowTheme(Brightness.dark),
-  home: FollowingScreen(
-    authController: _authController(),
-    apiCache: apiCache,
-    openTwitchLogin: openTwitchLogin,
+}) => AppSettingsScope(
+  settingsStore: AppSettingsStore(preferences: MemoryFlowPreferences()),
+  child: MaterialApp(
+    theme: buildFlowTheme(Brightness.dark),
+    home: FollowingScreen(
+      authController: _authController(),
+      apiCache: apiCache,
+      openTwitchLogin: openTwitchLogin,
+    ),
   ),
 );
 

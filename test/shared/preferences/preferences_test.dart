@@ -3,6 +3,121 @@ import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  test("chat appearance and emote providers persist with safe font defaults", () async {
+    final store = _MemoryPreferencesStore();
+    final preferences = SharedPreferencesFlowPreferences(store: store);
+    final defaults = await preferences.readChatPreferences();
+    expect(defaults.fontSize, 14);
+    expect(defaults.showTimestamps, isFalse);
+    expect(defaults.showBadges, isTrue);
+    expect(defaults.emoteScale, 1);
+    expect(defaults.badgeScale, 1);
+    expect(defaults.messageScale, 1);
+    expect(defaults.messageSpacing, 6);
+    expect(defaults.showDeletedMessages, isFalse);
+    expect(defaults.autoSyncChat, isTrue);
+    expect(defaults.manualChatDelaySeconds, 0);
+    expect(defaults.highlightFirstMessages, isTrue);
+    expect(defaults.showSubscriptionNotices, isTrue);
+    expect(defaults.showAnnouncements, isTrue);
+    expect(defaults.showRaidNotices, isTrue);
+    await preferences.saveChatPreferences(
+      const ChatPreferences(
+        fontSize: 19,
+        emoteScale: 1.5,
+        badgeScale: 0.8,
+        messageScale: 1.7,
+        messageSpacing: 12,
+        showTimestamps: true,
+        showDeletedMessages: true,
+        autoSyncChat: false,
+        manualChatDelaySeconds: 23,
+        highlightFirstMessages: false,
+        showSubscriptionNotices: false,
+        showAnnouncements: false,
+        showRaidNotices: false,
+        showBadges: false,
+        showEmotes: false,
+        twitchBadges: false,
+        sevenTvBadges: false,
+        bttvBadges: false,
+        ffzBadges: false,
+        twitchEmotes: false,
+        sevenTvEmotes: false,
+        bttvEmotes: false,
+        ffzEmotes: false,
+      ),
+    );
+    final restored = await SharedPreferencesFlowPreferences(store: store).readChatPreferences();
+    expect(restored.fontSize, 19);
+    expect(restored.emoteScale, 1.5);
+    expect(restored.badgeScale, 0.8);
+    expect(restored.messageScale, 1.7);
+    expect(restored.messageSpacing, 12);
+    expect(restored.showTimestamps, isTrue);
+    expect(restored.showDeletedMessages, isTrue);
+    expect(restored.autoSyncChat, isFalse);
+    expect(restored.manualChatDelaySeconds, 23);
+    expect(restored.highlightFirstMessages, isFalse);
+    expect(restored.showSubscriptionNotices, isFalse);
+    expect(restored.showAnnouncements, isFalse);
+    expect(restored.showRaidNotices, isFalse);
+    expect(restored.showBadges, isFalse);
+    expect(restored.showEmotes, isFalse);
+    expect(restored.twitchBadges, isFalse);
+    expect(restored.sevenTvBadges, isFalse);
+    expect(restored.bttvBadges, isFalse);
+    expect(restored.ffzBadges, isFalse);
+    expect(restored.twitchEmotes, isFalse);
+    expect(restored.sevenTvEmotes, isFalse);
+    expect(restored.bttvEmotes, isFalse);
+    expect(restored.ffzEmotes, isFalse);
+    store.stringLists["chat_settings"] = ["NaN"];
+    expect((await preferences.readChatPreferences()).fontSize, 14);
+    store.stringLists["chat_settings"] = ["900"];
+    expect((await preferences.readChatPreferences()).fontSize, 24);
+  });
+
+  test(
+    "chat numeric settings clamp invalid stored ranges and migrate old master switches",
+    () async {
+      final store = _MemoryPreferencesStore()
+        ..stringLists["chat_settings"] = [
+          "14",
+          "emote_scale=99",
+          "badge_scale=-1",
+          "message_scale=NaN",
+          "message_spacing=-1",
+          "manual_delay=200",
+          "hide_badges",
+          "hide_emotes",
+        ];
+      final preferences = SharedPreferencesFlowPreferences(store: store);
+      final migrated = await preferences.readChatPreferences();
+      expect(migrated.emoteScale, 2);
+      expect(migrated.badgeScale, 0.5);
+      expect(migrated.messageScale, 1);
+      expect(migrated.messageSpacing, 0);
+      expect(migrated.manualChatDelaySeconds, 30);
+      expect(migrated.twitchBadges, isFalse);
+      expect(migrated.sevenTvBadges, isFalse);
+      expect(migrated.bttvBadges, isFalse);
+      expect(migrated.ffzBadges, isFalse);
+      expect(migrated.twitchEmotes, isFalse);
+      expect(migrated.sevenTvEmotes, isFalse);
+      expect(migrated.bttvEmotes, isFalse);
+      expect(migrated.ffzEmotes, isFalse);
+      await preferences.saveChatPreferences(
+        migrated.copyWith(twitchBadges: true, sevenTvEmotes: true),
+      );
+      final overridden = await preferences.readChatPreferences();
+      expect(overridden.twitchBadges, isTrue);
+      expect(overridden.sevenTvEmotes, isTrue);
+      expect(overridden.ffzBadges, isFalse);
+      expect(overridden.bttvEmotes, isFalse);
+    },
+  );
+
   test("playback modes default on and persist independent selections", () async {
     final store = _MemoryPreferencesStore();
     final preferences = SharedPreferencesFlowPreferences(store: store);

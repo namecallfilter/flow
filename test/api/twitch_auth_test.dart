@@ -15,6 +15,7 @@ void main() {
 
     expect(config.isConfigured, isTrue);
     expect(uri.host, "id.twitch.tv");
+    expect(uri.queryParameters["scope"], "user:read:follows chat:read chat:edit");
     expect(
       uri.queryParameters["client_id"],
       const String.fromEnvironment(

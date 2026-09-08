@@ -1,0 +1,48 @@
+query FlowChatReplies($messageID: ID!) {
+  message(id: $messageID) {
+    ...FlowChatReplyMessage
+    replies {
+      nodes {
+        ...FlowChatReplyMessage
+      }
+      totalCount
+    }
+  }
+}
+
+fragment FlowChatReplyMessage on Message {
+  id
+  sentAt
+  deletedAt
+  sender {
+    id
+    login
+    displayName
+  }
+  senderChatColor
+  senderBadges {
+    setID
+    version
+  }
+  content {
+    text
+    fragments {
+      text
+      content {
+        __typename
+        ... on Emote {
+          emoteID: id
+        }
+      }
+    }
+  }
+  parentMessage {
+    id
+    content { text }
+    sender { id login displayName }
+  }
+  threadParentMessage {
+    id
+    sender { login }
+  }
+}

@@ -26,6 +26,110 @@ abstract interface class FlowPreferences {
   Future<void> saveStreamSort(String section, StreamSort sort);
   Future<CategorySort> readCategorySort();
   Future<void> saveCategorySort(CategorySort sort);
+  Future<ChatPreferences> readChatPreferences();
+  Future<void> saveChatPreferences(ChatPreferences preferences);
+}
+
+class ChatPreferences {
+  const ChatPreferences({
+    this.fontSize = 14,
+    this.emoteScale = 1,
+    this.badgeScale = 1,
+    this.messageScale = 1,
+    this.messageSpacing = 6,
+    this.showTimestamps = false,
+    this.showDeletedMessages = false,
+    this.autoSyncChat = true,
+    this.manualChatDelaySeconds = 0,
+    this.highlightFirstMessages = true,
+    this.showSubscriptionNotices = true,
+    this.showAnnouncements = true,
+    this.showRaidNotices = true,
+    this.showBadges = true,
+    this.showEmotes = true,
+    this.twitchBadges = true,
+    this.sevenTvBadges = true,
+    this.bttvBadges = true,
+    this.ffzBadges = true,
+    this.twitchEmotes = true,
+    this.sevenTvEmotes = true,
+    this.bttvEmotes = true,
+    this.ffzEmotes = true,
+  });
+
+  final double fontSize;
+  final double emoteScale;
+  final double badgeScale;
+  final double messageScale;
+  final double messageSpacing;
+  final bool showTimestamps;
+  final bool showDeletedMessages;
+  final bool autoSyncChat;
+  final double manualChatDelaySeconds;
+  final bool highlightFirstMessages;
+  final bool showSubscriptionNotices;
+  final bool showAnnouncements;
+  final bool showRaidNotices;
+  final bool showBadges;
+  final bool showEmotes;
+  final bool twitchBadges;
+  final bool sevenTvBadges;
+  final bool bttvBadges;
+  final bool ffzBadges;
+  final bool twitchEmotes;
+  final bool sevenTvEmotes;
+  final bool bttvEmotes;
+  final bool ffzEmotes;
+
+  ChatPreferences copyWith({
+    double? fontSize,
+    double? emoteScale,
+    double? badgeScale,
+    double? messageScale,
+    double? messageSpacing,
+    bool? showTimestamps,
+    bool? showDeletedMessages,
+    bool? autoSyncChat,
+    double? manualChatDelaySeconds,
+    bool? highlightFirstMessages,
+    bool? showSubscriptionNotices,
+    bool? showAnnouncements,
+    bool? showRaidNotices,
+    bool? showBadges,
+    bool? showEmotes,
+    bool? twitchBadges,
+    bool? sevenTvBadges,
+    bool? bttvBadges,
+    bool? ffzBadges,
+    bool? twitchEmotes,
+    bool? sevenTvEmotes,
+    bool? bttvEmotes,
+    bool? ffzEmotes,
+  }) => ChatPreferences(
+    fontSize: fontSize ?? this.fontSize,
+    emoteScale: emoteScale ?? this.emoteScale,
+    badgeScale: badgeScale ?? this.badgeScale,
+    messageScale: messageScale ?? this.messageScale,
+    messageSpacing: messageSpacing ?? this.messageSpacing,
+    showTimestamps: showTimestamps ?? this.showTimestamps,
+    showDeletedMessages: showDeletedMessages ?? this.showDeletedMessages,
+    autoSyncChat: autoSyncChat ?? this.autoSyncChat,
+    manualChatDelaySeconds: manualChatDelaySeconds ?? this.manualChatDelaySeconds,
+    highlightFirstMessages: highlightFirstMessages ?? this.highlightFirstMessages,
+    showSubscriptionNotices: showSubscriptionNotices ?? this.showSubscriptionNotices,
+    showAnnouncements: showAnnouncements ?? this.showAnnouncements,
+    showRaidNotices: showRaidNotices ?? this.showRaidNotices,
+    showBadges: showBadges ?? this.showBadges,
+    showEmotes: showEmotes ?? this.showEmotes,
+    twitchBadges: twitchBadges ?? this.twitchBadges,
+    sevenTvBadges: sevenTvBadges ?? this.sevenTvBadges,
+    bttvBadges: bttvBadges ?? this.bttvBadges,
+    ffzBadges: ffzBadges ?? this.ffzBadges,
+    twitchEmotes: twitchEmotes ?? this.twitchEmotes,
+    sevenTvEmotes: sevenTvEmotes ?? this.sevenTvEmotes,
+    bttvEmotes: bttvEmotes ?? this.bttvEmotes,
+    ffzEmotes: ffzEmotes ?? this.ffzEmotes,
+  );
 }
 
 abstract interface class FlowPreferencesStore {
@@ -84,6 +188,78 @@ class SharedPreferencesFlowPreferences implements FlowPreferences {
   static const loginOfferDismissedKey = "login_offer_dismissed";
 
   final FlowPreferencesStore _store;
+
+  @override
+  Future<ChatPreferences> readChatPreferences() async {
+    final values = await _store.getStringList("chat_settings") ?? const [];
+    final size = double.tryParse(values.firstOrNull ?? "");
+    double number(String key, double fallback, double min, double max) {
+      final raw = values.where((value) => value.startsWith("$key=")).firstOrNull;
+      final parsed = double.tryParse(raw?.substring(key.length + 1) ?? "");
+      return parsed != null && parsed.isFinite ? parsed.clamp(min, max) : fallback;
+    }
+
+    final legacyHideBadges =
+        !values.contains("per_provider_assets") && values.contains("hide_badges");
+    final legacyHideEmotes =
+        !values.contains("per_provider_assets") && values.contains("hide_emotes");
+    return ChatPreferences(
+      fontSize: size != null && size.isFinite ? size.clamp(10, 24) : 14,
+      emoteScale: number("emote_scale", 1, 0.5, 2),
+      badgeScale: number("badge_scale", 1, 0.5, 2),
+      messageScale: number("message_scale", 1, 0.5, 2),
+      messageSpacing: number("message_spacing", 6, 0, 16),
+      showTimestamps: values.contains("timestamps"),
+      showDeletedMessages: values.contains("deleted_messages"),
+      autoSyncChat: !values.contains("manual_sync"),
+      manualChatDelaySeconds: number("manual_delay", 0, 0, 30),
+      highlightFirstMessages: !values.contains("disable_first_messages"),
+      showSubscriptionNotices: !values.contains("hide_subscriptions"),
+      showAnnouncements: !values.contains("hide_announcements"),
+      showRaidNotices: !values.contains("hide_raids"),
+      showBadges: !values.contains("hide_badges"),
+      showEmotes: !values.contains("hide_emotes"),
+      twitchBadges: !legacyHideBadges && !values.contains("disable_twitch_badges"),
+      sevenTvBadges: !legacyHideBadges && !values.contains("disable_7tv_badges"),
+      bttvBadges: !legacyHideBadges && !values.contains("disable_bttv_badges"),
+      ffzBadges: !legacyHideBadges && !values.contains("disable_ffz_badges"),
+      twitchEmotes: !legacyHideEmotes && !values.contains("disable_twitch"),
+      sevenTvEmotes: !legacyHideEmotes && !values.contains("disable_7tv"),
+      bttvEmotes: !legacyHideEmotes && !values.contains("disable_bttv"),
+      ffzEmotes: !legacyHideEmotes && !values.contains("disable_ffz"),
+    );
+  }
+
+  @override
+  Future<void> saveChatPreferences(ChatPreferences preferences) => _store.setStringList(
+    "chat_settings",
+    [
+      preferences.fontSize.toString(),
+      "per_provider_assets",
+      "emote_scale=${preferences.emoteScale}",
+      "badge_scale=${preferences.badgeScale}",
+      "message_scale=${preferences.messageScale}",
+      "message_spacing=${preferences.messageSpacing}",
+      "manual_delay=${preferences.manualChatDelaySeconds}",
+      if (preferences.showTimestamps) "timestamps",
+      if (preferences.showDeletedMessages) "deleted_messages",
+      if (!preferences.autoSyncChat) "manual_sync",
+      if (!preferences.highlightFirstMessages) "disable_first_messages",
+      if (!preferences.showSubscriptionNotices) "hide_subscriptions",
+      if (!preferences.showAnnouncements) "hide_announcements",
+      if (!preferences.showRaidNotices) "hide_raids",
+      if (!preferences.showBadges) "hide_badges",
+      if (!preferences.showEmotes) "hide_emotes",
+      if (!preferences.twitchBadges) "disable_twitch_badges",
+      if (!preferences.sevenTvBadges) "disable_7tv_badges",
+      if (!preferences.bttvBadges) "disable_bttv_badges",
+      if (!preferences.ffzBadges) "disable_ffz_badges",
+      if (!preferences.twitchEmotes) "disable_twitch",
+      if (!preferences.sevenTvEmotes) "disable_7tv",
+      if (!preferences.bttvEmotes) "disable_bttv",
+      if (!preferences.ffzEmotes) "disable_ffz",
+    ],
+  );
 
   @override
   Future<StreamSort> readStreamSort(String section) async {

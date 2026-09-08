@@ -334,6 +334,9 @@ class MainActivity : FlutterActivity() {
 
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
             .addCategory(Intent.CATEGORY_BROWSABLE)
+            .apply {
+                selector = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_BROWSER)
+            }
 
         try {
             startActivity(intent)

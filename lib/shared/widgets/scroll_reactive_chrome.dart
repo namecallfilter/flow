@@ -237,7 +237,7 @@ class _ScrollReactiveChromeState extends State<ScrollReactiveChrome> {
               left: 0,
               right: 0,
               height: preferredHeight > minimumHeight ? preferredHeight : minimumHeight,
-              child: const _TopHeaderMaterial(),
+              child: const TopHeaderMaterial(),
             );
           },
         ),
@@ -289,8 +289,8 @@ class _ScrollReactiveChromeState extends State<ScrollReactiveChrome> {
   }
 }
 
-class _TopHeaderMaterial extends StatelessWidget {
-  const _TopHeaderMaterial();
+class TopHeaderMaterial extends StatelessWidget {
+  const TopHeaderMaterial({super.key});
 
   @override
   Widget build(BuildContext context) {

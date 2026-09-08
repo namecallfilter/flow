@@ -3,12 +3,17 @@ import "dart:convert";
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
+import "package:flow/api/twitch_chat.dart";
+import "package:flow/api/twitch_chat_assets.dart";
+import "package:flow/api/twitch_vod_chat.dart";
 import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/player/media3_player_controller.dart";
 import "package:flow/features/player/player_navigation.dart";
 import "package:flow/features/player/player_screen.dart";
+import "package:flow/features/player/twitch_chat_panel.dart";
 import "package:flow/shared/preferences/preferences.dart";
+import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
@@ -17,6 +22,720 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  for (final (chatOnly, buttonKey, destinationKey) in [
+    (true, "player_chat_category_button", "category_streams_page_Just Chatting"),
+    (false, "player_category_button", "category_streams_page_Just Chatting"),
+    (false, "player_profile_button", "channel_page_creator"),
+  ]) {
+    testWidgets("hosted $buttonKey reaches its destination when playback must close", (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final search = Completer<void>();
+      final chat = _TrackedChatController("creator");
+      final host = await _pumpHostedPlayer(
+        tester,
+        player: _FakePlayerController(),
+        apiCache: _navigationApiCache(beforeCategorySearch: search.future),
+        chatControllerFactory: (_) => chat,
+      );
+      host.setMiniPlayerEnabled(enabled: chatOnly);
+      await tester.pump();
+      if (chatOnly) {
+        await _toggleChatOnly(tester);
+      }
+      await tester.tap(find.byKey(ValueKey(buttonKey)));
+      if (buttonKey.contains("category")) {
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(find.byType(StreamPlayerScreen), findsOneWidget);
+        expect(chat.disposed, isFalse);
+      }
+      search.complete();
+      await _pumpNavigation(tester);
+      expect(find.byKey(ValueKey(destinationKey)), findsOneWidget);
+      expect(find.byType(StreamPlayerScreen), findsNothing);
+      expect(chat.disposed, isTrue);
+      await tester.pageBack();
+      await _pumpNavigation(tester);
+      expect(find.text("Flow"), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
+
+  testWidgets("chat-only title and category holds reveal the full text", (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    const title = "A long stream title that does not fit in the chat-only header";
+    const category = "A long category name that does not fit beside the live metadata";
+    await tester.pumpWidget(
+      _playerApp(player: _FakePlayerController(), title: title, category: category),
+    );
+    await tester.pump();
+    await _toggleChatOnly(tester);
+    for (final (key, text, count) in [
+      ("player_chat_name_and_title", title, 1),
+      ("player_chat_category_button", category, 2),
+    ]) {
+      final gesture = await tester.startGesture(tester.getCenter(find.byKey(ValueKey(key))));
+      await tester.pump(const Duration(milliseconds: 700));
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(find.text(text), findsNWidgets(count));
+      await tester.pump(const Duration(seconds: 6));
+      expect(find.text(text), findsNWidgets(count));
+      await gesture.up();
+      Tooltip.dismissAllToolTips();
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets("chat-only category tap opens its streams and Back preserves chat", (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final player = _FakePlayerController();
+    final chat = _TrackedChatController("creator");
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        apiCache: _navigationApiCache(),
+        chatControllerFactory: (_) => chat,
+      ),
+    );
+    await tester.pump();
+    await _toggleChatOnly(tester);
+    final chatState = tester.state(find.byType(TwitchChatPanel));
+    await tester.tap(find.byKey(const ValueKey("player_chat_category_button")));
+    await _pumpNavigation(tester);
+    expect(find.byKey(const ValueKey("category_streams_page_Just Chatting")), findsOneWidget);
+    expect(chat.disposed, isFalse);
+    await tester.pageBack();
+    await _pumpNavigation(tester);
+    expect(find.byKey(const ValueKey("player_chat_header")), findsOneWidget);
+    expect(tester.state(find.byType(TwitchChatPanel)), same(chatState));
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets("confirmed offline stops video and Check again requires a live response", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final player = _FakePlayerController();
+    final chat = _TrackedChatController("creator");
+    var online = true;
+    var playbackLoads = 0;
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        chatControllerFactory: (_) => chat,
+        apiCache: _StreamStatusApiCache((_) async => _streamStatusPage(online: online)),
+        useApiViewerLoader: true,
+        playbackUriLoader: (_) async {
+          playbackLoads++;
+          return Uri.parse("https://example.com/live.m3u8");
+        },
+      ),
+    );
+    await tester.pump();
+    final chatState = tester.state(find.byType(TwitchChatPanel));
+    online = false;
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pump();
+    expect(find.text("Stream ended"), findsOneWidget);
+    expect(find.text("Check again"), findsOneWidget);
+    expect(find.byKey(const ValueKey("player_live_duration")), findsNothing);
+    expect(find.byKey(const ValueKey("player_viewers")), findsNothing);
+    expect(find.byKey(const ValueKey("player_center_control")), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(player._stopCount, 1);
+    expect(player._disposeCount, 0);
+    expect(player._pictureInPictureEnabledValues.last, isFalse);
+    expect(tester.state(find.byType(TwitchChatPanel)), same(chatState));
+    expect(chat.disposed, isFalse);
+    expect(tester.widget<TwitchChatPanel>(find.byType(TwitchChatPanel)).latencyMs, 0);
+
+    player.emit(const TwitchPlaybackReloadEvent());
+    player.emit(const TwitchPlayerErrorEvent("Stale native error"));
+    player.emit(
+      const TwitchPlaybackStateEvent(isPlaying: true, isBuffering: true, playWhenReady: true),
+    );
+    await tester.pump();
+    await tester.tap(find.text("Check again"));
+    await tester.pump();
+    expect(find.text("Stream ended"), findsOneWidget);
+    expect(playbackLoads, 1);
+
+    online = true;
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pump();
+    expect(find.text("Stream ended"), findsOneWidget);
+    expect(playbackLoads, 1);
+    await tester.tap(find.text("Check again"));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text("Stream ended"), findsNothing);
+    expect(playbackLoads, 2);
+    expect(player._disposeCount, 1);
+    expect(player._pictureInPictureEnabledValues.last, isTrue);
+    expect(tester.state(find.byType(TwitchChatPanel)), same(chatState));
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(chat.disposed, isTrue);
+  });
+
+  testWidgets("failed status requests preserve playback and injected null is unknown", (
+    tester,
+  ) async {
+    var fail = false;
+    final player = _FakePlayerController();
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        apiCache: _StreamStatusApiCache((_) async {
+          if (fail) {
+            throw StateError("Offline network");
+          }
+          return _streamStatusPage(online: true);
+        }),
+        useApiViewerLoader: true,
+      ),
+    );
+    await tester.pump();
+    fail = true;
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pump();
+    expect(find.text("Stream ended"), findsNothing);
+    expect(player._stopCount, 0);
+    await tester.pumpWidget(_playerApp(player: player, login: "other"));
+    await tester.pump();
+    expect(find.text("Stream ended"), findsNothing);
+    expect(player._stopCount, 0);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets("an old channel offline response cannot end the current channel", (tester) async {
+    final previousStatus = Completer<TwitchPage<TwitchFollowedStream>>();
+    final api = _StreamStatusApiCache(
+      (login) => login == "creator"
+          ? previousStatus.future
+          : Future.value(_streamStatusPage(online: true)),
+    );
+    final player = _FakePlayerController();
+    await tester.pumpWidget(
+      _playerApp(player: player, apiCache: api, useApiViewerLoader: true),
+    );
+    await tester.pump();
+    await tester.pumpWidget(
+      _playerApp(player: player, login: "other", apiCache: api, useApiViewerLoader: true),
+    );
+    await tester.pump();
+    previousStatus.complete(_streamStatusPage(online: false));
+    await tester.pump();
+    expect(find.text("Stream ended"), findsNothing);
+    expect(player._stopCount, 0);
+    expect(find.byKey(const ValueKey("player_page_other")), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets("an empty stream lookup needs matching channel confirmation", (tester) async {
+    var response = 0;
+    final player = _FakePlayerController();
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        useApiViewerLoader: true,
+        apiCache: _StreamStatusApiCache(
+          (_) async => _streamStatusPage(online: false),
+          detailsLoader: (_) async {
+            if (response == 0) {
+              throw StateError("Channel unavailable");
+            }
+            return _offlineChannelDetails(response == 1 ? "unrelated" : "");
+          },
+        ),
+      ),
+    );
+    for (response = 0; response < 3; response++) {
+      await tester.pump(const Duration(seconds: 30));
+      await tester.pump();
+      expect(find.text("Stream ended"), findsNothing);
+      expect(player._stopCount, 0);
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets("a late offline confirmation cannot end a replacement channel", (tester) async {
+    final confirmation = Completer<TwitchChannelDetails>();
+    final api = _StreamStatusApiCache(
+      (login) async => _streamStatusPage(online: login != "creator"),
+      detailsLoader: (_) => confirmation.future,
+    );
+    final player = _FakePlayerController();
+    await tester.pumpWidget(
+      _playerApp(player: player, apiCache: api, useApiViewerLoader: true),
+    );
+    await tester.pump();
+    await tester.pumpWidget(
+      _playerApp(player: player, login: "other", apiCache: api, useApiViewerLoader: true),
+    );
+    await tester.pump();
+    confirmation.complete(_offlineChannelDetails("creator"));
+    await tester.pump();
+    expect(find.text("Stream ended"), findsNothing);
+    expect(player._stopCount, 0);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets("ended playback keeps PiP return events and the mini-player dismissible", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final player = _FakePlayerController();
+    final chat = _TrackedChatController("creator");
+    final host = await _pumpHostedPlayer(
+      tester,
+      player: player,
+      chatControllerFactory: (_) => chat,
+    );
+    host.setPictureInPicture(active: true);
+    await _pumpNavigation(tester);
+    player.emit(
+      const TwitchPlaybackStateEvent(
+        isPlaying: false,
+        isBuffering: false,
+        playWhenReady: true,
+        isEnded: true,
+      ),
+    );
+    await tester.pump();
+    expect(find.text("Stream ended"), findsOneWidget);
+    expect(player._stopCount, 1);
+    expect(player._disposeCount, 0);
+    expect(chat.disposed, isFalse);
+    player.emit(const TwitchPictureInPictureEvent(active: false));
+    await _pumpNavigation(tester);
+    expect(host.mode, PlaybackMode.expanded);
+    expect(find.text("Check again"), findsOneWidget);
+    host.minimize();
+    await _pumpNavigation(tester);
+    expect(find.text("Stream ended"), findsOneWidget);
+    expect(find.text("Check again"), findsNothing);
+    await tester.tap(find.byKey(const ValueKey("player_mini")));
+    await _pumpNavigation(tester);
+    expect(host.mode, PlaybackMode.expanded);
+    expect(find.text("Check again"), findsOneWidget);
+    expect(chat.disposed, isFalse);
+    host.dismiss();
+    await _pumpNavigation(tester);
+    expect(chat.disposed, isTrue);
+  });
+
+  testWidgets("native live end preserves chat-only status and cannot start video again", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final player = _FakePlayerController();
+    var playbackLoads = 0;
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        playbackUriLoader: (_) async {
+          playbackLoads++;
+          return Uri.parse("https://example.com/live.m3u8");
+        },
+      ),
+    );
+    await tester.pump();
+    player.emit(
+      const TwitchPlaybackStateEvent(
+        isPlaying: false,
+        isBuffering: false,
+        playWhenReady: true,
+        isEnded: true,
+      ),
+    );
+    await tester.pump();
+    expect(player._stopCount, 1);
+    expect(find.text("Stream ended"), findsOneWidget);
+    await _toggleChatOnly(tester);
+    expect(find.text("Stream ended"), findsOneWidget);
+    expect(find.byKey(const ValueKey("player_live_dot")), findsNothing);
+    expect(find.byKey(const ValueKey("player_live_duration")), findsNothing);
+    expect(find.byKey(const ValueKey("player_viewers")), findsNothing);
+    await _toggleChatOnly(tester);
+    expect(find.text("Stream ended"), findsOneWidget);
+    expect(playbackLoads, 1);
+    await tester.tap(find.text("Check again"));
+    await tester.pump();
+    expect(find.text("Stream ended"), findsOneWidget);
+    expect(playbackLoads, 1);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets("recording completion remains replayable without a stream-ended state", (
+    tester,
+  ) async {
+    final player = _FakePlayerController();
+    await tester.pumpWidget(_playerApp(player: player, videoId: "123456"));
+    await tester.pump();
+    player.emit(
+      const TwitchPlaybackStateEvent(
+        isPlaying: false,
+        isBuffering: false,
+        playWhenReady: true,
+        isEnded: true,
+        position: Duration(minutes: 1),
+        duration: Duration(minutes: 1),
+      ),
+    );
+    await tester.pump();
+    expect(find.text("Stream ended"), findsNothing);
+    expect(player._stopCount, 0);
+    expect(find.byKey(const ValueKey("player_center_control")), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets("playback presentation and app lifecycle preserve healthy live chat connections", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final chat = _TrackedChatController("creator");
+    final host = await _pumpHostedPlayer(
+      tester,
+      player: _FakePlayerController(),
+      chatControllerFactory: (_) => chat,
+    );
+    for (final status in [
+      TwitchChatStatus.connecting,
+      TwitchChatStatus.connected,
+      TwitchChatStatus.reconnecting,
+    ]) {
+      chat.connectionStatus = status;
+      host.minimize();
+      await _pumpNavigation(tester);
+      host.restore();
+      await _pumpNavigation(tester);
+      host.setPictureInPicture(active: true);
+      await _pumpNavigation(tester);
+      host.setPictureInPicture(active: false);
+      await _pumpNavigation(tester);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(chat.reconnectCount, 0);
+      expect(chat.disposed, isFalse);
+      expect(tester.widget<TwitchChatPanel>(find.byType(TwitchChatPanel)).controller, same(chat));
+    }
+    chat.connectionStatus = TwitchChatStatus.disconnected;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(chat.reconnectCount, 1);
+    host.minimize();
+    await _pumpNavigation(tester);
+    host.restore();
+    await _pumpNavigation(tester);
+    expect(chat.reconnectCount, 2);
+    host.dismiss();
+    await _pumpNavigation(tester);
+    expect(chat.disposed, isTrue);
+  });
+
+  testWidgets("mini and PiP release keyboard focus and retain the chat draft through resizing", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final player = _FakePlayerController();
+    final host = await _pumpHostedPlayer(
+      tester,
+      player: player,
+      chatControllerFactory: (channel) => _TrackedChatController(channel, writable: true),
+    );
+    final composer = find.byKey(const ValueKey("chat_message_input"));
+    final input = tester.widget<EditableText>(
+      find.descendant(of: composer, matching: find.byType(EditableText)),
+    );
+    final surface = tester.element(find.byType(_FakePlayerSurface));
+    for (final mode in [PlaybackMode.mini, PlaybackMode.pip]) {
+      await tester.enterText(composer, "Keep this draft");
+      expect(input.focusNode.hasFocus, isTrue);
+      if (mode == PlaybackMode.mini) {
+        host.minimize();
+      } else {
+        host.setPictureInPicture(active: true);
+      }
+      await _pumpNavigation(tester);
+      expect(input.focusNode.hasFocus, isFalse);
+      expect(tester.testTextInput.isVisible, isFalse);
+      tester.view.physicalSize = mode == PlaybackMode.mini
+          ? const Size(800, 400)
+          : const Size(240, 135);
+      await _pumpNavigation(tester);
+      expect(tester.takeException(), isNull);
+      tester.view.physicalSize = const Size(400, 800);
+      if (mode == PlaybackMode.mini) {
+        host.restore();
+      } else {
+        host.setPictureInPicture(active: false);
+      }
+      await _pumpNavigation(tester);
+      expect(tester.takeException(), isNull);
+      expect(tester.widget<TextField>(composer).controller, same(input.controller));
+      expect(input.controller.text, "Keep this draft");
+      expect(tester.element(find.byType(_FakePlayerSurface)), same(surface));
+    }
+    host.dismiss();
+    await _pumpNavigation(tester);
+  });
+
+  testWidgets("chat-only metadata matches the video values and typography", (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(_playerApp(player: _FakePlayerController()));
+    await tester.pump();
+    Text metric(String key) => tester.widget<Text>(
+      find.descendant(of: find.byKey(ValueKey(key)), matching: find.byType(Text)),
+    );
+    final duration = metric("player_live_duration");
+    final viewers = metric("player_viewers");
+    final dotSize = tester.getSize(find.byKey(const ValueKey("player_live_dot")));
+    expect(duration.data, "1:02:03");
+    expect(viewers.data, "12.3K");
+    await _toggleChatOnly(tester);
+    expect(tester.widget<TwitchChatPanel>(find.byType(TwitchChatPanel)).latencyMs, 0);
+    for (final pair in [
+      (metric("player_live_duration"), duration),
+      (metric("player_viewers"), viewers),
+    ]) {
+      expect(pair.$1.data, pair.$2.data);
+      expect(pair.$1.style?.fontSize, pair.$2.style?.fontSize);
+      expect(pair.$1.style?.fontWeight, pair.$2.style?.fontWeight);
+      expect(pair.$1.style?.fontFeatures, pair.$2.style?.fontFeatures);
+    }
+    expect(tester.getSize(find.byKey(const ValueKey("player_live_dot"))), dotSize);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets(
+    "VOD replay follows playback and seeks, freezes in chat only, and changes with the video",
+    (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final player = _FakePlayerController();
+      final replays = <_TrackedReplayController>[];
+      TwitchVodChatController createReplay(String videoId) {
+        final replay = _TrackedReplayController(videoId);
+        replays.add(replay);
+        return replay;
+      }
+
+      await tester.pumpWidget(
+        _playerApp(player: player, videoId: "123456", replayControllerFactory: createReplay),
+      );
+      await tester.pump();
+      final replay = replays.single;
+      player.emit(
+        const TwitchPlaybackStateEvent(
+          isPlaying: true,
+          isBuffering: false,
+          playWhenReady: true,
+          position: Duration(seconds: 20),
+          duration: Duration(minutes: 2),
+        ),
+      );
+      await tester.pump();
+      expect(replay.positions, [(position: const Duration(seconds: 20), seek: false)]);
+
+      final timeline = tester.getRect(find.byKey(const ValueKey("player_vod_seek")));
+      await tester.tapAt(Offset(timeline.left + timeline.width * .75, timeline.center.dy));
+      await tester.pump();
+      final sought = player._seekPositions.single;
+      expect(replay.positions.last, (position: sought, seek: true));
+      final surface = tester.getRect(find.byKey(const ValueKey("player_surface_tap_target")));
+      final rewindPoint = Offset(surface.left + surface.width * .2, surface.center.dy);
+      await tester.tapAt(rewindPoint);
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tapAt(rewindPoint);
+      await tester.pump();
+      expect(player._seekPositions.last, sought - const Duration(seconds: 10));
+      expect(replay.positions.last, (position: player._seekPositions.last, seek: true));
+
+      await _toggleChatOnly(tester);
+      await tester.pump();
+      final frozenPositions = List.of(replay.positions);
+      player.emit(
+        const TwitchPlaybackStateEvent(
+          isPlaying: true,
+          isBuffering: false,
+          playWhenReady: true,
+          position: Duration(seconds: 90),
+          duration: Duration(minutes: 2),
+        ),
+      );
+      await tester.pump(const Duration(seconds: 2));
+      expect(replay.positions, frozenPositions);
+      expect(replay.disposed, isFalse);
+      expect(find.byType(_FakePlayerSurface), findsNothing);
+
+      await tester.pumpWidget(
+        _playerApp(player: player, videoId: "654321", replayControllerFactory: createReplay),
+      );
+      await tester.pump();
+      expect(replays.map((value) => value.videoId), ["123456", "654321"]);
+      expect(replay.disposed, isTrue);
+      expect(replays.last.disposed, isFalse);
+      expect(replays.last.positions, isEmpty);
+      expect(find.byType(_FakePlayerSurface), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(replays.last.disposed, isTrue);
+    },
+  );
+
+  for (final videoId in [null, "123456"]) {
+    testWidgets("chat only fits a landscape keyboard (${videoId == null ? "live" : "VOD"})", (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(_playerApp(player: _FakePlayerController(), videoId: videoId));
+      await tester.pump();
+      await _toggleChatOnly(tester);
+      await tester.pump();
+      tester.view.physicalSize = const Size(800, 400);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 240);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const ValueKey("player_chat_header")), findsOneWidget);
+      expect(find.byKey(const ValueKey("chat_menu")).hitTestable(), findsOneWidget);
+      expect(tester.getSize(find.byKey(const ValueKey("chat_messages"))).height, greaterThan(0));
+      if (videoId == null) {
+        final composer = find.byKey(const ValueKey("chat_message_input"));
+        expect(composer.hitTestable(), findsOneWidget);
+        expect(tester.getBottomLeft(composer).dy, lessThanOrEqualTo(160));
+      }
+      tester.view.viewInsets = FakeViewPadding.zero;
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey("player_chat_header")), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
+
+  testWidgets("chat only releases playback, keeps chat and reloads watching", (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    for (final videoId in [null, "123456"]) {
+      final player = _FakePlayerController();
+      final chats = <_TrackedChatController>[];
+      final replays = <_TrackedReplayController>[];
+      var loads = 0;
+      await tester.pumpWidget(
+        _playerApp(
+          player: player,
+          videoId: videoId,
+          chatControllerFactory: (channel) {
+            final chat = _TrackedChatController(channel);
+            chats.add(chat);
+            return chat;
+          },
+          replayControllerFactory: (id) {
+            final replay = _TrackedReplayController(id);
+            replays.add(replay);
+            return replay;
+          },
+          playbackUriLoader: (_) async {
+            loads++;
+            return Uri.parse("https://example.com/live.m3u8");
+          },
+        ),
+      );
+      await tester.pump();
+      expect(find.byType(_FakePlayerSurface), findsOneWidget);
+      await _toggleChatOnly(tester);
+      await tester.pump();
+      expect(find.byType(_FakePlayerSurface), findsNothing);
+      expect(find.byKey(const ValueKey("player_chat_header")), findsOneWidget);
+      expect(player._pauseCount, 1);
+      expect(player._disposeCount, 1);
+      expect(chats.length + replays.length, 1);
+      expect(chats.firstOrNull?.disposed ?? replays.single.disposed, isFalse);
+      expect(loads, 1);
+      await _toggleChatOnly(tester);
+      await tester.pump();
+      await tester.pump();
+      expect(find.byType(_FakePlayerSurface), findsOneWidget);
+      expect(chats.length + replays.length, 1);
+      expect(loads, 2);
+      await tester.pumpWidget(const SizedBox());
+      expect(chats.firstOrNull?.disposed ?? replays.single.disposed, isTrue);
+    }
+  });
+
+  testWidgets("channel changes dispose old chat and invalidate pending playback", (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final player = _FakePlayerController();
+    final chats = <_TrackedChatController>[];
+    final pendingUri = Completer<Uri>();
+    TwitchChatController createChat(String channel) {
+      final chat = _TrackedChatController(channel);
+      chats.add(chat);
+      return chat;
+    }
+
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        chatControllerFactory: createChat,
+        playbackUriLoader: (_) => pendingUri.future,
+      ),
+    );
+    await tester.pump();
+    await _toggleChatOnly(tester);
+    await tester.pump();
+    pendingUri.complete(Uri.parse("https://example.com/stale.m3u8"));
+    await tester.pump();
+    expect(find.byType(_FakePlayerSurface), findsNothing);
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        login: "another_creator",
+        chatControllerFactory: createChat,
+      ),
+    );
+    await tester.pump();
+    expect(chats.map((chat) => chat.channel), ["creator", "another_creator"]);
+    expect(chats.first.disposed, isTrue);
+    expect(chats.last.disposed, isFalse);
+    expect(find.byType(_FakePlayerSurface), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets("PiP preference applies at attachment and updates without restarting playback", (
     tester,
   ) async {
@@ -458,6 +1177,7 @@ void main() {
   for (final (key, tooltip) in [
     ("player_settings_button", "Video quality"),
     ("player_name_and_title", "A precise stream title"),
+    ("player_category_button", "Just Chatting"),
   ]) {
     testWidgets("holding $key keeps its tooltip open and release gives three seconds", (
       tester,
@@ -479,7 +1199,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 700));
       await tester.pump(const Duration(milliseconds: 150));
       expect(_controlsOpacity(tester), 1);
-      expect(find.text(tooltip), findsOneWidget);
+      expect(find.text(tooltip), findsNWidgets(key == "player_category_button" ? 2 : 1));
       for (final isBuffering in [true, false]) {
         player.emit(
           TwitchPlaybackStateEvent(
@@ -492,14 +1212,14 @@ void main() {
       }
       await tester.pump(const Duration(seconds: 4));
       expect(_controlsOpacity(tester), 1);
-      expect(find.text(tooltip), findsOneWidget);
+      expect(find.text(tooltip), findsNWidgets(key == "player_category_button" ? 2 : 1));
       await gesture.up();
       await tester.pump(const Duration(milliseconds: 2999));
       expect(_controlsOpacity(tester), 1);
       await tester.pump(const Duration(milliseconds: 1));
       expect(_controlsOpacity(tester), 0);
       await tester.pump(const Duration(milliseconds: 200));
-      expect(find.text(tooltip), findsNothing);
+      expect(find.text(tooltip), findsNWidgets(key == "player_category_button" ? 1 : 0));
       expect(tester.element(find.byType(_FakePlayerSurface)), same(surface));
     });
   }
@@ -1033,6 +1753,9 @@ void main() {
   testWidgets("hidden controls retain latency without rebuilding the video surface", (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     final player = _FakePlayerController();
     var surfaceBuilds = 0;
     await tester.pumpWidget(
@@ -1061,6 +1784,7 @@ void main() {
     player.emit(const TwitchLatencyEvent(2300));
     await tester.pump(const Duration(seconds: 2));
     expect(surfaceBuilds, hiddenSurfaceBuilds);
+    expect(tester.widget<TwitchChatPanel>(find.byType(TwitchChatPanel)).latencyMs, 2300);
 
     await tester.tapAt(tester.getCenter(find.byKey(const ValueKey("player_viewport"))));
     await tester.pump();
@@ -1233,10 +1957,14 @@ void main() {
     await tester.pump();
     expect(player._playCount, 0);
 
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
     await tester.pump();
     expect(player._pauseCount, 0);
 
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     expect(player._playCount, 0);
@@ -1252,8 +1980,12 @@ void main() {
     await _pumpNavigation(tester);
     expect(find.byKey(const ValueKey("channel_page_creator")), findsOneWidget);
 
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
     await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     expect(player._playCount, 0);
@@ -1583,6 +2315,18 @@ double _controlsOpacity(WidgetTester tester) => tester
     )
     .opacity;
 
+Future<void> _toggleChatOnly(WidgetTester tester) async {
+  final wasChatOnly = find.byKey(const ValueKey("player_chat_header")).evaluate().isNotEmpty;
+  expect(find.byKey(const ValueKey("chat_only_toggle")), findsNothing);
+  await tester.tap(find.byKey(const ValueKey("chat_menu")));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 350));
+  expect(find.text(wasChatOnly ? "Show video" : "Chat only"), findsOneWidget);
+  await tester.tap(find.byKey(const ValueKey("chat_only_toggle")));
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 350));
+}
+
 Future<void> _pumpNavigation(WidgetTester tester) async {
   for (var index = 0; index < 8; index++) {
     await tester.pump(const Duration(milliseconds: 100));
@@ -1594,13 +2338,16 @@ Future<PlaybackHost> _pumpHostedPlayer(
   required _FakePlayerController player,
   PlayerDisplayModeController? displayMode,
   PlaybackUriLoader? playbackUriLoader,
+  TwitchApiCache? apiCache,
+  TwitchChatController Function(String)? chatControllerFactory,
 }) async {
   final app =
       _playerApp(
             player: player,
             displayMode: displayMode,
             playbackUriLoader: playbackUriLoader,
-            apiCache: _navigationApiCache(),
+            chatControllerFactory: chatControllerFactory,
+            apiCache: apiCache ?? _navigationApiCache(),
           )
           as MaterialApp;
   final host = PlaybackHost();
@@ -1619,6 +2366,11 @@ Future<PlaybackHost> _pumpHostedPlayer(
 
 Widget _playerApp({
   required _FakePlayerController player,
+  String login = "creator",
+  String title = "A precise stream title",
+  String category = "Just Chatting",
+  TwitchChatController Function(String)? chatControllerFactory,
+  TwitchVodChatController Function(String)? replayControllerFactory,
   String? videoId,
   TwitchApiCache? apiCache,
   PlayerDisplayModeController? displayMode,
@@ -1628,11 +2380,20 @@ Widget _playerApp({
   PlayerSurfaceBuilder? playerSurfaceBuilder,
   bool useDefaultPlayerSurface = false,
   bool useApiPlaybackLoader = false,
+  bool useApiViewerLoader = false,
   AppSettingsStore? settingsStore,
 }) {
   final app = MaterialApp(
     theme: buildFlowTheme(Brightness.dark),
     home: StreamPlayerScreen(
+      chatControllerFactory: chatControllerFactory ?? _TrackedChatController.new,
+      replayControllerFactory: replayControllerFactory ?? _TrackedReplayController.new,
+      preferences: settingsStore == null ? MemoryFlowPreferences() : null,
+      chatAssetsFactory: (channel) => TwitchChatAssets(
+        channelLogin: channel,
+        clientLoader: () async => throw StateError("Chat assets are offline in widget tests"),
+        autoLoad: false,
+      ),
       videoId: videoId,
       apiCache:
           apiCache ??
@@ -1644,11 +2405,11 @@ Widget _playerApp({
           ),
       channel: StreamChannel(
         id: "creator-1",
-        login: "creator",
+        login: login,
         name: "Creator",
         initials: "CR",
-        title: "A precise stream title",
-        category: "Just Chatting",
+        title: title,
+        category: category,
         viewers: "12.3K",
         startedAt: DateTime(2026, 7, 9, 19),
         avatarColors: const [Colors.purple, Colors.pink],
@@ -1657,7 +2418,7 @@ Widget _playerApp({
       playbackUriLoader: useApiPlaybackLoader
           ? null
           : playbackUriLoader ?? (_) async => Uri.parse("https://example.com/live.m3u8"),
-      viewerCountLoader: viewerCountLoader ?? (_) async => null,
+      viewerCountLoader: useApiViewerLoader ? null : viewerCountLoader ?? (_) async => null,
       displayModeController: displayMode ?? _FakeDisplayModeController(),
       clock: () => DateTime(2026, 7, 9, 20, 2, 3),
       playerSurfaceBuilder: useDefaultPlayerSurface
@@ -1673,7 +2434,60 @@ Widget _playerApp({
   return settingsStore == null ? app : AppSettingsScope(settingsStore: settingsStore, child: app);
 }
 
-TwitchApiCache _navigationApiCache() => TwitchApiCache(
+class _StreamStatusApiCache extends TwitchApiCache {
+  _StreamStatusApiCache(this._load, {this.detailsLoader})
+    : super(clientLoader: () async => throw StateError("Only stream status is available"));
+
+  final Future<TwitchPage<TwitchFollowedStream>> Function(String login) _load;
+  final Future<TwitchChannelDetails> Function(String login)? detailsLoader;
+
+  @override
+  Future<TwitchChannelDetails> fetchChannelDetails(
+    String login, {
+    int videosFirst = 30,
+    String? videosCursor,
+    bool refresh = false,
+  }) async => detailsLoader != null ? detailsLoader!(login) : _offlineChannelDetails(login);
+
+  @override
+  Future<TwitchPage<TwitchFollowedStream>> fetchLiveStreamsPage({
+    int first = 20,
+    List<String> gameIds = const [],
+    List<String> userLogins = const [],
+    String? cursor,
+    bool refresh = false,
+    StreamSort sort = StreamSort.viewersHighToLow,
+  }) => _load(userLogins.single);
+}
+
+TwitchChannelDetails _offlineChannelDetails(String login) => TwitchChannelDetails(
+  id: "creator-1",
+  login: login,
+  displayName: "Creator",
+  description: "",
+  followers: 1,
+  pastBroadcasts: const [],
+  pastBroadcastsCursor: null,
+);
+
+TwitchPage<TwitchFollowedStream> _streamStatusPage({required bool online}) => TwitchPage(
+  data: [
+    if (online)
+      TwitchFollowedStream(
+        id: "stream-1",
+        userId: "creator-1",
+        userLogin: "creator",
+        userName: "Creator",
+        gameName: "Just Chatting",
+        title: "Live stream",
+        viewerCount: 12345,
+        startedAt: DateTime(2026, 7, 9, 19),
+      ),
+  ],
+  cursor: null,
+);
+
+TwitchApiCache _navigationApiCache({Future<void>? beforeCategorySearch}) => TwitchApiCache(
   clientLoader: () async => TwitchApiClient(
     clientId: "client",
     accessToken: "token",
@@ -1700,6 +2514,7 @@ TwitchApiCache _navigationApiCache() => TwitchApiCache(
         });
       }
       if (query.contains("FlowSearchCategories")) {
+        await beforeCategorySearch;
         return _jsonResponse({
           "data": {
             "searchCategories": {
@@ -1813,6 +2628,61 @@ class _DeferredPlayerSurfaceState extends State<_DeferredPlayerSurface> {
   Widget build(BuildContext context) => const ColoredBox(color: Colors.black);
 }
 
+class _TrackedReplayController extends TwitchVodChatController {
+  _TrackedReplayController(String videoId)
+    : super(
+        videoId: videoId,
+        clientLoader: () async => throw StateError("Replay is offline in widget tests"),
+        autoLoad: false,
+      );
+
+  bool disposed = false;
+  final positions = <({Duration position, bool seek})>[];
+
+  @override
+  void updatePosition(Duration position, {bool seek = false}) {
+    positions.add((position: position, seek: seek));
+  }
+
+  @override
+  void reconnect() {}
+
+  @override
+  void dispose() {
+    disposed = true;
+    super.dispose();
+  }
+}
+
+class _TrackedChatController extends TwitchChatController {
+  _TrackedChatController(String channel, {this.writable = false})
+    : super(
+        channel: channel,
+        clientLoader: () async => throw StateError("Chat is offline in widget tests"),
+        autoConnect: false,
+      );
+
+  bool disposed = false;
+  final bool writable;
+  int reconnectCount = 0;
+  TwitchChatStatus connectionStatus = TwitchChatStatus.connecting;
+
+  @override
+  TwitchChatStatus get status => connectionStatus;
+
+  @override
+  bool get canSend => writable;
+
+  @override
+  void reconnect() => reconnectCount++;
+
+  @override
+  void dispose() {
+    disposed = true;
+    super.dispose();
+  }
+}
+
 class _FakePlayerController implements TwitchPlayerController {
   @override
   Future<void> setPictureInPictureEnabled({required bool enabled}) async {
@@ -1823,6 +2693,7 @@ class _FakePlayerController implements TwitchPlayerController {
   int _jumpToLiveCount = 0;
   int _toggleCount = 0;
   int _pauseCount = 0;
+  int _stopCount = 0;
   int _playCount = 0;
   int _disposeCount = 0;
   final _seekPositions = <Duration>[];
@@ -1851,6 +2722,11 @@ class _FakePlayerController implements TwitchPlayerController {
   @override
   Future<void> pause() async {
     _pauseCount++;
+  }
+
+  @override
+  Future<void> stop() async {
+    _stopCount++;
   }
 
   @override

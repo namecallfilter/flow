@@ -1,5 +1,52 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 // ignore_for_file: type=lint
+class Input$BlockUserInput {
+  factory Input$BlockUserInput({required String targetUserID}) =>
+      Input$BlockUserInput._({r'targetUserID': targetUserID});
+
+  Input$BlockUserInput._(this._$data);
+
+  factory Input$BlockUserInput.fromJson(Map<String, dynamic> data) {
+    final result$data = <String, dynamic>{};
+    final l$targetUserID = data['targetUserID'];
+    result$data['targetUserID'] = (l$targetUserID as String);
+    return Input$BlockUserInput._(result$data);
+  }
+
+  Map<String, dynamic> _$data;
+
+  String get targetUserID => (_$data['targetUserID'] as String);
+
+  Map<String, dynamic> toJson() {
+    final result$data = <String, dynamic>{};
+    final l$targetUserID = targetUserID;
+    result$data['targetUserID'] = l$targetUserID;
+    return result$data;
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other is! Input$BlockUserInput || runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$targetUserID = targetUserID;
+    final lOther$targetUserID = other.targetUserID;
+    if (l$targetUserID != lOther$targetUserID) {
+      return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode {
+    final l$targetUserID = targetUserID;
+    return Object.hashAll([l$targetUserID]);
+  }
+}
+
 class Input$RecommendationsContext {
   factory Input$RecommendationsContext({String? platform}) =>
       Input$RecommendationsContext._({
@@ -3378,6 +3425,39 @@ Enum$Video_Moments_Types_Enum fromJson$Enum$Video_Moments_Types_Enum(
       return Enum$Video_Moments_Types_Enum.PUBG_VCA;
     default:
       return Enum$Video_Moments_Types_Enum.$unknown;
+  }
+}
+
+enum Enum$PinnedChatMessageType {
+  MOD,
+  CHEER,
+  $unknown;
+
+  factory Enum$PinnedChatMessageType.fromJson(String value) =>
+      fromJson$Enum$PinnedChatMessageType(value);
+
+  String toJson() => toJson$Enum$PinnedChatMessageType(this);
+}
+
+String toJson$Enum$PinnedChatMessageType(Enum$PinnedChatMessageType e) {
+  switch (e) {
+    case Enum$PinnedChatMessageType.MOD:
+      return r'MOD';
+    case Enum$PinnedChatMessageType.CHEER:
+      return r'CHEER';
+    case Enum$PinnedChatMessageType.$unknown:
+      return r'$unknown';
+  }
+}
+
+Enum$PinnedChatMessageType fromJson$Enum$PinnedChatMessageType(String value) {
+  switch (value) {
+    case r'MOD':
+      return Enum$PinnedChatMessageType.MOD;
+    case r'CHEER':
+      return Enum$PinnedChatMessageType.CHEER;
+    default:
+      return Enum$PinnedChatMessageType.$unknown;
   }
 }
 

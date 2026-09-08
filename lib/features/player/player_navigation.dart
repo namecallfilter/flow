@@ -33,12 +33,13 @@ class PlaybackHost extends NavigatorObserver {
   OverlayEntry? _entry;
   StreamPlayerScreen? _screen;
   Route<void>? _playerRoute;
+  MaterialPageRoute<void>? _overlayPageRoute;
   PlaybackMode _mode = PlaybackMode.expanded;
   PlaybackMode _modeBeforePip = PlaybackMode.expanded;
   String? _identity;
-  Route<dynamic>? _topRoute;
-  PopupRoute<dynamic>? _closingPopup;
+  final _overlayRoutes = <Route<dynamic>>[];
   bool miniPlayerEnabled = true;
+  bool _chatOnly = false;
   double _dragOffset = 0;
   bool _dragging = false;
   bool _dismissing = false;
@@ -53,6 +54,13 @@ class PlaybackHost extends NavigatorObserver {
   ).widget.observers.whereType<PlaybackHost>().firstOrNull;
 
   PlaybackMode get mode => _mode;
+  bool get _canMinimize => miniPlayerEnabled && !_chatOnly;
+
+  void setChatOnly({required bool enabled}) {
+    _chatOnly = enabled;
+    _skipAnimation = true;
+    _changed();
+  }
 
   void setMiniPlayerEnabled({required bool enabled}) {
     miniPlayerEnabled = enabled;
@@ -90,7 +98,7 @@ class PlaybackHost extends NavigatorObserver {
       }
       _changed();
     } else if (_dragOffset > 80 || velocity > 700) {
-      if (miniPlayerEnabled) {
+      if (_canMinimize) {
         minimize();
       } else {
         _dismissing = true;
@@ -119,6 +127,7 @@ class PlaybackHost extends NavigatorObserver {
         ? "live:${screen.channel.login.toLowerCase()}"
         : "vod:${screen.videoId}";
     if (_identity != identity) {
+      _chatOnly = false;
       _screen = screen;
       _identity = identity;
     }
@@ -126,6 +135,7 @@ class PlaybackHost extends NavigatorObserver {
       _entry = OverlayEntry(builder: _buildPlayer, maintainState: true);
       navigator!.overlay!.insert(_entry!);
     }
+    _dismissing = false;
     restore();
   }
 
@@ -133,7 +143,7 @@ class PlaybackHost extends NavigatorObserver {
     if (_entry == null || _mode == PlaybackMode.pip || _mode == PlaybackMode.mini) {
       return;
     }
-    if (!miniPlayerEnabled) {
+    if (!_canMinimize) {
       dismiss();
       return;
     }
@@ -145,7 +155,7 @@ class PlaybackHost extends NavigatorObserver {
   }
 
   void restore() {
-    if (_entry == null) {
+    if (_entry == null || _dismissing) {
       return;
     }
     _settling = _mode != PlaybackMode.expanded || _dragOffset > 0;
@@ -167,6 +177,17 @@ class PlaybackHost extends NavigatorObserver {
     _bringToFront();
   }
 
+  Future<void> openOverlayPage({required WidgetBuilder builder}) async {
+    final route = MaterialPageRoute<void>(builder: builder);
+    _overlayPageRoute = route;
+    await navigator!.push<void>(route);
+    await route.completed;
+    if (_overlayPageRoute == route) {
+      _overlayPageRoute = null;
+      _bringToFront();
+    }
+  }
+
   void setPictureInPicture({required bool active}) {
     if (_entry == null) {
       return;
@@ -179,7 +200,7 @@ class PlaybackHost extends NavigatorObserver {
       _mode = PlaybackMode.pip;
     } else if (!active && _mode == PlaybackMode.pip) {
       _mode = _modeBeforePip;
-      if (_mode == PlaybackMode.mini && !miniPlayerEnabled) {
+      if (_mode == PlaybackMode.mini && !_canMinimize) {
         dismiss();
         return;
       }
@@ -200,6 +221,7 @@ class PlaybackHost extends NavigatorObserver {
     entry?.remove();
     entry?.dispose();
     _screen = null;
+    _chatOnly = false;
     _identity = null;
     _mode = PlaybackMode.expanded;
     _modeBeforePip = PlaybackMode.expanded;
@@ -228,12 +250,11 @@ class PlaybackHost extends NavigatorObserver {
   void _bringToFront() {
     scheduleMicrotask(() {
       if (_entry != null && navigator?.mounted == true) {
-        final popup = _topRoute is PopupRoute ? _topRoute : _closingPopup;
         navigator!.overlay!.rearrange(
           [
             _entry!,
-            if (_mode != PlaybackMode.pip && !_pipTransition && popup != null)
-              ...popup.overlayEntries,
+            if (_mode != PlaybackMode.pip && !_pipTransition)
+              for (final route in _overlayRoutes) ...route.overlayEntries,
           ],
           below: _entry,
         );
@@ -243,10 +264,16 @@ class PlaybackHost extends NavigatorObserver {
 
   @override
   void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    if (route is PopupRoute || route == _overlayPageRoute) {
+      _overlayRoutes.add(route);
+    }
     if (route is TransitionRoute) {
       void updateOrder(AnimationStatus status) {
-        if (status == AnimationStatus.dismissed && route == _closingPopup) {
-          _closingPopup = null;
+        if (status == AnimationStatus.dismissed) {
+          _overlayRoutes.remove(route);
+        }
+        if (status == AnimationStatus.dismissed && route == _overlayPageRoute) {
+          _overlayPageRoute = null;
         }
         if (status == AnimationStatus.completed || status == AnimationStatus.dismissed) {
           _bringToFront();
@@ -254,9 +281,19 @@ class PlaybackHost extends NavigatorObserver {
       }
 
       route.animation?.addStatusListener(updateOrder);
-      unawaited(route.completed.then((_) => route.animation?.removeStatusListener(updateOrder)));
+      unawaited(
+        route.completed.then((_) {
+          route.animation?.removeStatusListener(updateOrder);
+          if (_overlayRoutes.remove(route)) {
+            _bringToFront();
+          }
+        }),
+      );
     }
-    if (route is! PopupRoute && route != _playerRoute && _entry != null) {
+    if (route is! PopupRoute &&
+        route != _playerRoute &&
+        route != _overlayPageRoute &&
+        _entry != null) {
       // Navigator is locked during observer callbacks.
       WidgetsBinding.instance.addPostFrameCallback((_) => minimize());
     }
@@ -265,17 +302,6 @@ class PlaybackHost extends NavigatorObserver {
 
   @override
   void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
-    if (route is PopupRoute) {
-      _closingPopup = route;
-      unawaited(
-        route.completed.then((_) {
-          if (_closingPopup == route) {
-            _closingPopup = null;
-            _bringToFront();
-          }
-        }),
-      );
-    }
     if (route == _playerRoute) {
       _playerRoute = null;
       minimize();
@@ -285,7 +311,15 @@ class PlaybackHost extends NavigatorObserver {
 
   @override
   void didChangeTop(Route<dynamic> topRoute, Route<dynamic>? previousTopRoute) {
-    _topRoute = topRoute;
+    _bringToFront();
+  }
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _overlayRoutes.remove(route);
+    if (route == _overlayPageRoute) {
+      _overlayPageRoute = null;
+    }
     _bringToFront();
   }
 
@@ -312,7 +346,7 @@ class PlaybackHost extends NavigatorObserver {
     final landscape = media.size.width > media.size.height;
     final expandedRect = Rect.fromLTWH(
       0,
-      landscape ? 0 : media.padding.top,
+      landscape || _chatOnly ? 0 : media.padding.top,
       media.size.width,
       landscape ? media.size.height : media.size.width * 9 / 16,
     );
@@ -330,11 +364,11 @@ class PlaybackHost extends NavigatorObserver {
     } else if (_dismissing) {
       rect = rect.shift(Offset(0, media.size.height));
     } else if (_dragOffset > 0) {
-      rect = miniPlayerEnabled
+      rect = _canMinimize
           ? Rect.lerp(expandedRect, miniRect, progress)!
           : rect.shift(Offset(0, _dragOffset));
     }
-    final pageRect = miniPlayerEnabled
+    final pageRect = _canMinimize
         ? Rect.fromLTRB(
             rect.left,
             rect.top,
@@ -345,14 +379,16 @@ class PlaybackHost extends NavigatorObserver {
             rect.left,
             rect.top,
             rect.width,
-            media.size.height,
+            media.size.height - expandedRect.top,
           );
     final moving = _dragging || _settling || _dismissing;
     final borderRadius = BorderRadius.circular(mini || _dragOffset > 0 ? 10 : 0);
     return Stack(
       children: [
         AnimatedPositioned.fromRect(
-          rect: pageRect,
+          rect: !mini && !moving
+              ? Rect.fromLTRB(pageRect.left, 0, pageRect.right, pageRect.bottom)
+              : pageRect,
           duration: animate ? const Duration(milliseconds: 280) : Duration.zero,
           curve: Curves.easeOutCubic,
           child: IgnorePointer(
@@ -375,17 +411,17 @@ class PlaybackHost extends NavigatorObserver {
           ),
         ),
         AnimatedPositioned.fromRect(
-          rect: rect,
+          rect: pip ? rect : pageRect,
           duration: animate ? const Duration(milliseconds: 280) : Duration.zero,
           curve: Curves.easeOutCubic,
-          onEnd: () {
+          onEnd: () => WidgetsBinding.instance.addPostFrameCallback((_) {
             if (_dismissing) {
               dismiss();
             } else if (_settling) {
               _settling = false;
               _changed();
             }
-          },
+          }),
           child: AnimatedOpacity(
             opacity: _dismissing ? 0 : 1,
             duration: _dragging || !animate ? Duration.zero : const Duration(milliseconds: 220),
@@ -393,14 +429,6 @@ class PlaybackHost extends NavigatorObserver {
               borderRadius: borderRadius,
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onVerticalDragStart: !mini && !pip && !landscape ? (_) => beginSwipe() : null,
-                onVerticalDragUpdate: !mini && !pip && !landscape
-                    ? (details) => updateSwipe(details.delta.dy)
-                    : null,
-                onVerticalDragEnd: !mini && !pip && !landscape
-                    ? (details) => endSwipe(details.primaryVelocity ?? 0)
-                    : null,
-                onVerticalDragCancel: !mini && !pip && !landscape ? cancelSwipe : null,
                 onHorizontalDragStart: mini ? (_) => beginSwipe() : null,
                 onHorizontalDragUpdate: mini ? (details) => updateSwipe(details.delta.dx) : null,
                 onHorizontalDragEnd: mini
