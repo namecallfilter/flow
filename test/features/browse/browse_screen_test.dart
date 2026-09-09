@@ -150,14 +150,17 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    // Live channels have already been fetched while the Categories section is visible.
-    expect(
-      requests.where((request) => _isGraphQlOperation(request, "FlowTopStreams")),
-      hasLength(1),
+    // Recommended live channels have already been fetched and their next page prefetched.
+    final initialRequests = requests.where(
+      (request) => _isGraphQlOperation(request, "FlowTopStreams"),
     );
+    expect(initialRequests, hasLength(2));
+    for (final request in initialRequests) {
+      expect(_graphQlVariables(request)["options"], containsPair("sort", "RELEVANCE"));
+    }
     await tester.tap(find.byKey(const ValueKey("browse_segment_live_channels")));
     await tester.pumpAndSettle();
-    await tester.tap(find.text("Viewers: High to Low"));
+    await tester.tap(find.text("Recommended For You"));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(PopupMenuItem<StreamSort>, "Recently Started"));
     await tester.pumpAndSettle();

@@ -888,7 +888,7 @@ class TwitchApiClient {
   Future<TwitchPage<TwitchCategory>> fetchTopCategoriesPage({
     int first = 12,
     String? cursor,
-    CategorySort sort = CategorySort.viewersHighToLow,
+    CategorySort sort = CategorySort.recommendedForYou,
   }) async {
     final data = await _query(
       () =>
@@ -965,7 +965,7 @@ class TwitchApiClient {
     int first = 20,
     List<String> gameIds = const [],
     List<String> userLogins = const [],
-    StreamSort sort = StreamSort.viewersHighToLow,
+    StreamSort sort = StreamSort.recommendedForYou,
   }) async {
     final page = await fetchLiveStreamsPage(
       first: first,
@@ -981,7 +981,7 @@ class TwitchApiClient {
     List<String> gameIds = const [],
     List<String> userLogins = const [],
     String? cursor,
-    StreamSort sort = StreamSort.viewersHighToLow,
+    StreamSort sort = StreamSort.recommendedForYou,
   }) async {
     final normalizedGameIds = _nonEmptyValues(gameIds);
     final normalizedUserLogins = _nonEmptyValues(userLogins);

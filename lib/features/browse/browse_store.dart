@@ -42,10 +42,10 @@ abstract class BrowseStoreBase with Store {
   BrowseSection selectedSection = BrowseSection.categories;
 
   @observable
-  StreamSort streamSort = StreamSort.viewersHighToLow;
+  StreamSort streamSort = StreamSort.recommendedForYou;
 
   @observable
-  CategorySort categorySort = CategorySort.viewersHighToLow;
+  CategorySort categorySort = CategorySort.recommendedForYou;
 
   Future<void> restoreCategorySort() => _categorySortRestore ??= _restoreCategorySort();
 

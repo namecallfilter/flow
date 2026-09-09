@@ -191,6 +191,27 @@ void main() {
     expect(await preferences.readMiniPlayerEnabled(), isTrue);
   });
 
+  test("sorts default to recommendations and preserve valid saved selections", () async {
+    final store = _MemoryPreferencesStore();
+    final preferences = SharedPreferencesFlowPreferences(store: store);
+    for (final section in ["following", "browse", "category"]) {
+      expect(await preferences.readStreamSort(section), StreamSort.recommendedForYou);
+      store.strings["stream_sort_$section"] = "invalid";
+      expect(await preferences.readStreamSort(section), StreamSort.recommendedForYou);
+      for (final sort in StreamSort.values) {
+        await preferences.saveStreamSort(section, sort);
+        expect(await preferences.readStreamSort(section), sort);
+      }
+    }
+    expect(await preferences.readCategorySort(), CategorySort.recommendedForYou);
+    store.strings["category_sort"] = "invalid";
+    expect(await preferences.readCategorySort(), CategorySort.recommendedForYou);
+    for (final sort in CategorySort.values) {
+      await preferences.saveCategorySort(sort);
+      expect(await preferences.readCategorySort(), sort);
+    }
+  });
+
   test("migrates saved sort names without changing their selected order", () async {
     final store = _MemoryPreferencesStore()
       ..strings["category_sort"] = "viewers"

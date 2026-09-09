@@ -14,8 +14,9 @@ void main() {
     "recommended categories reuse pending next page",
     () async {
       final client = _DelayedCategoriesClient();
-      final store = BrowseStore(apiCache: TwitchApiCache(clientLoader: () async => client))
-        ..categorySort = CategorySort.recommendedForYou;
+      final store = BrowseStore(apiCache: TwitchApiCache(clientLoader: () async => client));
+      expect(store.categorySort, CategorySort.recommendedForYou);
+      expect(store.streamSort, StreamSort.recommendedForYou);
       final initial = store.loadCategories(reset: true);
       await Future<void>.delayed(Duration.zero);
       client.requests.single.response.complete(
@@ -74,8 +75,7 @@ void main() {
     "recommended live channels reuse cached next page",
     () async {
       final client = _DelayedLiveChannelsClient();
-      final store = BrowseStore(apiCache: TwitchApiCache(clientLoader: () async => client))
-        ..streamSort = StreamSort.recommendedForYou;
+      final store = BrowseStore(apiCache: TwitchApiCache(clientLoader: () async => client));
       final initial = store.loadLiveChannels(reset: true);
       await Future<void>.delayed(Duration.zero);
       client.requests.single.response.complete(
@@ -179,7 +179,7 @@ void main() {
 
   test("changing category mode discards the previous mode's in-flight page", () async {
     final cache = _DelayedCategoriesCache();
-    final store = BrowseStore(apiCache: cache);
+    final store = BrowseStore(apiCache: cache)..categorySort = CategorySort.viewersHighToLow;
     final oldLoad = store.loadCategories(reset: true);
     final recommendedLoad = store.selectCategorySort(CategorySort.recommendedForYou);
     expect(cache.requests.last.cursor, isNull);
@@ -222,6 +222,22 @@ void main() {
     });
   }
 
+  test("category streams default to the server recommendation order", () async {
+    final cache = _DelayedLiveChannelsCache();
+    final store = CategoryStreamsStore(
+      apiCache: cache,
+      category: browseCategoryFromApi(_firstCategory),
+    );
+    expect(store.streamSort, StreamSort.recommendedForYou);
+    final load = store.loadStreams(reset: true);
+    expect(cache.requests.single.sort, StreamSort.recommendedForYou);
+    cache.requests.single.response.complete(
+      const TwitchPage(data: [_thirdStream, _firstStream], cursor: null),
+    );
+    await load;
+    expect(store.channels.map((channel) => channel.id), ["creator-3", "creator-1"]);
+  });
+
   test("category pages retain ascending viewer order", () async {
     final cache = _DelayedLiveChannelsCache();
     final store = CategoryStreamsStore(
@@ -245,7 +261,7 @@ void main() {
 
   test("periodic live refresh preserves paginated channels moved by viewer sorting", () async {
     final cache = _DelayedLiveChannelsCache();
-    final store = BrowseStore(apiCache: cache);
+    final store = BrowseStore(apiCache: cache)..streamSort = StreamSort.viewersHighToLow;
     final initial = store.loadLiveChannels(reset: true);
     cache.requests.single.response.complete(
       const TwitchPage(data: [_thirdStream, _secondStream], cursor: "page-2"),
@@ -267,7 +283,7 @@ void main() {
 
   test("changing browse order ignores old pages and starts with a fresh cursor", () async {
     final cache = _DelayedLiveChannelsCache();
-    final store = BrowseStore(apiCache: cache);
+    final store = BrowseStore(apiCache: cache)..streamSort = StreamSort.viewersHighToLow;
     final oldLoad = store.loadLiveChannels(reset: true);
     final newLoad = store.selectStreamSort(StreamSort.viewersLowToHigh);
     expect(cache.requests.last.sort, StreamSort.viewersLowToHigh);
@@ -290,7 +306,7 @@ void main() {
     final store = CategoryStreamsStore(
       apiCache: cache,
       category: browseCategoryFromApi(_firstCategory),
-    );
+    )..streamSort = StreamSort.viewersHighToLow;
     final oldLoad = store.loadStreams(reset: true);
     final newLoad = store.selectStreamSort(StreamSort.recommendedForYou);
     expect(cache.requests.last.sort, StreamSort.recommendedForYou);
@@ -334,13 +350,13 @@ void main() {
 
   test("live prefetch restores the saved order before its first request", () async {
     final preferences = MemoryFlowPreferences();
-    await preferences.saveStreamSort("browse", StreamSort.recommendedForYou);
+    await preferences.saveStreamSort("browse", StreamSort.viewersHighToLow);
     final cache = _DelayedLiveChannelsCache();
     final store = BrowseStore(apiCache: cache, preferences: preferences);
     final prefetch = store.loadLiveChannels(reset: true);
     final duplicate = store.loadLiveChannels(reset: true);
     await Future<void>.delayed(Duration.zero);
-    expect(cache.requests.single.sort, StreamSort.recommendedForYou);
+    expect(cache.requests.single.sort, StreamSort.viewersHighToLow);
     cache.requests.single.response.complete(const TwitchPage(data: [], cursor: null));
     await Future.wait([prefetch, duplicate]);
     expect(store.liveChannelsLoaded, isTrue);
@@ -348,7 +364,7 @@ void main() {
 
   test("failed category refresh preserves results and the next page", () async {
     final cache = _DelayedCategoriesCache();
-    final store = BrowseStore(apiCache: cache);
+    final store = BrowseStore(apiCache: cache)..categorySort = CategorySort.viewersHighToLow;
     final initialLoad = store.loadCategories(reset: true);
     cache.requests.single.response.complete(
       const TwitchPage(data: [_firstCategory], cursor: "page-2"),
@@ -372,7 +388,7 @@ void main() {
 
   test("failed live refresh preserves its pagination cursor", () async {
     final cache = _DelayedLiveChannelsCache();
-    final store = BrowseStore(apiCache: cache);
+    final store = BrowseStore(apiCache: cache)..streamSort = StreamSort.viewersHighToLow;
     final initialLoad = store.loadLiveChannels(reset: true);
     cache.requests.single.response.complete(
       const TwitchPage(data: [_firstStream], cursor: "page-2"),
@@ -417,7 +433,7 @@ void main() {
 
   test("first-page category refresh adopts the fresh cursor when it promotes the tail", () async {
     final cache = _DelayedCategoriesCache();
-    final store = BrowseStore(apiCache: cache);
+    final store = BrowseStore(apiCache: cache)..categorySort = CategorySort.viewersHighToLow;
     final initialLoad = store.loadCategories(reset: true);
 
     cache.requests.single.response.complete(
@@ -448,7 +464,7 @@ void main() {
 
   test("first-page live refresh adopts the fresh cursor when it promotes the tail", () async {
     final cache = _DelayedLiveChannelsCache();
-    final store = BrowseStore(apiCache: cache);
+    final store = BrowseStore(apiCache: cache)..streamSort = StreamSort.viewersHighToLow;
     final initialLoad = store.loadLiveChannels(reset: true);
 
     cache.requests.single.response.complete(
@@ -482,7 +498,7 @@ void main() {
 
   test("queues one category refresh during pagination and preserves its tail", () async {
     final cache = _DelayedCategoriesCache();
-    final store = BrowseStore(apiCache: cache);
+    final store = BrowseStore(apiCache: cache)..categorySort = CategorySort.viewersHighToLow;
     final initialLoad = store.loadCategories(reset: true);
 
     cache.requests.single.response.complete(
@@ -529,7 +545,7 @@ void main() {
 
   test("a queued full category refresh overrides tail preservation", () async {
     final cache = _DelayedCategoriesCache();
-    final store = BrowseStore(apiCache: cache);
+    final store = BrowseStore(apiCache: cache)..categorySort = CategorySort.viewersHighToLow;
     final initialLoad = store.loadCategories(reset: true);
 
     cache.requests.single.response.complete(
@@ -563,7 +579,7 @@ void main() {
 
   test("queues one live refresh during pagination and preserves its tail", () async {
     final cache = _DelayedLiveChannelsCache();
-    final store = BrowseStore(apiCache: cache);
+    final store = BrowseStore(apiCache: cache)..streamSort = StreamSort.viewersHighToLow;
     final initialLoad = store.loadLiveChannels(reset: true);
 
     cache.requests.single.response.complete(

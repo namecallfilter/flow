@@ -448,8 +448,7 @@ void main() {
       );
     });
     final loads = [
-      for (final client in clients)
-        client.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou),
+      for (final client in clients) client.fetchTopCategoriesPage(),
     ];
     await initialRequests.future;
     await observationStarted.future;
@@ -503,11 +502,11 @@ void main() {
     );
     final existing = client();
     final recovering = client();
-    await existing.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
-    await recovering.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
-    await existing.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
+    await existing.fetchTopCategoriesPage();
+    await recovering.fetchTopCategoriesPage();
+    await existing.fetchTopCategoriesPage();
     TwitchApiClient.restoreWebSessionDeviceId(null);
-    await recovering.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
+    await recovering.fetchTopCategoriesPage();
     expect(sentTokens, [null, null, "new-grant", "new-grant", null]);
   });
 
@@ -553,7 +552,7 @@ void main() {
       final failures = [
         for (var i = 0; i < 2; i++)
           expectLater(
-            client.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou),
+            client.fetchTopCategoriesPage(),
             throwsA(isA<TwitchApiException>()),
           ),
       ];
@@ -565,7 +564,7 @@ void main() {
       }
       await Future.wait(failures);
       expect(observations, 1);
-      await client.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
+      await client.fetchTopCategoriesPage();
       expect(observations, 2);
     });
   }
@@ -693,7 +692,6 @@ void main() {
         }),
       );
       final load = client.fetchLiveStreamsPage(
-        sort: StreamSort.recommendedForYou,
         cursor: "personal-next",
       );
       final failure = expectLater(load, throwsA(isA<TwitchApiException>()));
@@ -775,7 +773,6 @@ void main() {
         }),
       );
       final load = client.fetchLiveStreamsPage(
-        sort: StreamSort.recommendedForYou,
         gameIds: directory == "category" ? ["category-id"] : const [],
         cursor: "personal-page-2",
       );
@@ -789,7 +786,7 @@ void main() {
     });
   }
 
-  test("personalized recommendations use mobile context and retain auth across pages", () async {
+  test("default recommendations use mobile context and retain auth across pages", () async {
     final requests = <http.Request>[];
     final client = TwitchApiClient(
       clientId: "client-123",
@@ -811,16 +808,10 @@ void main() {
         });
       }),
     );
-    await client.fetchLiveStreamsPage(sort: StreamSort.recommendedForYou);
-    await client.fetchLiveStreamsPage(
-      sort: StreamSort.recommendedForYou,
-      cursor: "personal-page-2",
-    );
-    await client.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
-    await client.fetchTopCategoriesPage(
-      sort: CategorySort.recommendedForYou,
-      cursor: "game-page-2",
-    );
+    await client.fetchLiveStreams();
+    await client.fetchLiveStreamsPage(cursor: "personal-page-2");
+    await client.fetchTopCategoriesPage();
+    await client.fetchTopCategoriesPage(cursor: "game-page-2");
     final options = requests.map((request) {
       expect(request.headers["Authorization"], "OAuth web-token-123");
       expect(request.headers["Client-Id"], "kimne78kx3ncx6brgo4mv6wki5h1ko");
@@ -906,15 +897,21 @@ void main() {
         }),
       ),
     );
-    final streams = await client.fetchLiveStreamsPage(sort: StreamSort.recommendedForYou);
-    final games = await client.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
+    final streams = await client.fetchLiveStreamsPage();
+    final games = await client.fetchTopCategoriesPage();
     expect(streams.data, hasLength(8));
     expect(streams.cursor, "stream-3");
     expect(games.data, hasLength(12));
     expect(games.data.first.viewerCount, 4200);
     expect(games.cursor, "game-7");
-    expect((await client.fetchLiveStreamsPage()).cursor, "stream-7");
-    expect((await client.fetchTopCategoriesPage()).cursor, "game-11");
+    expect(
+      (await client.fetchLiveStreamsPage(sort: StreamSort.viewersHighToLow)).cursor,
+      "stream-7",
+    );
+    expect(
+      (await client.fetchTopCategoriesPage(sort: CategorySort.viewersHighToLow)).cursor,
+      "game-11",
+    );
   });
 
   test("following pagination stops repeated cursors and merges duplicate channels", () async {

@@ -308,7 +308,7 @@ class SharedPreferencesFlowPreferences implements FlowPreferences {
       return StreamSort.recommendedForYou;
     }
     return StreamSort.values.where((sort) => sort.name == value).firstOrNull ??
-        StreamSort.viewersHighToLow;
+        StreamSort.recommendedForYou;
   }
 
   @override
@@ -322,7 +322,7 @@ class SharedPreferencesFlowPreferences implements FlowPreferences {
       return CategorySort.viewersHighToLow;
     }
     return CategorySort.values.where((sort) => sort.name == value).firstOrNull ??
-        CategorySort.viewersHighToLow;
+        CategorySort.recommendedForYou;
   }
 
   @override

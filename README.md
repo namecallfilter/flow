@@ -49,6 +49,7 @@ signing before distributing through an app store.
 - `docs/twitch/graphql`: saved reference operations, excluded from code generation.
 
 After changing GraphQL operations or MobX annotations, run
-`dart run build_runner build`. Generated Dart files are checked in; edit their
-sources instead. `build.yaml` disables unused GraphQL `copyWith` helpers to keep
-generated code smaller.
+`dart run build_runner build`. Generated Dart files (`*.g.dart`, `*.graphql.dart`,
+and `*.graphqls.dart`) are ignored by Git; regenerate them after cloning and edit
+their sources instead. `build.yaml` disables unused GraphQL `copyWith` helpers to
+keep generated code smaller.

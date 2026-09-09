@@ -33,6 +33,11 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Generated Dart code (MobX and GraphQL)
+*.g.dart
+*.graphql.dart
+*.graphqls.dart
+
 # Symbolication related
 app.*.symbols
 

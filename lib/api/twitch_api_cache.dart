@@ -25,7 +25,7 @@ class TwitchApiCache {
     int first = 12,
     String? cursor,
     bool refresh = false,
-    CategorySort sort = CategorySort.viewersHighToLow,
+    CategorySort sort = CategorySort.recommendedForYou,
   }) => _cached(
     _cacheKey("topCategories", {
       "first": first,
@@ -42,7 +42,7 @@ class TwitchApiCache {
     List<String> userLogins = const <String>[],
     String? cursor,
     bool refresh = false,
-    StreamSort sort = StreamSort.viewersHighToLow,
+    StreamSort sort = StreamSort.recommendedForYou,
   }) => _cached(
     _cacheKey("liveStreams", {
       "first": first,
