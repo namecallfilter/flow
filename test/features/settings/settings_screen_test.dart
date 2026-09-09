@@ -48,6 +48,8 @@ void main() {
       "7TV emotes",
       "BetterTTV emotes",
       "FrankerFaceZ emotes",
+      "Highlight mentions and replies",
+      "Mention and reply sounds",
       "Auto claim channel points",
       "Watch streak popups",
       "Highlight first-time chatters",
@@ -81,6 +83,8 @@ void main() {
     expect(reloaded.chatPreferences.autoClaimChannelPoints, isTrue);
     expect(reloaded.chatPreferences.showWatchStreakPopups, isFalse);
     expect(reloaded.chatPreferences.highlightFirstMessages, isFalse);
+    expect(reloaded.chatPreferences.highlightMentions, isFalse);
+    expect(reloaded.chatPreferences.mentionSounds, isFalse);
     expect(reloaded.chatPreferences.showSubscriptionNotices, isFalse);
     expect(reloaded.chatPreferences.showAnnouncements, isFalse);
     expect(reloaded.chatPreferences.showRaidNotices, isFalse);

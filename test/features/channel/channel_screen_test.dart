@@ -558,11 +558,15 @@ void main() {
     );
   });
 
-  testWidgets("does not open the player from an offline channel avatar", (
+  testWidgets("offline profile opens chat from its Chat button and Back closes it", (
     tester,
   ) async {
+    final host = PlaybackHost();
+    final settings = AppSettingsStore(preferences: MemoryFlowPreferences());
     await tester.pumpWidget(
       MaterialApp(
+        navigatorObservers: [host],
+        builder: (_, child) => AppSettingsScope(settingsStore: settings, child: child!),
         theme: buildFlowTheme(Brightness.dark),
         home: ChannelScreen(
           apiCache: TwitchApiCache(
@@ -590,6 +594,18 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(StreamPlayerScreen), findsNothing);
+    await tester.tap(find.byKey(const ValueKey("channel_chat_button")));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<StreamPlayerScreen>(find.byType(StreamPlayerScreen)).initiallyOffline,
+      isTrue,
+    );
+    expect(find.byKey(const ValueKey("player_chat_header")), findsOneWidget);
+    expect(find.byKey(const ValueKey("player_viewport")), findsNothing);
+    await tester.tap(find.byTooltip("Back").hitTestable());
+    await tester.pumpAndSettle();
+    expect(find.byType(StreamPlayerScreen), findsNothing);
+    expect(find.byKey(const ValueKey("channel_chat_button")), findsOneWidget);
   });
 
   testWidgets("loads more past broadcasts when scrolling near the bottom", (tester) async {

@@ -22,6 +22,183 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  for (final detailsFallback in [false, true]) {
+    testWidgets(
+      "offline chat opens live video with metadata (details fallback: $detailsFallback)",
+      (
+        tester,
+      ) async {
+        tester.view.physicalSize = const Size(400, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        var online = false;
+        var fail = false;
+        var playbackLoads = 0;
+        final player = _FakePlayerController();
+        final chat = _TrackedChatController("creator");
+        final host = await _pumpHostedPlayer(
+          tester,
+          player: player,
+          initiallyOffline: true,
+          useApiViewerLoader: true,
+          apiCache: _StreamStatusApiCache(
+            (_) async {
+              if (fail) {
+                throw StateError("Network unavailable");
+              }
+              return _streamStatusPage(online: online && !detailsFallback);
+            },
+            detailsLoader: (login) async => _offlineChannelDetails(
+              login,
+              liveStream: !online
+                  ? null
+                  : TwitchChannelLiveStream(
+                      id: "fallback-stream",
+                      title: "New broadcast",
+                      categoryId: "27471",
+                      category: "Minecraft",
+                      viewerCount: 43210,
+                      startedAt: DateTime(2026, 7, 9, 20),
+                    ),
+            ),
+          ),
+          chatControllerFactory: (_) => chat,
+          playbackUriLoader: (_) async {
+            playbackLoads++;
+            return Uri.parse("https://example.com/live.m3u8");
+          },
+        );
+        final chatState = tester.state(find.byType(TwitchChatPanel));
+        expect(find.text("Offline"), findsOneWidget);
+        expect(find.byKey(const ValueKey("player_viewport")), findsNothing);
+        expect(playbackLoads, 0);
+        await tester.tap(find.byKey(const ValueKey("chat_menu")));
+        await tester.pumpAndSettle();
+        final toggle = tester.widget<ListTile>(find.byKey(const ValueKey("chat_only_toggle")));
+        expect(toggle.enabled, isFalse);
+        expect(toggle.onTap, isNull);
+        Navigator.of(tester.element(find.text("Show video"))).pop();
+        await tester.pumpAndSettle();
+        fail = true;
+        await tester.pump(const Duration(seconds: 30));
+        await tester.pump();
+        expect(playbackLoads, 0);
+        fail = false;
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        online = true;
+        await tester.pump(const Duration(seconds: 30));
+        expect(playbackLoads, 0);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        await tester.pump();
+        await tester.pump();
+        expect(find.text("Offline"), findsNothing);
+        expect(find.byKey(const ValueKey("player_chat_header")), findsNothing);
+        expect(find.byKey(const ValueKey("player_viewport")), findsOneWidget);
+        expect(
+          find.textContaining(
+            detailsFallback ? "New broadcast" : "Live stream",
+            findRichText: true,
+          ),
+          findsOneWidget,
+        );
+        expect(
+          find.text(detailsFallback ? "Minecraft" : "Just Chatting"),
+          findsOneWidget,
+        );
+        expect(find.text(detailsFallback ? "43.2K" : "12.3K"), findsOneWidget);
+        expect(find.text(detailsFallback ? "2:03" : "1:02:03"), findsOneWidget);
+        expect(playbackLoads, 1);
+        expect(tester.state(find.byType(TwitchChatPanel)), same(chatState));
+        expect(chat.disposed, isFalse);
+        player.emit(
+          const TwitchPlaybackStateEvent(isPlaying: true, isBuffering: false, playWhenReady: true),
+        );
+        await tester.pump();
+        host.minimize();
+        await tester.pumpAndSettle();
+        expect(host.mode, PlaybackMode.mini);
+        host.dismiss();
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets("only right landscape double taps toggle chat and preserve chat and playback", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    var surfaceCreations = 0;
+    final player = _FakePlayerController();
+    final host = await _pumpHostedPlayer(
+      tester,
+      player: player,
+      onSurfaceCreated: () => surfaceCreations++,
+    );
+    await tester.pump();
+    final chatState = tester.state(find.byType(TwitchChatPanel));
+    tester.view.physicalSize = const Size(800, 400);
+    tester.view.padding = const FakeViewPadding(left: 44, right: 8);
+    tester.view.viewPadding = const FakeViewPadding(left: 44, right: 8);
+    await tester.pump();
+    expect(find.byType(TwitchChatPanel).hitTestable(), findsNothing);
+    for (final (onRight, visible) in [
+      (true, true),
+      (false, true),
+      (true, false),
+      (false, false),
+      (true, true),
+    ]) {
+      final viewport = tester.getRect(find.byKey(const ValueKey("player_surface_tap_target")));
+      final point = Offset(
+        viewport.left + viewport.width * (onRight ? .8 : .2),
+        viewport.center.dy,
+      );
+      await tester.tapAt(point);
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tapAt(point);
+      await tester.pump(const Duration(milliseconds: 350));
+      if (!visible) {
+        expect(find.byType(TwitchChatPanel).hitTestable(), findsNothing);
+        expect(tester.getSize(find.byKey(const ValueKey("player_viewport"))).width, 800);
+      } else {
+        final chatRect = tester.getRect(find.byType(TwitchChatPanel));
+        final videoRect = tester.getRect(find.byKey(const ValueKey("player_viewport")));
+        expect(chatRect.width, 280);
+        expect(chatRect.left, videoRect.right);
+        expect(chatRect.right, 792);
+        expect(
+          tester.getTopLeft(find.byKey(const ValueKey("chat_message_input"))).dx,
+          chatRect.left + 12,
+        );
+        expect(tester.state(find.byType(TwitchChatPanel)), same(chatState));
+      }
+      expect(surfaceCreations, 1);
+      expect(player._seekPositions, isEmpty);
+    }
+    host.setPictureInPicture(active: true);
+    await tester.pump();
+    host.setPictureInPicture(active: false);
+    await tester.pump();
+    expect(tester.state(find.byType(TwitchChatPanel)), same(chatState));
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.padding = FakeViewPadding.zero;
+    tester.view.viewPadding = FakeViewPadding.zero;
+    await tester.pump();
+    expect(tester.getSize(find.byKey(const ValueKey("player_viewport"))).width, 400);
+    expect(tester.state(find.byType(TwitchChatPanel)), same(chatState));
+    expect(surfaceCreations, 1);
+    host.dismiss();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
   for (final (chatOnly, buttonKey, destinationKey) in [
     (true, "player_chat_category_button", "category_streams_page_Just Chatting"),
     (false, "player_category_button", "category_streams_page_Just Chatting"),
@@ -336,7 +513,7 @@ void main() {
     expect(chat.disposed, isTrue);
   });
 
-  testWidgets("native live end preserves chat-only status and cannot start video again", (
+  testWidgets("native live end keeps chat available until Twitch confirms a new broadcast", (
     tester,
   ) async {
     tester.view.physicalSize = const Size(400, 800);
@@ -344,9 +521,11 @@ void main() {
     addTearDown(tester.view.reset);
     final player = _FakePlayerController();
     var playbackLoads = 0;
+    var online = false;
     await tester.pumpWidget(
       _playerApp(
         player: player,
+        viewerCountLoader: (_) async => online ? 100 : null,
         playbackUriLoader: (_) async {
           playbackLoads++;
           return Uri.parse("https://example.com/live.m3u8");
@@ -366,17 +545,25 @@ void main() {
     expect(player._stopCount, 1);
     expect(find.text("Stream ended"), findsOneWidget);
     await _toggleChatOnly(tester);
-    expect(find.text("Stream ended"), findsOneWidget);
+    expect(find.text("Offline"), findsOneWidget);
     expect(find.byKey(const ValueKey("player_live_dot")), findsNothing);
     expect(find.byKey(const ValueKey("player_live_duration")), findsNothing);
     expect(find.byKey(const ValueKey("player_viewers")), findsNothing);
-    await _toggleChatOnly(tester);
-    expect(find.text("Stream ended"), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey("chat_menu")));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<ListTile>(find.byKey(const ValueKey("chat_only_toggle"))).enabled,
+      isFalse,
+    );
     expect(playbackLoads, 1);
-    await tester.tap(find.text("Check again"));
+    Navigator.of(tester.element(find.text("Show video"))).pop();
+    await tester.pumpAndSettle();
+    online = true;
+    await tester.pump(const Duration(seconds: 30));
     await tester.pump();
-    expect(find.text("Stream ended"), findsOneWidget);
-    expect(playbackLoads, 1);
+    expect(find.byKey(const ValueKey("player_chat_header")), findsNothing);
+    expect(find.text("Offline"), findsNothing);
+    expect(playbackLoads, 2);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -1315,6 +1502,7 @@ void main() {
     expect(find.text("A precise stream title"), findsOneWidget);
     final target = tester.getRect(find.byKey(const ValueKey("player_surface_tap_target")));
     await tester.tapAt(Offset(target.left + target.width * .8, target.center.dy));
+    await tester.pump(const Duration(milliseconds: 350));
     await tester.pump(const Duration(milliseconds: 200));
     expect(_controlsOpacity(tester), 0);
     expect(find.text("A precise stream title"), findsNothing);
@@ -2379,6 +2567,9 @@ Future<PlaybackHost> _pumpHostedPlayer(
   PlaybackUriLoader? playbackUriLoader,
   TwitchApiCache? apiCache,
   TwitchChatController Function(String)? chatControllerFactory,
+  bool initiallyOffline = false,
+  bool useApiViewerLoader = false,
+  VoidCallback? onSurfaceCreated,
 }) async {
   final app =
       _playerApp(
@@ -2387,6 +2578,9 @@ Future<PlaybackHost> _pumpHostedPlayer(
             playbackUriLoader: playbackUriLoader,
             chatControllerFactory: chatControllerFactory,
             apiCache: apiCache ?? _navigationApiCache(),
+            initiallyOffline: initiallyOffline,
+            useApiViewerLoader: useApiViewerLoader,
+            onSurfaceCreated: onSurfaceCreated,
           )
           as MaterialApp;
   final host = PlaybackHost();
@@ -2420,6 +2614,7 @@ Widget _playerApp({
   bool useDefaultPlayerSurface = false,
   bool useApiPlaybackLoader = false,
   bool useApiViewerLoader = false,
+  bool initiallyOffline = false,
   AppSettingsStore? settingsStore,
 }) {
   final app = MaterialApp(
@@ -2434,6 +2629,7 @@ Widget _playerApp({
         autoLoad: false,
       ),
       videoId: videoId,
+      initiallyOffline: initiallyOffline,
       apiCache:
           apiCache ??
           TwitchApiCache(
@@ -2499,15 +2695,17 @@ class _StreamStatusApiCache extends TwitchApiCache {
   }) => _load(userLogins.single);
 }
 
-TwitchChannelDetails _offlineChannelDetails(String login) => TwitchChannelDetails(
-  id: "creator-1",
-  login: login,
-  displayName: "Creator",
-  description: "",
-  followers: 1,
-  pastBroadcasts: const [],
-  pastBroadcastsCursor: null,
-);
+TwitchChannelDetails _offlineChannelDetails(String login, {TwitchChannelLiveStream? liveStream}) =>
+    TwitchChannelDetails(
+      id: "creator-1",
+      login: login,
+      displayName: "Creator",
+      description: "",
+      followers: 1,
+      liveStream: liveStream,
+      pastBroadcasts: const [],
+      pastBroadcastsCursor: null,
+    );
 
 TwitchPage<TwitchFollowedStream> _streamStatusPage({required bool online}) => TwitchPage(
   data: [

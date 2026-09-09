@@ -10,6 +10,20 @@ class TwitchChatEmote {
 
 enum TwitchChatModeration { deleted, timeout, ban, cleared }
 
+class TwitchChatGif {
+  const TwitchChatGif({
+    required this.id,
+    required this.url,
+    required this.start,
+    required this.end,
+  });
+
+  final String id;
+  final String url;
+  final int start;
+  final int end;
+}
+
 class TwitchPinnedChat {
   const TwitchPinnedChat({
     required this.id,
@@ -34,6 +48,7 @@ class TwitchChatMessage {
     required this.text,
     this.color,
     this.emotes = const [],
+    this.gifs = const [],
     this.badges = const [],
     this.isAction = false,
     this.isOwn = false,
@@ -54,6 +69,7 @@ class TwitchChatMessage {
     this.parentDisplayName,
     this.parentText,
     this.parentEmotes = const [],
+    this.parentGifs = const [],
     this.threadRootId,
     this.threadRootLogin,
     this.moderation,
@@ -67,6 +83,7 @@ class TwitchChatMessage {
   final String text;
   final String? color;
   final List<TwitchChatEmote> emotes;
+  final List<TwitchChatGif> gifs;
   final List<String> badges;
   final bool isAction;
   final bool isOwn;
@@ -87,6 +104,7 @@ class TwitchChatMessage {
   final String? parentDisplayName;
   final String? parentText;
   final List<TwitchChatEmote> parentEmotes;
+  final List<TwitchChatGif> parentGifs;
   final String? threadRootId;
   final String? threadRootLogin;
   final TwitchChatModeration? moderation;
@@ -108,6 +126,7 @@ class TwitchChatMessage {
     text: text,
     color: color,
     emotes: emotes,
+    gifs: gifs,
     badges: badges,
     isAction: isAction,
     isOwn: isOwn ?? this.isOwn,
@@ -128,6 +147,7 @@ class TwitchChatMessage {
     parentDisplayName: parentDisplayName,
     parentText: parentText,
     parentEmotes: parentEmotes,
+    parentGifs: parentGifs,
     threadRootId: threadRootId,
     threadRootLogin: threadRootLogin,
     moderation: moderation ?? this.moderation,

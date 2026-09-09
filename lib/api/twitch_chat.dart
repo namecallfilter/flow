@@ -62,13 +62,23 @@ class TwitchChatController extends ChangeNotifier {
   Timer? _joinTimer;
   Timer? _notifyTimer;
   Timer? _sendTimer;
+  Timer? _slowModeTimer;
+  DateTime? _lastMessageSentAt;
+  DateTime? _slowModeRejectedUntil;
   Timer? _followerTimer;
   Timer? _claimTimer;
   bool _autoClaimChannelPoints = false;
   bool _claimInFlight = false;
   int _claimRevision = 0;
   final Set<String> _claimedPointIds = {};
-  ({String text, String localId, TwitchChatMessage? replyTo, Completer<bool> result})? _pendingSend;
+  ({
+    String text,
+    String localId,
+    DateTime sentAt,
+    TwitchChatMessage? replyTo,
+    Completer<bool> result,
+  })?
+  _pendingSend;
   TwitchUser? _user;
   TwitchChatAccess? _chatAccess;
   String? _chatAccessError;
@@ -99,6 +109,7 @@ class TwitchChatController extends ChangeNotifier {
   String? get error => _error;
   bool get isSignedIn => _user != null;
   String? get currentUserId => _user?.id;
+  String? get currentUserLogin => _user?.login.toLowerCase();
   TwitchChatAccess? get chatAccess => _chatAccess;
   String? get chatAccessError => _chatAccessError;
   bool get isCheckingChatAccess => _isCheckingChatAccess;
@@ -127,7 +138,45 @@ class TwitchChatController extends ChangeNotifier {
   }
 
   Map<String, String> get roomState => UnmodifiableMapView(_roomState);
-  bool get canSend => _status == TwitchChatStatus.connected && isSignedIn && followerChatEligible;
+  Duration get slowModeWaitRemaining {
+    var sentAt = _pendingSend?.sentAt;
+    if (sentAt == null || _lastMessageSentAt?.isAfter(sentAt) == true) {
+      sentAt = _lastMessageSentAt;
+    }
+    final exempt =
+        _user?.login.toLowerCase() == channel ||
+        _isPrivileged ||
+        _chatAccess?.isModerator == true ||
+        _chatAccess?.isVip == true ||
+        _chatAccess?.isSlowModeRestricted == false;
+    final until =
+        _slowModeRejectedUntil ??
+        (exempt
+            ? null
+            : sentAt?.add(Duration(seconds: int.tryParse(_roomState["slow"] ?? "") ?? 0)));
+    final remaining = until?.difference(DateTime.now()) ?? Duration.zero;
+    return remaining.isNegative ? Duration.zero : remaining;
+  }
+
+  bool get canSend =>
+      _status == TwitchChatStatus.connected &&
+      isSignedIn &&
+      followerChatEligible &&
+      slowModeWaitRemaining == Duration.zero;
+
+  void _scheduleSlowMode() {
+    _slowModeTimer?.cancel();
+    final remaining = slowModeWaitRemaining;
+    if (!_disposed && remaining > Duration.zero) {
+      _slowModeTimer = Timer(
+        remaining < const Duration(seconds: 1) ? remaining : const Duration(seconds: 1),
+        () {
+          _scheduleSlowMode();
+          notifyListeners();
+        },
+      );
+    }
+  }
 
   Future<void> refreshChatAccess() async {
     if (_disposed) {
@@ -148,6 +197,11 @@ class TwitchChatController extends ChangeNotifier {
         return;
       }
       _chatAccess = access;
+      final lastMessage = access.lastRecentChatMessageAt;
+      if (lastMessage != null &&
+          (_lastMessageSentAt == null || lastMessage.isAfter(_lastMessageSentAt!))) {
+        _lastMessageSentAt = lastMessage;
+      }
     } on Object catch (error) {
       if (!_isCurrent(generation) || revision != _accessRevision) {
         return;
@@ -160,6 +214,7 @@ class TwitchChatController extends ChangeNotifier {
       if (_isCurrent(generation) && revision == _accessRevision) {
         _isCheckingChatAccess = false;
         _scheduleFollowerEligibility();
+        _scheduleSlowMode();
         notifyListeners();
       }
     }
@@ -208,6 +263,8 @@ class TwitchChatController extends ChangeNotifier {
         followedAt: followedAt,
         isModerator: current.isModerator,
         isVip: current.isVip,
+        isSlowModeRestricted: current.isSlowModeRestricted,
+        lastRecentChatMessageAt: current.lastRecentChatMessageAt,
       );
       _chatAccessError = null;
       _scheduleFollowerEligibility();
@@ -443,6 +500,9 @@ class TwitchChatController extends ChangeNotifier {
       _historyOnlyIds.removeWhere((id) => !retainedIds.contains(id));
       _scheduleNotify();
     } on Object {
+      if (_historyRequestedGeneration == generation) {
+        _historyRequestedGeneration = -1;
+      }
       // Live IRC remains usable when Twitch does not provide recent history.
     } finally {
       if (identical(_historyModeration, moderation)) {
@@ -509,6 +569,8 @@ class TwitchChatController extends ChangeNotifier {
       _user = null;
     }
     if (_privateUserId != _user?.id) {
+      _lastMessageSentAt = null;
+      _slowModeRejectedUntil = null;
       _messages.removeWhere((message) => message.isPrivate);
       _recentHistory.removeWhere((message) => message.isPrivate);
       _claimedPointIds.clear();
@@ -616,12 +678,21 @@ class TwitchChatController extends ChangeNotifier {
       case "366":
         if (message.command == "ROOMSTATE") {
           final previousFollowerMode = followersOnlyMinutes;
+          final previousSlowMode = _roomState["slow"];
           _roomState.addAll(message.tags);
+          if (message.tags.containsKey("slow")) {
+            if (previousSlowMode != _roomState["slow"]) {
+              _slowModeRejectedUntil = null;
+            }
+            _scheduleSlowMode();
+          }
           if (previousFollowerMode != followersOnlyMinutes) {
             _scheduleFollowerEligibility();
-            if (isSignedIn && !_isCheckingChatAccess) {
-              unawaited(refreshChatAccess());
-            }
+          }
+          if ((previousFollowerMode != followersOnlyMinutes ||
+                  previousSlowMode != _roomState["slow"]) &&
+              isSignedIn) {
+            unawaited(refreshChatAccess());
           }
           final channelId = message.tags["room-id"].nullIfEmpty;
           if (channelId != null) {
@@ -677,6 +748,7 @@ class TwitchChatController extends ChangeNotifier {
                       badge.startsWith("vip/"),
                 );
         _scheduleFollowerEligibility();
+        _scheduleSlowMode();
         _scheduleNotify();
         final pending = _pendingSend;
         final id = message.tags["id"].nullIfEmpty;
@@ -687,7 +759,11 @@ class TwitchChatController extends ChangeNotifier {
             existing.userId == _user?.id &&
             existing.text == pending?.text;
         if (pending != null && id != null && (existing == null || pendingInHistory)) {
+          if (_lastMessageSentAt == null || pending.sentAt.isAfter(_lastMessageSentAt!)) {
+            _lastMessageSentAt = pending.sentAt;
+          }
           _pendingSend = null;
+          _scheduleSlowMode();
           _sendTimer?.cancel();
           _historyOnlyIds.remove(id);
           final local = _recentHistory.where((item) => item.id == pending.localId).firstOrNull;
@@ -723,6 +799,7 @@ class TwitchChatController extends ChangeNotifier {
             parentDisplayName: pending.replyTo?.displayName,
             parentText: pending.replyTo?.text,
             parentEmotes: pending.replyTo?.emotes ?? const [],
+            parentGifs: pending.replyTo?.gifs ?? const [],
             threadRootId: pending.replyTo?.threadRootId ?? pending.replyTo?.id,
             threadRootLogin: pending.replyTo?.threadRootLogin ?? pending.replyTo?.login,
           );
@@ -788,6 +865,7 @@ class TwitchChatController extends ChangeNotifier {
               .where((badge) => badge.isNotEmpty)
               .toList(),
           emotes: _parseEmotes(message.tags["emotes"] ?? "", text),
+          gifs: _parseGifs(message.tags["gifs"] ?? "", text),
           isAction: isAction,
           isOwn: login.toLowerCase() == _user?.login.toLowerCase(),
           isHistorical: previous?.isHistorical ?? false,
@@ -811,6 +889,10 @@ class TwitchChatController extends ChangeNotifier {
               parent?.emotes ??
               (previous?.parentText == parentText ? previous?.parentEmotes : null) ??
               const [],
+          parentGifs:
+              parent?.gifs ??
+              (previous?.parentText == parentText ? previous?.parentGifs : null) ??
+              const [],
           threadRootId:
               message.tags["reply-thread-parent-msg-id"].nullIfEmpty ??
               message.tags["reply-parent-msg-id"].nullIfEmpty,
@@ -833,6 +915,14 @@ class TwitchChatController extends ChangeNotifier {
             timeoutSeconds: previous.timeoutSeconds,
             moderatedAt: previous.moderatedAt,
           );
+        }
+        if (item.isOwn &&
+            !isNotice &&
+            previous?.isHistorical != true &&
+            (_lastMessageSentAt == null || item.timestamp!.isAfter(_lastMessageSentAt!))) {
+          _lastMessageSentAt = item.timestamp;
+          _slowModeRejectedUntil = null;
+          _scheduleSlowMode();
         }
         _append(item, countReceived: previous?.isHistorical != true);
       case "CLEARMSG":
@@ -941,6 +1031,15 @@ class TwitchChatController extends ChangeNotifier {
         final followersOnlyRejection = (message.tags["msg-id"] ?? "").startsWith(
           "msg_followersonly",
         );
+        if (message.tags["msg-id"] == "msg_slowmode") {
+          final seconds = int.tryParse(
+            RegExp(r"(\d+) seconds?\b").firstMatch(message.text)?[1] ?? "",
+          );
+          _slowModeRejectedUntil = DateTime.now().add(
+            Duration(seconds: seconds ?? int.tryParse(_roomState["slow"] ?? "") ?? 1),
+          );
+          _scheduleSlowMode();
+        }
         _error = followersOnlyRejection ? null : message.text;
         if ((message.tags["msg-id"] ?? "").startsWith("msg_") ||
             message.tags["msg-id"] == "unrecognized_cmd") {
@@ -1000,6 +1099,7 @@ class TwitchChatController extends ChangeNotifier {
       final pending = (
         text: text,
         localId: "pending:${now.microsecondsSinceEpoch}",
+        sentAt: now,
         replyTo: replyTo,
         result: Completer<bool>(),
       );
@@ -1022,18 +1122,22 @@ class TwitchChatController extends ChangeNotifier {
           parentDisplayName: replyTo?.displayName,
           parentText: replyTo?.text,
           parentEmotes: replyTo?.emotes ?? const [],
+          parentGifs: replyTo?.gifs ?? const [],
           threadRootId: replyTo?.threadRootId ?? replyTo?.id,
           threadRootLogin: replyTo?.threadRootLogin ?? replyTo?.login,
         ),
         countReceived: false,
       );
       _sentAt.addLast(now);
+      _slowModeRejectedUntil = null;
+      _scheduleSlowMode();
       _error = null;
       _sendTimer = Timer(const Duration(seconds: 10), () {
         _lost(_generation);
         _error = "Twitch did not confirm delivery. Your draft has been kept.";
         notifyListeners();
       });
+      notifyListeners();
       return pending.result.future;
     } on Object {
       _lost(_generation);
@@ -1051,6 +1155,7 @@ class TwitchChatController extends ChangeNotifier {
       _scheduleNotify();
     }
     _pendingSend = null;
+    _scheduleSlowMode();
   }
 
   void _append(TwitchChatMessage message, {bool countReceived = true}) {
@@ -1097,6 +1202,7 @@ class TwitchChatController extends ChangeNotifier {
     _connectTimer?.cancel();
     _joinTimer?.cancel();
     _followerTimer?.cancel();
+    _slowModeTimer?.cancel();
     _claimTimer?.cancel();
     _claimTimer = null;
     _privateNotices?.dispose();
@@ -1202,6 +1308,39 @@ List<TwitchChatEmote> _parseEmotes(String tag, String text) {
   }
   emotes.sort((a, b) => a.start.compareTo(b.start));
   return emotes;
+}
+
+// Twitch supplies inclusive character ranges and requires preserving the full GIF URL.
+// https://dev.twitch.tv/docs/chat/irc/#privmsg-tags
+List<TwitchChatGif> _parseGifs(String tag, String text) {
+  final offsets = <int>[0];
+  for (final rune in text.runes) {
+    offsets.add(offsets.last + (rune > 0xffff ? 2 : 1));
+  }
+  final gifs = <TwitchChatGif>[];
+  for (final item in tag.split(",")) {
+    final match = RegExp(r"^(\d+)-(\d+)\|([^|]+)\|(.+)$").firstMatch(item);
+    if (match == null) {
+      continue;
+    }
+    final start = int.tryParse(match[1]!);
+    final end = int.tryParse(match[2]!);
+    final uri = Uri.tryParse(match[4]!);
+    if (start == null ||
+        end == null ||
+        end < start ||
+        end + 1 >= offsets.length ||
+        uri == null ||
+        uri.scheme != "https" ||
+        uri.host.isEmpty) {
+      continue;
+    }
+    gifs.add(
+      TwitchChatGif(id: match[3]!, url: match[4]!, start: offsets[start], end: offsets[end + 1]),
+    );
+  }
+  gifs.sort((a, b) => a.start.compareTo(b.start));
+  return gifs;
 }
 
 extension on String? {

@@ -33,6 +33,7 @@ class TwitchChatPanel extends StatefulWidget {
     required this.chatOnly,
     required this.isLive,
     required this.onToggleChatOnly,
+    this.canShowVideo = true,
     this.controller,
     this.replayController,
     this.assets,
@@ -56,6 +57,7 @@ class TwitchChatPanel extends StatefulWidget {
   final ValueChanged<VoidCallback?>? onInlineBackHandlerChanged;
   final bool chatOnly;
   final bool isLive;
+  final bool canShowVideo;
   final double topPadding;
   final int? latencyMs;
   final VoidCallback onToggleChatOnly;
@@ -84,6 +86,7 @@ class TwitchChatPanel extends StatefulWidget {
     properties.add(IntProperty("latencyMs", latencyMs));
     properties.add(FlagProperty("chatOnly", value: chatOnly, ifTrue: "chat only"));
     properties.add(FlagProperty("isLive", value: isLive, ifTrue: "live"));
+    properties.add(FlagProperty("canShowVideo", value: canShowVideo, ifTrue: "can show video"));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onToggleChatOnly", onToggleChatOnly));
   }
 }
@@ -134,6 +137,8 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
   Timer? _followerHintTimer;
   List<TwitchChatMessage>? _pausedMessages;
   List<TwitchChatMessage> _presentedMessages = [];
+  final _seenMentionMessages = <String>{};
+  String? _mentionUserId;
 
   @override
   void initState() {
@@ -143,6 +148,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     _draft.addListener(_draftChanged);
     _draftFocus.addListener(_composerFocusChanged);
     _scroll.addListener(_scrolled);
+    _resetMentionAlerts();
     _scrollToLatest();
   }
 
@@ -163,6 +169,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
       _closeSheets();
       oldWidget._source.removeListener(_chatChanged);
       widget._source.addListener(_chatChanged);
+      _resetMentionAlerts();
       _draft.clear();
       _sending = false;
       _following = true;
@@ -291,6 +298,49 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     }
   }
 
+  void _resetMentionAlerts() {
+    _mentionUserId = widget.controller?.currentUserId;
+    _seenMentionMessages
+      ..clear()
+      ..addAll(widget.controller?.recentHistory.map((message) => message.id) ?? const []);
+  }
+
+  void _notifyMentions(List<TwitchChatMessage> messages, Set<String> retainedIds) {
+    if (_mentionUserId != widget.controller?.currentUserId) {
+      _resetMentionAlerts();
+    }
+    _seenMentionMessages.retainAll(retainedIds);
+    var alert = false;
+    for (final message in messages) {
+      if (_seenMentionMessages.add(message.id) &&
+          !message.isHistorical &&
+          !_blockedLogins.contains(message.login.toLowerCase()) &&
+          _mentionsViewer(message, widget.controller)) {
+        alert = true;
+      }
+    }
+    if (!alert || !widget.isLive || !_settings.mentionSounds || _settingsStore?.isLoaded != true) {
+      return;
+    }
+    final source = widget._source;
+    final userId = _mentionUserId;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted ||
+          widget._source != source ||
+          widget.controller?.currentUserId != userId ||
+          !_settings.mentionSounds) {
+        return;
+      }
+      try {
+        await const MethodChannel("flow/chat_notifications").invokeMethod<void>("mention");
+      } on MissingPluginException {
+        // Notification sounds are provided by the Android host.
+      } on PlatformException catch (error) {
+        debugPrint("Could not play mention sound: $error");
+      }
+    });
+  }
+
   void _scrolled() {
     final following = _scroll.position.extentBefore < 1;
     if (_following != following) {
@@ -391,6 +441,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
       return releaseOrder != 0 ? releaseOrder : sourceOrder[a.id]!.compareTo(sourceOrder[b.id]!);
     });
     final messages = ready.length > 300 ? ready.sublist(ready.length - 300) : ready;
+    _notifyMentions(ready, retainedIds);
     _delayTimer?.cancel();
     if (nextUpdate != null) {
       _delayTimer = Timer(nextUpdate!, _chatChanged);
@@ -511,7 +562,10 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
                   widget.chatOnly ? Icons.monitor : Icons.chat,
                 ),
                 title: Text(widget.chatOnly ? "Show video" : "Chat only"),
-                onTap: () => Navigator.pop(context, _ChatAction.video),
+                enabled: !widget.chatOnly || widget.canShowVideo,
+                onTap: widget.chatOnly && !widget.canShowVideo
+                    ? null
+                    : () => Navigator.pop(context, _ChatAction.video),
               ),
               ListTile(
                 leading: const Icon(Icons.cached_rounded),
@@ -1248,6 +1302,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
               _ChatMessageRow(
                 key: const ValueKey("chat_message_preview"),
                 message: message,
+                isMention: _mentionsViewer(message, widget._source),
                 settings: _settings,
                 assets: widget.assets,
                 knownUsers: _knownUsers,
@@ -1398,6 +1453,11 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
   }
 
   Future<void> _userActions(TwitchChatMessage message, Future<TwitchUser?> profile) async {
+    final source = widget._source;
+    final controller = widget.controller;
+    final userId = controller?.currentUserId;
+    final loader = controller?.clientLoader ?? widget.replayController!.clientLoader;
+    bool isCurrent() => mounted && widget._source == source && controller?.currentUserId == userId;
     final action = await _showSheet<_ChatUserAction>(
       builder: (context) => SafeArea(
         top: false,
@@ -1418,7 +1478,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
         ),
       ),
     );
-    if (action == null || !mounted) {
+    if (action == null || !isCurrent()) {
       return;
     }
     if (action == _ChatUserAction.report) {
@@ -1433,6 +1493,20 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error.toString())));
         }
       }
+      return;
+    }
+    final TwitchApiClient originalClient;
+    try {
+      originalClient = await loader();
+    } on Object catch (error) {
+      if (mounted && isCurrent()) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Could not block user: $error")),
+        );
+      }
+      return;
+    }
+    if (!isCurrent()) {
       return;
     }
     final confirmed = await _showSheet<bool>(
@@ -1469,7 +1543,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
         ),
       ),
     );
-    if (confirmed != true || !mounted) {
+    if (confirmed != true || !mounted || !isCurrent()) {
       return;
     }
     final messenger = ScaffoldMessenger.of(context);
@@ -1478,14 +1552,19 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
       if (id == null) {
         throw const FormatException("Could not find this Twitch user. Try again.");
       }
-      final loader = widget.controller?.clientLoader ?? widget.replayController!.clientLoader;
-      await (await loader()).blockUser(id);
-      if (mounted) {
+      final client = await loader();
+      if (!isCurrent() ||
+          client.accessToken != originalClient.accessToken ||
+          client.gqlAccessToken != originalClient.gqlAccessToken) {
+        return;
+      }
+      await client.blockUser(id);
+      if (isCurrent()) {
         setState(() => _blockedLogins.add(message.login.toLowerCase()));
         messenger.showSnackBar(SnackBar(content: Text("Blocked ${message.displayName}")));
       }
     } on Object catch (error) {
-      if (mounted) {
+      if (isCurrent()) {
         messenger.showSnackBar(SnackBar(content: Text("Could not block user: $error")));
       }
     }
@@ -1769,6 +1848,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
                         ? _ChatMessageRow(
                             key: ValueKey("pinned-${pin.id}"),
                             message: pin.message,
+                            isMention: _mentionsViewer(pin.message, widget._source),
                             settings: _settings,
                             assets: widget.assets,
                             knownUsers: knownUsers,
@@ -1926,6 +2006,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     final colors = theme.colorScheme;
     final connected = status == TwitchChatStatus.connected;
     final followerWait = controller?.followingWaitRemaining ?? Duration.zero;
+    final slowModeWait = controller?.slowModeWaitRemaining ?? Duration.zero;
     final waitingToChat =
         connected &&
         controller?.isSignedIn == true &&
@@ -1955,6 +2036,8 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
               : "Tap to retry chat"
         : waitingToChat
         ? "You can chat in ${_chatDuration(followerWait)}"
+        : slowModeWait > Duration.zero
+        ? "You can chat in ${_chatDuration(slowModeWait)}"
         : _replyTo == null
         ? "Send a message"
         : "@${_replyTo!.login}";
@@ -2017,6 +2100,10 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
                             itemBuilder: (context, index) => _ChatMessageRow(
                               key: ValueKey(messages[messages.length - index - 1].id),
                               message: messages[messages.length - index - 1],
+                              isMention: _mentionsViewer(
+                                messages[messages.length - index - 1],
+                                widget._source,
+                              ),
                               horizontalPadding: 12,
                               settings: _settings,
                               assets: widget.assets,
@@ -2808,6 +2895,7 @@ class _ChatUserSheetState extends State<_ChatUserSheet> {
                 itemBuilder: (context, index) => _ChatMessageRow(
                   key: ValueKey("log-${logs[index].id}"),
                   message: logs[index],
+                  isMention: _mentionsViewer(logs[index], widget.source),
                   settings: settings,
                   assets: widget.assets,
                   showTimestamps: true,
@@ -2971,6 +3059,8 @@ class _ChatThreadSheetState extends State<_ChatThreadSheet> {
                       message.parentDisplayName ?? message.parentLogin ?? "Original message",
                   userId: message.parentUserId,
                   text: message.parentText ?? "Original message is unavailable",
+                  emotes: message.parentEmotes,
+                  gifs: message.parentGifs,
                 ),
               );
             }
@@ -3086,6 +3176,7 @@ class _ChatThreadSheetState extends State<_ChatThreadSheet> {
                             child: _ChatMessageRow(
                               key: ValueKey("thread-${thread[index].id}"),
                               message: thread[index],
+                              isMention: _mentionsViewer(thread[index], widget.source),
                               settings: preferences,
                               assets: widget.assets,
                               knownUsers: knownUsers,
@@ -3200,13 +3291,47 @@ Color _chatNameColor(TwitchChatMessage message, Brightness brightness) {
   final fallback = colorValue == null
       ? _defaultChatNameColors.putIfAbsent(
           message.login.toLowerCase(),
-          () => defaults[_chatNameRandom.nextInt(defaults.length)],
+          () {
+            if (_defaultChatNameColors.length >= 5000) {
+              _defaultChatNameColors.remove(_defaultChatNameColors.keys.first);
+            }
+            return defaults[_chatNameRandom.nextInt(defaults.length)];
+          },
         )
       : 0xFF000000 | colorValue;
   return readableChatNameColor(
     Color(fallback),
     brightness,
   );
+}
+
+bool _mentionsViewer(TwitchChatMessage message, Listenable? source) {
+  if (source is! TwitchChatController ||
+      !source.isSignedIn ||
+      message.isOwn ||
+      message.isDeleted ||
+      message.isPrivate ||
+      message.noticeType == "system") {
+    return false;
+  }
+  final userId = source.currentUserId;
+  final login = source.currentUserLogin?.toLowerCase();
+  if ((userId != null && message.userId == userId) ||
+      (login != null && message.login.toLowerCase() == login)) {
+    return false;
+  }
+  if (message.parentMessageId != null &&
+      (message.parentUserId != null && userId != null
+          ? message.parentUserId == userId
+          : login != null && message.parentLogin?.toLowerCase() == login)) {
+    return true;
+  }
+  return login != null &&
+      login.isNotEmpty &&
+      RegExp(
+        "(^|[^A-Za-z0-9_])@${RegExp.escape(login)}(?![A-Za-z0-9_])",
+        caseSensitive: false,
+      ).hasMatch(message.text);
 }
 
 int _replyBodyStart(TwitchChatMessage message) {
@@ -3240,6 +3365,7 @@ class _ChatMessageRow extends StatefulWidget {
     this.replyContextKey,
     this.previewPrefix,
     this.previewLines = 2,
+    this.isMention = false,
     super.key,
   });
 
@@ -3261,6 +3387,7 @@ class _ChatMessageRow extends StatefulWidget {
   final Key? replyContextKey;
   final String? previewPrefix;
   final int previewLines;
+  final bool isMention;
 
   @override
   State<_ChatMessageRow> createState() => _ChatMessageRowState();
@@ -3292,6 +3419,7 @@ class _ChatMessageRow extends StatefulWidget {
     properties.add(DiagnosticsProperty<Key?>("replyContextKey", replyContextKey));
     properties.add(StringProperty("previewPrefix", previewPrefix));
     properties.add(IntProperty("previewLines", previewLines));
+    properties.add(FlagProperty("isMention", value: isMention, ifTrue: "mentions you"));
   }
 }
 
@@ -3699,29 +3827,50 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
     }
     final content = <InlineSpan>[];
     var offset = widget.previewPrefix == null ? _replyBodyStart(message) : 0;
-    for (final emote in message.emotes) {
-      if (emote.start < offset || emote.end > message.text.length || emote.start >= emote.end) {
+    final media = [
+      for (final emote in message.emotes) (emote.start, emote.end, emote as Object),
+      for (final gif in message.gifs) (gif.start, gif.end, gif as Object),
+    ]..sort((a, b) => a.$1.compareTo(b.$1));
+    for (final (start, end, asset) in media) {
+      if (start < offset || end > message.text.length || start >= end) {
         continue;
       }
-      _appendText(content, message.text.substring(offset, emote.start));
-      final label = message.text.substring(emote.start, emote.end);
+      _appendText(content, message.text.substring(offset, start));
+      final label = message.text.substring(start, end);
       content.add(
-        _enabled(ChatEmoteProvider.twitch)
+        asset is TwitchChatGif
+            ? WidgetSpan(
+                alignment: PlaceholderAlignment.middle,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: widget.previewPrefix == null ? 180 : 48,
+                    maxHeight: widget.previewPrefix == null ? 120 : _fontSize * 1.7,
+                  ),
+                  child: Image.network(
+                    asset.url,
+                    key: ValueKey("chat_gif-${message.id}-$start"),
+                    fit: BoxFit.contain,
+                    semanticLabel: label,
+                    errorBuilder: (_, _, _) => Text(label, style: TextStyle(fontSize: _fontSize)),
+                  ),
+                ),
+              )
+            : asset is TwitchChatEmote && _enabled(ChatEmoteProvider.twitch)
             ? WidgetSpan(
                 alignment: PlaceholderAlignment.middle,
                 child: _emote(
                   ChatAssetEmote(
-                    id: emote.id,
+                    id: asset.id,
                     name: label,
                     provider: ChatEmoteProvider.twitch,
                     url:
-                        "https://static-cdn.jtvnw.net/emoticons/v2/${Uri.encodeComponent(emote.id)}/default/${theme.brightness.name}/2.0",
+                        "https://static-cdn.jtvnw.net/emoticons/v2/${Uri.encodeComponent(asset.id)}/default/${theme.brightness.name}/2.0",
                   ),
                 ),
               )
             : TextSpan(text: label),
       );
-      offset = emote.end;
+      offset = end;
     }
     _appendText(content, message.text.substring(offset));
     if (widget.previewPrefix case final prefix?) {
@@ -3755,7 +3904,11 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
             ? "Announcement"
             : null);
     final system = message.noticeType == "system";
-    final highlighted = firstMessage || message.isHighlighted || (notice != null && !system);
+    final highlighted =
+        firstMessage ||
+        message.isHighlighted ||
+        (settings.highlightMentions && widget.isMention) ||
+        (notice != null && !system);
     final watchStreak = message.noticeType == "watch-streak";
     final subscription =
         !message.isPrivate &&
@@ -3806,7 +3959,8 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
                     provider: ChatEmoteProvider.twitch,
                   ),
             ),
-      for (final badge in assets?.userBadgesByLogin[message.login] ?? <ChatAssetBadge>[])
+      for (final badge
+          in assets?.userBadgesByLogin[message.login.toLowerCase()] ?? <ChatAssetBadge>[])
         if (switch (badge.provider) {
           ChatEmoteProvider.twitch => settings.twitchBadges,
           ChatEmoteProvider.sevenTv => settings.sevenTvBadges,
@@ -3924,6 +4078,7 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
                                       message.parentDisplayName ?? message.parentLogin ?? "Reply",
                                   text: message.parentText ?? "View thread",
                                   emotes: message.parentEmotes,
+                                  gifs: message.parentGifs,
                                   isOwn:
                                       widget
                                           .knownUsers[message.parentLogin?.toLowerCase()]

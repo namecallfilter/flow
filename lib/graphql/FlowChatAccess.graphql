@@ -8,6 +8,8 @@ query FlowChatAccess($login: String!) {
       follower { followedAt }
       isModerator
       isVIP
+      chatRestrictedReasons
+      lastRecentChatMessageAt
     }
   }
 }

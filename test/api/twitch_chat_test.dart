@@ -267,6 +267,22 @@ void main() {
     },
   );
 
+  testWidgets("retries failed recent history on the next room state", (tester) async {
+    final client = _Client()
+      ..loadHistory = () => Future.error(TwitchApiException("Temporary history failure"));
+    final socket = _Socket();
+    final chat = await historyChat(tester, client, socket);
+    client.loadHistory = () async => [_historyMessage("retry", 1000)];
+    socket._incoming.add("@room-id=1 :tmi.twitch.tv ROOMSTATE #channel\r\n");
+    await tester.pump();
+    expect(client.historyLoads, 2);
+    expect(chat.conversation.single.id, "retry");
+    socket._incoming.add("@room-id=1 :tmi.twitch.tv ROOMSTATE #channel\r\n");
+    await tester.pump();
+    expect(client.historyLoads, 2);
+    chat.dispose();
+  });
+
   test("retains highlighted chat and identifies only watch-streak milestone notices", () async {
     final chat = controller();
     await server.join(chat);
@@ -291,6 +307,46 @@ void main() {
     expect(chat.conversation.first.isHighlighted, isTrue);
     expect(chat.conversationHistory.first.isHighlighted, isTrue);
   });
+
+  test(
+    "receives Twitch native GIF ranges and preserves their full URLs through replies and moderation",
+    () async {
+      // Official Twitch IRC GIF example: https://dev.twitch.tv/docs/chat/irc/#privmsg-tags
+      const label = "[Y A Y Yes GIF by Djemilah Birnie]";
+      const url =
+          "https://media4.giphy.com/media/joSNxeswxuc74Juo8X/giphy.gif?cid=095d7a5dzizsiwgabonagkmigggv8v1spfai91ac3x0dsiy0&ep=v1_gifs_trending&rid=giphy.gif&ct=g";
+      final chat = controller();
+      await server.join(chat);
+      expect(chat.currentUserLogin, "viewer");
+      final end = 2 + label.runes.length - 1;
+      server.send(
+        "@id=gif;gifs=2-$end|joSNxeswxuc74Juo8X|$url;emotes=25:${end + 2}-${end + 6} :other!o@tmi PRIVMSG #channel :😀 $label Kappa\r\n",
+      );
+      await _waitFor(() => chat.conversation.length == 1);
+      final message = chat.conversation.single;
+      final gif = message.gifs.single;
+      expect(gif.id, "joSNxeswxuc74Juo8X");
+      expect(gif.url, url);
+      expect(gif.start, 3);
+      expect(message.text.substring(gif.start, gif.end), label);
+      expect(
+        message.text.substring(message.emotes.single.start, message.emotes.single.end),
+        "Kappa",
+      );
+      final escapedParent = message.text.replaceAll(" ", r"\s");
+      server.send(
+        "@id=gif-reply;reply-parent-msg-id=gif;reply-parent-user-login=other;reply-parent-msg-body=$escapedParent :another!a@tmi PRIVMSG #channel :Reply\r\n"
+        "@id=gif-invalid;gifs=0-999|outside|$url,9-1|backwards|$url,0-1|bad-url|file:///bad.gif,invalid :other!o@tmi PRIVMSG #channel :plain text\r\n",
+      );
+      await _waitFor(() => chat.conversation.length == 3);
+      expect(chat.conversation[1].parentGifs.single, same(gif));
+      expect(chat.conversation.last.gifs, isEmpty);
+      server.send("@target-msg-id=gif :tmi.twitch.tv CLEARMSG #channel :deleted\r\n");
+      await _waitFor(() => chat.conversation.first.isDeleted);
+      expect(chat.conversation.first.gifs.single.url, url);
+      expect(chat.conversation.first.copyWith(isHistorical: true).gifs.single, same(gif));
+    },
+  );
 
   test(
     "records connection transitions once and keeps userless notices through reconnect and moderation",
@@ -725,7 +781,12 @@ void main() {
     expect(await chat.send("a" * 501), isFalse);
     expect(server.commands.where((command) => command.startsWith("PRIVMSG")), isEmpty);
 
+    var immediatelyDisplayed = false;
+    chat.addListener(() {
+      immediatelyDisplayed = chat.conversation.any((message) => message.text == "first message");
+    });
     final rejected = chat.send("first message");
+    expect(immediatelyDisplayed, isTrue);
     expect(chat.conversation.single.id, startsWith("pending:"));
     expect(chat.conversation.single.isOwn, isTrue);
     expect(chat.conversation.single.text, "first message");
@@ -789,6 +850,147 @@ void main() {
     expect(await interrupted, isFalse);
     expect(chat.status, TwitchChatStatus.reconnecting);
     expect(chat.conversation.length, 1);
+  });
+
+  test("slow mode blocks sends until expiry and reacts to role and room changes", () async {
+    final chat = controller();
+    await server.join(chat);
+    await Future<void>.delayed(const Duration(milliseconds: 1050));
+    server.send("@slow=2 :tmi.twitch.tv ROOMSTATE #channel\r\n");
+    await _waitFor(() => chat.roomState["slow"] == "2");
+    expect(chat.canSend, isTrue);
+    final sent = chat.send("slow mode message");
+    final initialWait = chat.slowModeWaitRemaining;
+    expect(chat.slowModeWaitRemaining, greaterThan(Duration.zero));
+    expect(chat.canSend, isFalse);
+    expect(await chat.send("blocked while pending"), isFalse);
+    await _waitFor(() => server.commands.contains("PRIVMSG #channel :slow mode message\r\n"));
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    server.send("@id=slow-own :tmi.twitch.tv USERSTATE #channel\r\n");
+    expect(await sent, isTrue);
+    expect(chat.slowModeWaitRemaining, lessThan(initialWait - const Duration(milliseconds: 100)));
+    expect(await chat.send("blocked after confirmation"), isFalse);
+    expect(server.commands.where((value) => value.startsWith("PRIVMSG")), hasLength(1));
+    for (final role in ["moderator", "vip", "broadcaster"]) {
+      server.send("@badges=$role/1 :tmi.twitch.tv USERSTATE #channel\r\n");
+      await _waitFor(() => chat.canSend);
+      expect(chat.slowModeWaitRemaining, Duration.zero);
+      server.send("@badges= :tmi.twitch.tv USERSTATE #channel\r\n");
+      await _waitFor(() => !chat.canSend);
+    }
+    var expiryNotified = false;
+    chat.addListener(() => expiryNotified |= chat.canSend);
+    await _waitFor(() => expiryNotified);
+    expect(chat.slowModeWaitRemaining, Duration.zero);
+    server.send("@id=other-client :viewer!v@tmi PRIVMSG #channel :sent from another client\r\n");
+    await _waitFor(() => !chat.canSend);
+    server.send("@slow=0 :tmi.twitch.tv ROOMSTATE #channel\r\n");
+    await _waitFor(() => chat.canSend);
+    expect(chat.slowModeWaitRemaining, Duration.zero);
+  });
+
+  testWidgets("restores server slow-mode history and honors subscriber exemptions", (tester) async {
+    final lastSentAt = DateTime.now().subtract(const Duration(seconds: 5));
+    final client = _Client()
+      ..access = TwitchChatAccess(
+        channelId: "1",
+        channelDisplayName: "Channel",
+        rules: const [],
+        isSlowModeRestricted: false,
+        lastRecentChatMessageAt: lastSentAt,
+      );
+    final socket = _Socket();
+    final chat = await historyChat(tester, client, socket);
+    socket._incoming.add(
+      "@subscriber=1;badges=subscriber/1 :tmi.twitch.tv USERSTATE #channel\r\n"
+      "@slow=30 :tmi.twitch.tv ROOMSTATE #channel\r\n",
+    );
+    await tester.pump();
+    expect(chat.canSend, isTrue);
+    expect(chat.slowModeWaitRemaining, Duration.zero);
+    client.access = TwitchChatAccess(
+      channelId: "1",
+      channelDisplayName: "Channel",
+      rules: const [],
+      isSlowModeRestricted: true,
+      lastRecentChatMessageAt: lastSentAt,
+    );
+    await chat.refreshChatAccess();
+    expect(chat.canSend, isFalse);
+    expect(chat.slowModeWaitRemaining, greaterThan(const Duration(seconds: 24)));
+    expect(chat.slowModeWaitRemaining, lessThanOrEqualTo(const Duration(seconds: 25)));
+    final newer = DateTime.now().subtract(const Duration(seconds: 1)).millisecondsSinceEpoch;
+    final older = lastSentAt.subtract(const Duration(minutes: 1)).millisecondsSinceEpoch;
+    socket._incoming.add(
+      "@id=newer-own;tmi-sent-ts=$newer :viewer!v@tmi PRIVMSG #channel :newer message\r\n"
+      "@id=older-own;tmi-sent-ts=$older :viewer!v@tmi PRIVMSG #channel :delayed old message\r\n",
+    );
+    expect(chat.canSend, isFalse);
+    expect(chat.slowModeWaitRemaining, greaterThan(const Duration(seconds: 28)));
+    chat.dispose();
+  });
+
+  testWidgets("room changes supersede an in-flight slow-mode exemption query", (tester) async {
+    final stale = Completer<TwitchChatAccess>();
+    final client = _Client();
+    var accessLoads = 0;
+    client.loadAccess = () async {
+      if (++accessLoads == 1) {
+        return stale.future;
+      }
+      return TwitchChatAccess(
+        channelId: "1",
+        channelDisplayName: "Channel",
+        rules: const [],
+        isSlowModeRestricted: true,
+        lastRecentChatMessageAt: DateTime.now(),
+      );
+    };
+    final socket = _Socket();
+    final chat = await historyChat(tester, client, socket);
+    expect(accessLoads, 1);
+    socket._incoming.add("@slow=30 :tmi.twitch.tv ROOMSTATE #channel\r\n");
+    await tester.pump();
+    expect(accessLoads, 2);
+    expect(chat.chatAccess?.isSlowModeRestricted, isTrue);
+    stale.complete(
+      const TwitchChatAccess(
+        channelId: "1",
+        channelDisplayName: "Channel",
+        rules: [],
+        isSlowModeRestricted: false,
+      ),
+    );
+    await tester.pump();
+    expect(chat.chatAccess?.isSlowModeRestricted, isTrue);
+    expect(chat.canSend, isFalse);
+    chat.dispose();
+  });
+
+  test("uses Twitch's slow-mode rejection countdown and clears a rejected local attempt", () async {
+    final chat = controller();
+    await server.join(chat);
+    await Future<void>.delayed(const Duration(milliseconds: 1050));
+    server.send("@slow=20 :tmi.twitch.tv ROOMSTATE #channel\r\n");
+    await _waitFor(() => chat.roomState["slow"] == "20");
+    final rejected = chat.send("rejected local attempt");
+    await _waitFor(() => server.commands.contains("PRIVMSG #channel :rejected local attempt\r\n"));
+    server.send(
+      "@msg-id=msg_slowmode :tmi.twitch.tv NOTICE #channel :This room is in slow mode and you are sending messages too quickly. You will be able to talk again in 1 seconds.\r\n",
+    );
+    expect(await rejected, isFalse);
+    expect(chat.conversation, isEmpty);
+    expect(chat.canSend, isFalse);
+    expect(chat.slowModeWaitRemaining, lessThanOrEqualTo(const Duration(seconds: 1)));
+    await _waitFor(() => chat.canSend);
+    final blocked = chat.send("moderation rejected attempt");
+    await _waitFor(
+      () => server.commands.contains("PRIVMSG #channel :moderation rejected attempt\r\n"),
+    );
+    server.send("@msg-id=msg_subsonly :tmi.twitch.tv NOTICE #channel :Subscribers only\r\n");
+    expect(await blocked, isFalse);
+    expect(chat.slowModeWaitRemaining, Duration.zero);
+    expect(chat.canSend, isTrue);
   });
 
   test("confirms an own send when recent history arrives before its acknowledgement", () async {

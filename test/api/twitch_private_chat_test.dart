@@ -99,6 +99,31 @@ void main() {
     service.dispose();
   });
 
+  testWidgets("a missing web token retries when the session becomes available", (tester) async {
+    var hasToken = false;
+    var connections = 0;
+    final socket = _Socket();
+    final service = TwitchPrivateChatNotices(
+      channelId: "1",
+      userId: "123",
+      clientLoader: () async =>
+          hasToken ? client() : TwitchApiClient(clientId: "test", accessToken: ""),
+      socketConnector: () async {
+        connections++;
+        return socket;
+      },
+      onNotice: ({required id, required type, required text}) => fail("No achievement received"),
+    );
+    await tester.pump();
+    expect(connections, 0);
+    hasToken = true;
+    await tester.pump(const Duration(seconds: 1));
+    expect(connections, 1);
+    socket.welcome();
+    expect(socket.sent.last["authenticate"], {"token": "web-token"});
+    service.dispose();
+  });
+
   testWidgets("revoked subscriptions reconnect and require a fresh authenticated subscription", (
     tester,
   ) async {

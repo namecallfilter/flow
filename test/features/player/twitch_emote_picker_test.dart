@@ -150,6 +150,54 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets("queued recent saves stay with their original preferences after a switch", (
+    tester,
+  ) async {
+    final assets = _Assets();
+    final first = _SlowPreferences();
+    final second = _SlowPreferences();
+    addTearDown(assets.dispose);
+    await tester.pumpWidget(_picker(assets, first));
+    await tester.tap(find.text("Twitch"));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip("twitch-channel"));
+    await tester.pumpWidget(_picker(assets, second));
+    await tester.tap(find.text("7TV"));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip("sevenTv-channel\nOriginal name: Original"));
+    second.pending.complete([
+      jsonEncode({
+        "provider": "twitch",
+        "id": "second",
+        "name": "second-old",
+        "url": "https://example.com/second.png",
+      }),
+    ]);
+    first.pending.complete([
+      jsonEncode({
+        "provider": "twitch",
+        "id": "first",
+        "name": "first-old",
+        "url": "https://example.com/first.png",
+      }),
+    ]);
+    await tester.pumpAndSettle();
+    expect(first.saved.map((value) => (jsonDecode(value) as Map<String, Object?>)["name"]), [
+      "twitch-channel",
+      "first-old",
+    ]);
+    expect(second.saved.map((value) => (jsonDecode(value) as Map<String, Object?>)["name"]), [
+      "sevenTv-channel",
+      "second-old",
+    ]);
+    await tester.tap(find.text("Recent"));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip("twitch-channel"), findsNothing);
+    expect(find.byTooltip("first-old"), findsNothing);
+    expect(find.byTooltip("second-old"), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     "selection persists deduplicated recent emotes and metadata across picker instances",
     (tester) async {

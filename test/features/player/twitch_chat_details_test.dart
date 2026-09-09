@@ -41,6 +41,222 @@ const _brailleArtRows = [
 ];
 
 void main() {
+  testWidgets("mentions and replies highlight and sound once without replaying history", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 1200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final sounds = <MethodCall>[];
+    const channel = MethodChannel("flow/chat_notifications");
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      channel,
+      (call) async => sounds.add(call),
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null),
+    );
+    final controller = _Controller(_Client())
+      ..viewerId = "self"
+      ..viewerLogin = "my_login"
+      ..items.add(_message("existing", "Existing @MY_LOGIN", minute: 1));
+    final settings = AppSettingsStore(preferences: MemoryFlowPreferences());
+    await settings.load();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_panel(controller, settingsStore: settings));
+    await tester.pumpAndSettle();
+    expect(_highlight(tester, "existing").border, isNotNull);
+    expect(sounds, isEmpty);
+
+    controller.items.addAll([
+      _message("mention", "Hello (@My_Login)!", minute: 2),
+      _message("other", "@my_login_extra @other email@my_login", minute: 2),
+      _message("own", "@my_login", minute: 2).copyWith(isOwn: true),
+      _message("history", "Old @my_login", minute: 2).copyWith(isHistorical: true),
+      _message("deleted", "@my_login", minute: 2).copyWith(isDeleted: true),
+    ]);
+    controller.update();
+    await tester.pumpAndSettle();
+    expect(sounds.map((call) => call.method), ["mention"]);
+    expect(_highlight(tester, "mention").border, isNotNull);
+    expect(_highlight(tester, "history").border, isNotNull);
+    expect(_highlight(tester, "other").border, isNull);
+    expect(_highlight(tester, "own").border, isNull);
+    controller.update();
+    await tester.pumpAndSettle();
+    expect(sounds, hasLength(1));
+
+    controller.items.add(
+      const TwitchChatMessage(
+        id: "reply",
+        login: "other",
+        displayName: "Other",
+        text: "A reply without an @mention",
+        parentMessageId: "parent",
+        parentUserId: "self",
+        parentLogin: "previous_login",
+        parentText: "My message",
+      ),
+    );
+    controller.update();
+    await tester.pumpAndSettle();
+    expect(_highlight(tester, "reply").border, isNotNull);
+    expect(sounds, hasLength(2));
+
+    await settings.setChatPreferences(
+      settings.chatPreferences.copyWith(highlightMentions: false, mentionSounds: false),
+    );
+    controller.items.add(_message("muted", "@my_login", minute: 3));
+    controller.update();
+    await tester.pumpAndSettle();
+    expect(_highlight(tester, "reply").border, isNull);
+    expect(_highlight(tester, "muted").border, isNull);
+    expect(sounds, hasLength(2));
+    await settings.setChatPreferences(
+      settings.chatPreferences.copyWith(highlightMentions: true, mentionSounds: true),
+    );
+    await tester.pumpAndSettle();
+    expect(_highlight(tester, "muted").border, isNotNull);
+    expect(sounds, hasLength(2));
+    controller.viewerId = "second";
+    controller.viewerLogin = "other";
+    controller.update();
+    await tester.pumpAndSettle();
+    expect(_highlight(tester, "reply").border, isNull);
+    expect(sounds, hasLength(2));
+    controller.items.add(_message("new-account", "@other", minute: 4));
+    controller.update();
+    await tester.pumpAndSettle();
+    expect(sounds, hasLength(3));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets("mention sounds follow the display delay and skip muted arrivals", (tester) async {
+    final sounds = <MethodCall>[];
+    const channel = MethodChannel("flow/chat_notifications");
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      channel,
+      (call) async => sounds.add(call),
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null),
+    );
+    final controller = _Controller(_Client())
+      ..viewerId = "self"
+      ..viewerLogin = "my_login";
+    final settings = AppSettingsStore(preferences: MemoryFlowPreferences());
+    await settings.load();
+    await settings.setChatPreferences(
+      settings.chatPreferences.copyWith(autoSyncChat: false, manualChatDelaySeconds: 2),
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_panel(controller, settingsStore: settings, chatOnly: false));
+    await tester.pumpAndSettle();
+    controller.items.add(
+      TwitchChatMessage(
+        id: "delayed-mention",
+        login: "viewer",
+        displayName: "Viewer",
+        text: "@my_login",
+        timestamp: DateTime.now(),
+      ),
+    );
+    controller.update();
+    await tester.pump();
+    expect(find.byKey(const ValueKey("delayed-mention")), findsNothing);
+    expect(sounds, isEmpty);
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 2100)));
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("delayed-mention")), findsOneWidget);
+    expect(sounds, hasLength(1));
+    await settings.setChatPreferences(settings.chatPreferences.copyWith(mentionSounds: false));
+    controller.items.add(_message("silent", "@my_login", minute: 1));
+    controller.update();
+    await tester.pumpAndSettle();
+    expect(_highlight(tester, "silent").border, isNotNull);
+    expect(sounds, hasLength(1));
+    await settings.setChatPreferences(settings.chatPreferences.copyWith(mentionSounds: true));
+    await tester.pumpAndSettle();
+    expect(sounds, hasLength(1));
+  });
+
+  testWidgets("native GIFs render alongside emotes and in quoted replies without changing URLs", (
+    tester,
+  ) async {
+    const url =
+        "https://media4.giphy.com/media/joSNxeswxuc74Juo8X/giphy.gif?cid=example&ep=v1_gifs_trending&rid=giphy.gif&ct=g";
+    const label = "[Y A Y Yes GIF by Djemilah Birnie]";
+    await _cacheImages(tester);
+    await tester.runAsync(() async {
+      final recorder = ui.PictureRecorder();
+      ui.Canvas(recorder).drawColor(Colors.green, ui.BlendMode.src);
+      final picture = recorder.endRecording();
+      final image = await picture.toImage(240, 120);
+      picture.dispose();
+      PaintingBinding.instance.imageCache.putIfAbsent(
+        const NetworkImage(url),
+        () => OneFrameImageStreamCompleter(Future.value(ImageInfo(image: image))),
+      );
+    });
+    addTearDown(PaintingBinding.instance.imageCache.clear);
+    tester.view.physicalSize = const Size(240, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final client = _Client();
+    final assets = _Assets(client);
+    const gif = TwitchChatGif(id: "joSNxeswxuc74Juo8X", url: url, start: 6, end: 6 + label.length);
+    const parent = TwitchChatMessage(
+      id: "gif-parent",
+      login: "viewer",
+      displayName: "Viewer",
+      text: "Kappa $label Party",
+      emotes: [TwitchChatEmote(id: "25", start: 0, end: 5)],
+      gifs: [gif],
+    );
+    final controller = _Controller(client)..items.add(parent);
+    addTearDown(controller.dispose);
+    addTearDown(assets.dispose);
+    await tester.pumpWidget(_panel(controller, assets: assets));
+    await tester.pumpAndSettle();
+    final body = find.byKey(const ValueKey("gif-parent"));
+    final image = find.byKey(const ValueKey("chat_gif-gif-parent-6"));
+    expect((tester.widget<Image>(image).image as NetworkImage).url, url);
+    expect(find.descendant(of: body, matching: find.byType(Image)), findsNWidgets(3));
+    expect(tester.getSize(image).width, greaterThan(100));
+    expect(tester.getSize(image).width, lessThanOrEqualTo(180));
+    expect(tester.getSize(image).height, lessThanOrEqualTo(120));
+    controller.items.add(
+      TwitchChatMessage(
+        id: "gif-reply",
+        login: "other",
+        displayName: "Other",
+        text: "Reply",
+        parentMessageId: parent.id,
+        parentLogin: parent.login,
+        parentDisplayName: parent.displayName,
+        parentText: parent.text,
+        parentEmotes: parent.emotes,
+        parentGifs: parent.gifs,
+      ),
+    );
+    controller.update();
+    await tester.pumpAndSettle();
+    final quoted = find.descendant(
+      of: find.byKey(const ValueKey("reply-context-gif-reply")),
+      matching: find.byType(Image),
+    );
+    expect(quoted, findsNWidgets(3));
+    final quotedGif = find.descendant(
+      of: find.byKey(const ValueKey("reply-context-gif-reply")),
+      matching: image,
+    );
+    expect(tester.getSize(quotedGif).height, lessThanOrEqualTo(21));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets("Braille art preserves complete rows and fits narrow or enlarged chat", (
     tester,
   ) async {
@@ -2281,7 +2497,7 @@ void main() {
         ..items.add(
           const TwitchChatMessage(
             id: "profile-metadata",
-            login: "viewer",
+            login: "ViEwEr",
             displayName: "Viewer",
             text: "Hello",
             color: "#0000FF",
@@ -2296,6 +2512,13 @@ void main() {
       await tester.pumpWidget(_panel(controller, assets: assets, settingsStore: settings));
       await tester.pumpAndSettle();
       final name = find.byKey(const ValueKey("chat_user_name"));
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey("profile-metadata")),
+          matching: find.byType(Image),
+        ),
+        findsNWidgets(3),
+      );
       await tester.tapAt(
         _textPoint(tester, find.byKey(const ValueKey("profile-metadata")), "Viewer"),
       );
@@ -2452,6 +2675,37 @@ void main() {
     expect(client.blocked, ["1234"]);
     expect(tester.takeException(), isNull);
   });
+
+  for (final changeCredentials in [false, true]) {
+    testWidgets("block confirmation aborts a changed session (credentials: $changeCredentials)", (
+      tester,
+    ) async {
+      await _cacheImages(tester);
+      final original = _Client();
+      final replacement = _Client(token: "another-account");
+      var client = original;
+      final controller = _Controller(original, clientLoader: () async => client);
+      final message = _message("visible", "latest message", minute: 32);
+      controller.items.add(message);
+      controller.history.add(message);
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(_panel(controller));
+      await tester.pumpAndSettle();
+      await _tapName(tester, "visible");
+      await _openBlockConfirmation(tester);
+      if (changeCredentials) {
+        client = replacement;
+      } else {
+        controller.viewerId = "another-account";
+        controller.update();
+      }
+      await tester.tap(find.widgetWithText(FilledButton, "Block"));
+      await tester.pumpAndSettle();
+      expect(original.blocked, isEmpty);
+      expect(replacement.blocked, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets("removing the player closes stacked user and asset drawers and detaches listeners", (
     tester,
@@ -2642,6 +2896,7 @@ Widget _panel(
   Future<void> Function(String)? onReportUser,
   AppSettingsStore? settingsStore,
   Brightness brightness = Brightness.dark,
+  bool chatOnly = true,
 }) => MaterialApp(
   theme: buildFlowTheme(brightness),
   home: Scaffold(
@@ -2651,7 +2906,7 @@ Widget _panel(
       onReportUser: onReportUser,
       preferences: MemoryFlowPreferences(),
       settingsStore: settingsStore,
-      chatOnly: true,
+      chatOnly: chatOnly,
       isLive: true,
       onToggleChatOnly: () {},
     ),
@@ -2785,7 +3040,8 @@ Future<Color> _pixelAt(WidgetTester tester, Key frame, Offset point) async =>
     }))!;
 
 class _Client extends TwitchApiClient {
-  _Client() : super(clientId: "test", accessToken: "test", gqlAccessToken: "test");
+  _Client({String token = "test"})
+    : super(clientId: "test", accessToken: token, gqlAccessToken: token);
 
   final lookups = <({String? userId, String? login})>[];
   final profileChannels = <({String? id, String? login})>[];
@@ -2820,13 +3076,24 @@ class _Client extends TwitchApiClient {
 }
 
 class _Controller extends TwitchChatController {
-  _Controller(_Client client, {super.channel = "channel"})
-    : super(clientLoader: () async => client, autoConnect: false);
+  _Controller(
+    _Client client, {
+    super.channel = "channel",
+    Future<TwitchApiClient> Function()? clientLoader,
+  }) : super(clientLoader: clientLoader ?? () async => client, autoConnect: false);
 
   final items = <TwitchChatMessage>[];
   final history = <TwitchChatMessage>[];
   final sent = <({String text, TwitchChatMessage? replyTo})>[];
   TwitchPinnedChat? pin;
+  String? viewerId;
+  String? viewerLogin;
+
+  @override
+  String? get currentUserId => viewerId;
+
+  @override
+  String? get currentUserLogin => viewerLogin;
 
   @override
   TwitchChatMessage? get pinnedMessage => pin?.message;

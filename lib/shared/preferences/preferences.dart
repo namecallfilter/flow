@@ -49,6 +49,8 @@ class ChatPreferences {
     this.showWatchStreakPopups = true,
     this.manualChatDelaySeconds = 0,
     this.highlightFirstMessages = true,
+    this.highlightMentions = true,
+    this.mentionSounds = true,
     this.showSubscriptionNotices = true,
     this.showAnnouncements = true,
     this.showRaidNotices = true,
@@ -80,6 +82,8 @@ class ChatPreferences {
   final bool showWatchStreakPopups;
   final double manualChatDelaySeconds;
   final bool highlightFirstMessages;
+  final bool highlightMentions;
+  final bool mentionSounds;
   final bool showSubscriptionNotices;
   final bool showAnnouncements;
   final bool showRaidNotices;
@@ -111,6 +115,8 @@ class ChatPreferences {
     bool? showWatchStreakPopups,
     double? manualChatDelaySeconds,
     bool? highlightFirstMessages,
+    bool? highlightMentions,
+    bool? mentionSounds,
     bool? showSubscriptionNotices,
     bool? showAnnouncements,
     bool? showRaidNotices,
@@ -141,6 +147,8 @@ class ChatPreferences {
     showWatchStreakPopups: showWatchStreakPopups ?? this.showWatchStreakPopups,
     manualChatDelaySeconds: manualChatDelaySeconds ?? this.manualChatDelaySeconds,
     highlightFirstMessages: highlightFirstMessages ?? this.highlightFirstMessages,
+    highlightMentions: highlightMentions ?? this.highlightMentions,
+    mentionSounds: mentionSounds ?? this.mentionSounds,
     showSubscriptionNotices: showSubscriptionNotices ?? this.showSubscriptionNotices,
     showAnnouncements: showAnnouncements ?? this.showAnnouncements,
     showRaidNotices: showRaidNotices ?? this.showRaidNotices,
@@ -245,6 +253,8 @@ class SharedPreferencesFlowPreferences implements FlowPreferences {
       showWatchStreakPopups: !values.contains("hide_watch_streak_popups"),
       manualChatDelaySeconds: number("manual_delay", 0, 0, 30),
       highlightFirstMessages: !values.contains("disable_first_messages"),
+      highlightMentions: !values.contains("disable_mention_highlights"),
+      mentionSounds: !values.contains("disable_mention_sounds"),
       showSubscriptionNotices: !values.contains("hide_subscriptions"),
       showAnnouncements: !values.contains("hide_announcements"),
       showRaidNotices: !values.contains("hide_raids"),
@@ -282,6 +292,8 @@ class SharedPreferencesFlowPreferences implements FlowPreferences {
       if (preferences.autoClaimChannelPoints) "auto_claim_channel_points",
       if (!preferences.showWatchStreakPopups) "hide_watch_streak_popups",
       if (!preferences.highlightFirstMessages) "disable_first_messages",
+      if (!preferences.highlightMentions) "disable_mention_highlights",
+      if (!preferences.mentionSounds) "disable_mention_sounds",
       if (!preferences.showSubscriptionNotices) "hide_subscriptions",
       if (!preferences.showAnnouncements) "hide_announcements",
       if (!preferences.showRaidNotices) "hide_raids",

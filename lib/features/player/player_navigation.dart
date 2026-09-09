@@ -147,8 +147,10 @@ class PlaybackHost extends NavigatorObserver {
     final identity = screen.videoId == null
         ? "live:${screen.channel.login.toLowerCase()}"
         : "vod:${screen.videoId}";
-    if (_identity != identity) {
-      _chatOnly = false;
+    if (_identity != identity ||
+        screen.initiallyOffline ||
+        screen.initiallyOffline != _screen?.initiallyOffline) {
+      _chatOnly = screen.initiallyOffline;
       _screen = screen;
       _identity = identity;
     }

@@ -74,6 +74,7 @@ class StreamPlayerScreen extends StatefulWidget {
     required this.channel,
     super.key,
     this.videoId,
+    this.initiallyOffline = false,
     this.playbackUriLoader,
     this.viewerCountLoader,
     this.playerSurfaceBuilder,
@@ -88,6 +89,7 @@ class StreamPlayerScreen extends StatefulWidget {
   final TwitchApiCache apiCache;
   final StreamChannel channel;
   final String? videoId;
+  final bool initiallyOffline;
   final PlaybackUriLoader? playbackUriLoader;
   final ViewerCountLoader? viewerCountLoader;
   final PlayerSurfaceBuilder? playerSurfaceBuilder;
@@ -107,6 +109,7 @@ class StreamPlayerScreen extends StatefulWidget {
     properties.add(DiagnosticsProperty<TwitchApiCache>("apiCache", apiCache));
     properties.add(DiagnosticsProperty<StreamChannel>("channel", channel));
     properties.add(StringProperty("videoId", videoId));
+    properties.add(DiagnosticsProperty<bool>("initiallyOffline", initiallyOffline));
     properties.add(
       ObjectFlagProperty<TwitchChatController Function(String)?>.has(
         "chatControllerFactory",
@@ -157,7 +160,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   int? _seekFeedbackSeconds;
   bool _seekFeedbackVisible = false;
   bool _controlsBeforeSeek = true;
-  bool _seekForward = true;
+  bool _doubleTapOnRight = true;
   TwitchVodSeekMetadata? _seekMetadata;
   bool _hideChrome = false;
   Timer? _uptimeTimer;
@@ -187,6 +190,10 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   bool _playbackReloadInFlight = false;
   bool _audioOnly = false;
   bool _chatOnly = false;
+  bool _waitingForLive = false;
+  bool _showLandscapeChat = false;
+  StreamChannel? _liveChannel;
+  StreamChannel get _channel => _liveChannel ?? widget.channel;
   TwitchChatController? _chat;
   TwitchVodChatController? _replay;
   TwitchChatAssets? _chatAssets;
@@ -221,6 +228,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _chatOnly = _streamEnded = _waitingForLive = widget.initiallyOffline && _isLive;
     _createChat();
     _viewerText = widget.channel.viewers;
     _startedAt = widget.channel.startedAt;
@@ -241,7 +249,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         unawaited(_refreshViewerCount());
       }
     });
-    if (_playbackSupported) {
+    if (_playbackSupported && !_chatOnly) {
       unawaited(_loadPlaybackUri());
     } else {
       _isBuffering = false;
@@ -307,7 +315,10 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   @override
   void didUpdateWidget(StreamPlayerScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.channel.login != widget.channel.login || oldWidget.videoId != widget.videoId) {
+    if (oldWidget.channel.login != widget.channel.login ||
+        oldWidget.videoId != widget.videoId ||
+        oldWidget.initiallyOffline != widget.initiallyOffline ||
+        (widget.initiallyOffline && !_chatOnly)) {
       _chat?.dispose();
       _replay?.dispose();
       _chatAssets?.dispose();
@@ -321,7 +332,12 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       _seekMetadata = null;
       _viewerText = widget.channel.viewers;
       _startedAt = widget.channel.startedAt;
-      _streamEnded = false;
+      _liveChannel = null;
+      _showLandscapeChat = false;
+      _streamEnded = _waitingForLive = widget.initiallyOffline && _isLive;
+      if (widget.initiallyOffline || oldWidget.initiallyOffline) {
+        _chatOnly = widget.initiallyOffline && _isLive;
+      }
       _viewerRefreshGeneration++;
       _viewerRefreshInFlight = false;
       _errorMessage = null;
@@ -354,11 +370,15 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   }
 
   void _toggleChatOnly() {
+    if (_chatOnly && _streamEnded) {
+      return;
+    }
     FocusManager.instance.primaryFocus?.unfocus();
     setState(() {
       _chatOnly = !_chatOnly;
       _controlsVisible = true;
       if (_chatOnly) {
+        _waitingForLive = _streamEnded;
         _resumePosition = _isLive ? Duration.zero : _position;
         _releasePlayback();
       } else if (!_streamEnded) {
@@ -451,7 +471,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     if (_duration <= Duration.zero) {
       return;
     }
-    final seconds = _seekForward ? 10 : -10;
+    final seconds = _doubleTapOnRight ? 10 : -10;
     final position = Duration(
       milliseconds: (_position.inMilliseconds + seconds * 1000).clamp(0, _duration.inMilliseconds),
     );
@@ -636,13 +656,15 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       int? viewerCount;
       DateTime? startedAt;
       bool? isOnline;
+      StreamChannel? liveChannel;
       if (loader == null) {
         final page = await widget.apiCache.fetchLiveStreamsPage(
           first: 1,
           userLogins: [login],
           refresh: true,
         );
-        if (page.data.isEmpty) {
+        var stream = page.data.firstOrNull;
+        if (stream == null) {
           final channel = await widget.apiCache.fetchChannelDetails(
             login,
             videosFirst: 1,
@@ -650,12 +672,34 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
           );
           if (channel.login.isNotEmpty && channel.login.toLowerCase() == login.toLowerCase()) {
             isOnline = channel.liveStream != null;
+            if (channel.liveStream case final live?) {
+              stream = TwitchFollowedStream(
+                id: live.id,
+                userId: channel.id,
+                userLogin: channel.login,
+                userName: channel.displayName,
+                title: live.title,
+                gameName: live.category,
+                gameId: live.categoryId,
+                viewerCount: live.viewerCount,
+                isPartner: channel.isPartner,
+                thumbnailUrl: live.thumbnailUrl,
+                profileImageUrl: channel.profileImageUrl,
+                startedAt: live.startedAt,
+              );
+            }
           }
         } else {
           isOnline = true;
         }
-        viewerCount = page.data.firstOrNull?.viewerCount;
-        startedAt = page.data.firstOrNull?.startedAt;
+        viewerCount = stream?.viewerCount;
+        startedAt = stream?.startedAt;
+        if (_waitingForLive && stream != null) {
+          liveChannel = streamChannelFromStream(
+            stream,
+            avatarImageUrl: widget.channel.avatarImageUrl,
+          );
+        }
       } else {
         viewerCount = await loader(login);
         if (viewerCount != null && viewerCount >= 0) {
@@ -668,18 +712,27 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       if (isOnline == false) {
         _markStreamEnded();
       } else if (isOnline == true) {
+        final openVideo = _waitingForLive && _appIsResumed;
         setState(() {
           if (viewerCount != null && viewerCount >= 0) {
             _viewerText = formatCompactCount(viewerCount);
           }
           _startedAt = startedAt ?? _startedAt;
-          if (restartIfLive && _streamEnded) {
+          if ((restartIfLive || openVideo) && _streamEnded) {
             _releasePlayback();
             _streamEnded = false;
             _playWhenReady = true;
           }
+          if (openVideo) {
+            _waitingForLive = false;
+            _chatOnly = false;
+            _liveChannel = liveChannel;
+          }
         });
-        if (restartIfLive) {
+        if (openVideo) {
+          _host?.setChatOnly(enabled: false);
+        }
+        if (restartIfLive || openVideo) {
           await _loadPlaybackUri(refresh: true);
         }
       }
@@ -700,6 +753,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     _controlsTimer?.cancel();
     setState(() {
       _streamEnded = true;
+      _waitingForLive = _chatOnly;
       _isPlaying = false;
       _isBuffering = false;
       _playWhenReady = false;
@@ -968,7 +1022,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   }
 
   Future<void> _openCategory() async {
-    final categoryName = widget.channel.category.trim();
+    final categoryName = _channel.category.trim();
     if (categoryName.isEmpty || categoryName.toLowerCase() == "live") {
       return;
     }
@@ -1085,9 +1139,11 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     final compact = _mode == PlaybackMode.mini || _mode == PlaybackMode.pip || _hideChrome;
     final embedded = _mode != PlaybackMode.expanded;
     final isLandscape = !embedded && mediaQuery.size.width > mediaQuery.size.height;
+    final landscapeChatWidth = (mediaQuery.size.width * 0.36).clamp(280.0, 360.0);
+    final sideChatWidth = isLandscape && _showLandscapeChat ? landscapeChatWidth : 0.0;
     final playbackSessionGeneration = _playbackSessionGeneration;
     final viewport = _PlayerViewport(
-      channel: widget.channel,
+      channel: _channel,
       playbackUri: _playbackUri,
       proxyUrls: _proxyUrls,
       initialQualityId: _qualitySettings.value.selectedId,
@@ -1134,14 +1190,23 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       liveDuration: _liveDuration,
       errorMessage: _errorMessage,
       onSurfaceTap: _toggleControls,
-      onDoubleTapDown: _isLive
-          ? null
-          : (details) => _seekForward = details.localPosition.dx >= mediaQuery.size.width / 2,
-      onDoubleTap: _isLive ? null : _seekByTenSeconds,
+      onDoubleTapDown: !_isLive || isLandscape
+          ? (details) => _doubleTapOnRight =
+                details.localPosition.dx >= (mediaQuery.size.width - sideChatWidth) / 2
+          : null,
+      onDoubleTap: !_isLive
+          ? _seekByTenSeconds
+          : isLandscape
+          ? () {
+              if (_doubleTapOnRight) {
+                setState(() => _showLandscapeChat = !_showLandscapeChat);
+              }
+            }
+          : null,
       onSeekTapUp: _isLive
           ? null
           : (details) {
-              _seekForward = details.localPosition.dx >= mediaQuery.size.width / 2;
+              _doubleTapOnRight = details.localPosition.dx >= mediaQuery.size.width / 2;
               _seekByTenSeconds();
             },
       seekFeedbackSeconds: _seekFeedbackSeconds,
@@ -1194,6 +1259,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
                 latencyMs: _chatOnly || _streamEnded ? 0 : latencyMs,
                 topPadding: _chatOnly ? chatHeaderHeight : 0,
                 chatOnly: _chatOnly,
+                canShowVideo: !_streamEnded,
                 isLive: _isLive,
                 onToggleChatOnly: _toggleChatOnly,
                 onOpenSettings: _openChatSettings,
@@ -1216,7 +1282,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
               child: _chatOnly
                   ? _chatOnlyHeader()
                   : SizedBox(
-                      width: constraints.maxWidth,
+                      width: constraints.maxWidth - sideChatWidth,
                       height: viewportHeight,
                       child: Listener(
                         onPointerDown: (event) {
@@ -1250,27 +1316,31 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
                 ],
               );
             }
-            return Column(
-              children: [
-                playerHeader,
-                if (!isLandscape)
-                  Expanded(
-                    child: IgnorePointer(
-                      ignoring: compact,
-                      child: ClipRect(
-                        key: const ValueKey("player_chat_clip"),
-                        child: OverflowBox(
-                          alignment: Alignment.topLeft,
-                          minWidth: mediaQuery.size.width,
-                          maxWidth: mediaQuery.size.width,
-                          minHeight: expandedChatHeight,
-                          maxHeight: expandedChatHeight,
-                          child: chatPanel,
-                        ),
-                      ),
+            final chatWidth = isLandscape ? landscapeChatWidth : mediaQuery.size.width;
+            final chatHeight = isLandscape ? constraints.maxHeight : expandedChatHeight;
+            final chatLayout = Expanded(
+              child: IgnorePointer(
+                ignoring: compact || (isLandscape && sideChatWidth == 0),
+                child: ClipRect(
+                  key: const ValueKey("player_chat_clip"),
+                  child: OverflowBox(
+                    alignment: Alignment.topLeft,
+                    minWidth: chatWidth,
+                    maxWidth: chatWidth,
+                    minHeight: chatHeight,
+                    maxHeight: chatHeight,
+                    child: MediaQuery.removePadding(
+                      context: context,
+                      removeLeft: isLandscape,
+                      child: SafeArea(top: false, bottom: false, child: chatPanel),
                     ),
                   ),
-              ],
+                ),
+              ),
+            );
+            return Flex(
+              direction: isLandscape ? Axis.horizontal : Axis.vertical,
+              children: [playerHeader, chatLayout],
             );
           },
         ),
@@ -1302,7 +1372,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Tooltip(
-                message: widget.channel.title.isEmpty ? widget.channel.name : widget.channel.title,
+                message: _channel.title.isEmpty ? _channel.name : _channel.title,
                 showDuration: const Duration(seconds: 5),
                 enableFeedback: true,
                 child: Text.rich(
@@ -1312,7 +1382,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
                         text: widget.channel.name,
                         style: const TextStyle(fontWeight: FontWeight.w700),
                       ),
-                      TextSpan(text: "  ${widget.channel.title}"),
+                      TextSpan(text: "  ${_channel.title}"),
                     ],
                   ),
                   key: const ValueKey("player_chat_name_and_title"),
@@ -1326,7 +1396,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
                 children: [
                   if (_streamEnded) ...[
                     Text(
-                      "Stream ended",
+                      _waitingForLive ? "Offline" : "Stream ended",
                       style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                     ),
                     const SizedBox(width: 10),
@@ -1356,41 +1426,43 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
                     ),
                     const SizedBox(width: 10),
                   ],
-                  Icon(
-                    Icons.category_rounded,
-                    size: 14,
-                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.78),
-                  ),
-                  const SizedBox(width: 4),
-                  Flexible(
-                    child: Tooltip(
-                      message: widget.channel.category,
-                      showDuration: const Duration(seconds: 5),
-                      enableFeedback: true,
-                      child: Semantics(
-                        button: true,
-                        label: "Open ${widget.channel.category} category",
-                        child: GestureDetector(
-                          key: const ValueKey("player_chat_category_button"),
-                          behavior: HitTestBehavior.opaque,
-                          onTap: () => unawaited(_openCategory()),
-                          child: Text(
-                            key: const ValueKey("player_chat_category"),
-                            widget.channel.category,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withValues(alpha: 0.78),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
+                  if (_channel.category.isNotEmpty) ...[
+                    Icon(
+                      Icons.category_rounded,
+                      size: 14,
+                      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.78),
+                    ),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Tooltip(
+                        message: _channel.category,
+                        showDuration: const Duration(seconds: 5),
+                        enableFeedback: true,
+                        child: Semantics(
+                          button: true,
+                          label: "Open ${_channel.category} category",
+                          child: GestureDetector(
+                            key: const ValueKey("player_chat_category_button"),
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => unawaited(_openCategory()),
+                            child: Text(
+                              key: const ValueKey("player_chat_category"),
+                              _channel.category,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withValues(alpha: 0.78),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                         ),
                       ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ],

@@ -301,7 +301,12 @@ void main() {
       ..room["followers-only"] = "10"
       ..followerEligible = false
       ..waitRemaining = const Duration(seconds: 61)
-      ..access = const TwitchChatAccess(channelId: "1", channelDisplayName: "Test Channel", rules: [], isFollowing: true);
+      ..access = const TwitchChatAccess(
+        channelId: "1",
+        channelDisplayName: "Test Channel",
+        rules: [],
+        isFollowing: true,
+      );
     addTearDown(controller.dispose);
     await tester.pumpWidget(panel(controller));
     await tester.pumpAndSettle();
@@ -321,14 +326,24 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets("watch streak popup preference hides callouts without discarding notices", (tester) async {
+  testWidgets("watch streak popup preference hides callouts without discarding notices", (
+    tester,
+  ) async {
     final store = AppSettingsStore(preferences: MemoryFlowPreferences());
     await store.load();
-    final controller = _ChatController()..items.add(TwitchChatMessage(
-      id: "watch-streak:setting", login: "", displayName: "", text: "",
-      noticeType: "watch-streak", noticeText: "You reached a 7-stream watch streak!",
-      isPrivate: true, timestamp: DateTime.now(),
-    ));
+    final controller = _ChatController()
+      ..items.add(
+        TwitchChatMessage(
+          id: "watch-streak:setting",
+          login: "",
+          displayName: "",
+          text: "",
+          noticeType: "watch-streak",
+          noticeText: "You reached a 7-stream watch streak!",
+          isPrivate: true,
+          timestamp: DateTime.now(),
+        ),
+      );
     addTearDown(controller.dispose);
     await tester.pumpWidget(panel(controller, settingsStore: store));
     await tester.pump();
@@ -341,6 +356,43 @@ void main() {
     await store.setChatPreferences(store.chatPreferences.copyWith(showWatchStreakPopups: true));
     await tester.pump();
     expect(callout, findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets("slow-mode countdown blocks both send controls until Twitch allows chat", (
+    tester,
+  ) async {
+    final controller = _ChatController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(panel(controller));
+    await tester.pumpAndSettle();
+    final input = find.byKey(const ValueKey("chat_message_input"));
+    final send = find.byKey(const ValueKey("chat_send"));
+    await tester.enterText(input, "first message");
+    await tester.pump();
+    await tester.tap(send);
+    await tester.pump();
+    controller.slowWaitRemaining = const Duration(seconds: 2);
+    controller.update();
+    await tester.pump();
+    expect(tester.widget<TextField>(input).decoration!.hintText, "You can chat in 2s");
+    tester.widget<TextField>(input).controller!.text = "next message";
+    await tester.pump();
+    expect(tester.widget<IconButton>(send).onPressed, isNull);
+    tester.widget<TextField>(input).onSubmitted!("next message");
+    await tester.pump();
+    expect(controller.sent, ["first message"]);
+    controller.slowWaitRemaining = const Duration(seconds: 1);
+    controller.update();
+    await tester.pump();
+    expect(tester.widget<TextField>(input).decoration!.hintText, "You can chat in 1s");
+    controller.slowWaitRemaining = Duration.zero;
+    controller.update();
+    await tester.pump();
+    expect(tester.widget<TextField>(input).decoration!.hintText, "Send a message");
+    await tester.tap(send);
+    await tester.pump();
+    expect(controller.sent, ["first message", "next message"]);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -2211,6 +2263,7 @@ class _ChatController extends TwitchChatController {
   bool signedIn = true;
   bool followerEligible = true;
   Duration waitRemaining = Duration.zero;
+  Duration slowWaitRemaining = Duration.zero;
   int followCalls = 0;
   int unfollowCalls = 0;
   TwitchChatAccess access = const TwitchChatAccess(
@@ -2248,7 +2301,14 @@ class _ChatController extends TwitchChatController {
   bool get isSignedIn => signedIn;
 
   @override
-  bool get canSend => signedIn && status == TwitchChatStatus.connected && followerChatEligible;
+  bool get canSend =>
+      signedIn &&
+      status == TwitchChatStatus.connected &&
+      followerChatEligible &&
+      slowModeWaitRemaining == Duration.zero;
+
+  @override
+  Duration get slowModeWaitRemaining => slowWaitRemaining;
 
   @override
   TwitchChatAccess get chatAccess => access;

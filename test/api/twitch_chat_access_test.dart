@@ -124,6 +124,8 @@ void main() {
               "follower": {"followedAt": "2026-09-08T12:00:00Z"},
               "isModerator": true,
               "isVIP": false,
+              "chatRestrictedReasons": requests == 1 ? ["SLOW_MODE", "FOLLOWERS_ONLY"] : <String>[],
+              "lastRecentChatMessageAt": "2026-09-09T12:34:56Z",
             },
           },
         },
@@ -137,7 +139,9 @@ void main() {
     expect(access.followedAt?.toUtc(), DateTime.utc(2026, 9, 8, 12));
     expect(access.isModerator, isTrue);
     expect(access.isVip, isFalse);
-    await client.fetchChatAccess("channel");
+    expect(access.isSlowModeRestricted, isTrue);
+    expect(access.lastRecentChatMessageAt?.toUtc(), DateTime.utc(2026, 9, 9, 12, 34, 56));
+    expect((await client.fetchChatAccess("channel")).isSlowModeRestricted, isFalse);
     expect(requests, 2);
   });
 
@@ -156,6 +160,7 @@ void main() {
     final anonymous = await _client(response, signedIn: false).fetchChatAccess("channel");
     expect(anonymous.rules, isEmpty);
     expect(anonymous.isFollowing, isFalse);
+    expect(anonymous.isSlowModeRestricted, isNull);
     await expectLater(
       _client(response).fetchChatAccess("channel"),
       throwsA(isA<TwitchApiException>()),

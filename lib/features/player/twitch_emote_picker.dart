@@ -34,7 +34,7 @@ class _TwitchEmotePickerState extends State<TwitchEmotePicker> {
   ChatEmoteProvider? _provider;
   ChatEmoteScope _scope = ChatEmoteScope.channel;
   List<ChatAssetEmote> _recent = [];
-  late Future<void> _recentLoad;
+  late Future<List<ChatAssetEmote>> _recentLoad;
   Future<void> _save = Future.value();
 
   @override
@@ -62,23 +62,26 @@ class _TwitchEmotePickerState extends State<TwitchEmotePicker> {
 
   void _changed() => setState(() {});
 
-  Future<void> _loadRecent() async {
+  Future<List<ChatAssetEmote>> _loadRecent() async {
     final preferences = widget.preferences;
     try {
       final stored = await preferences.readRecentChatEmotes();
+      final loaded = stored.map(_decode).whereType<ChatAssetEmote>().toList();
       if (widget.preferences != preferences) {
-        return;
+        return loaded;
       }
       final seen = <String>{};
       _recent = [
         ..._recent,
-        ...stored.map(_decode).whereType<ChatAssetEmote>(),
+        ...loaded,
       ].where((emote) => seen.add(_key(emote))).take(40).toList();
       if (mounted) {
         setState(() {});
       }
+      return loaded;
     } on Object {
       // The picker remains usable if stored recents are unavailable.
+      return const [];
     }
   }
 
@@ -123,10 +126,14 @@ class _TwitchEmotePickerState extends State<TwitchEmotePicker> {
     });
     final preferences = widget.preferences;
     final ready = _recentLoad;
+    final selected = List<ChatAssetEmote>.of(_recent);
     _save = _save
         .then((_) async {
-          await ready;
-          final encoded = _recent
+          final loaded = await ready;
+          final seen = <String>{};
+          final encoded = [...selected, ...loaded]
+              .where((value) => seen.add(_key(value)))
+              .take(40)
               .map(
                 (value) => jsonEncode({
                   "provider": value.provider.name,

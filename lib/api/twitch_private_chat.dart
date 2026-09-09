@@ -52,6 +52,7 @@ class TwitchPrivateChatNotices {
       }
       _token = client.gqlAccessToken?.trim() ?? "";
       if (_token.isEmpty) {
+        _lost(generation);
         return;
       }
       _deadline = Timer(const Duration(seconds: 10), () => _lost(generation));

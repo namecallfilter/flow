@@ -47,6 +47,8 @@ void main() {
     expect(defaults.showWatchStreakPopups, isTrue);
     expect(defaults.manualChatDelaySeconds, 0);
     expect(defaults.highlightFirstMessages, isTrue);
+    expect(defaults.highlightMentions, isTrue);
+    expect(defaults.mentionSounds, isTrue);
     expect(defaults.showSubscriptionNotices, isTrue);
     expect(defaults.showAnnouncements, isTrue);
     expect(defaults.showRaidNotices, isTrue);
@@ -66,6 +68,8 @@ void main() {
         showWatchStreakPopups: false,
         manualChatDelaySeconds: 23,
         highlightFirstMessages: false,
+        highlightMentions: false,
+        mentionSounds: false,
         showSubscriptionNotices: false,
         showAnnouncements: false,
         showRaidNotices: false,
@@ -98,6 +102,8 @@ void main() {
     expect(restored.showWatchStreakPopups, isFalse);
     expect(restored.manualChatDelaySeconds, 23);
     expect(restored.highlightFirstMessages, isFalse);
+    expect(restored.highlightMentions, isFalse);
+    expect(restored.mentionSounds, isFalse);
     expect(restored.showSubscriptionNotices, isFalse);
     expect(restored.showAnnouncements, isFalse);
     expect(restored.showRaidNotices, isFalse);
@@ -115,6 +121,8 @@ void main() {
     expect(restored.bttvEmotes, isFalse);
     expect(restored.ffzEmotes, isFalse);
     await preferences.saveChatPreferences(restored.copyWith(fontSize: 20));
+    expect((await preferences.readChatPreferences()).highlightMentions, isFalse);
+    expect((await preferences.readChatPreferences()).mentionSounds, isFalse);
     expect((await preferences.readChatPreferences()).emoteAutocomplete, isFalse);
     expect((await preferences.readChatPreferences()).sevenTvPaints, isFalse);
     expect((await preferences.readChatPreferences()).animatedPaints, isFalse);

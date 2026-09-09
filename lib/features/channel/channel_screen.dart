@@ -110,7 +110,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
     unawaited(openStreamPlayer(context, builder: (_) => screen));
   }
 
-  void _openLiveStream(StreamChannel channel) {
+  void _openChannelPlayer(StreamChannel channel, {bool offline = false}) {
     if (channel.login.trim().isEmpty) {
       return;
     }
@@ -121,6 +121,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
         builder: (_) => StreamPlayerScreen(
           apiCache: widget.apiCache,
           channel: channel,
+          initiallyOffline: offline,
         ),
       ),
     );
@@ -168,7 +169,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
     builder: (_) {
       final theme = Theme.of(context);
       final channel = _store.channel;
-      final livePlayerChannel = _livePlayerChannel(channel, widget.initialChannel);
+      final playerChannel = _playerChannel(channel, widget.initialChannel);
       final liveStream = channel?.liveStream;
       final topSafeAreaInset = ScrollReactiveChrome.safeAreaInsetsOf(context).top;
       final bottomScrollPadding = 24 + MediaQuery.of(context).padding.bottom;
@@ -206,9 +207,12 @@ class _ChannelScreenState extends State<ChannelScreen> {
                     _ChannelHeader(
                       channel: channel,
                       initialChannel: widget.initialChannel,
-                      onProfileTap: livePlayerChannel == null
+                      onProfileTap: playerChannel == null || liveStream == null
                           ? null
-                          : () => _openLiveStream(livePlayerChannel),
+                          : () => _openChannelPlayer(playerChannel),
+                      onChatTap: playerChannel == null || liveStream != null
+                          ? null
+                          : () => _openChannelPlayer(playerChannel, offline: true),
                       onCategoryTap:
                           liveStream == null ||
                               liveStream.categoryId.trim().isEmpty ||
@@ -556,12 +560,14 @@ class _ChannelHeader extends StatelessWidget {
     required this.channel,
     required this.initialChannel,
     required this.onProfileTap,
+    required this.onChatTap,
     required this.onCategoryTap,
   });
 
   final TwitchChannelDetails? channel;
   final ChannelPreview initialChannel;
   final VoidCallback? onProfileTap;
+  final VoidCallback? onChatTap;
   final VoidCallback? onCategoryTap;
 
   @override
@@ -708,6 +714,15 @@ class _ChannelHeader extends StatelessWidget {
                 ),
               ),
             ],
+            if (onChatTap != null) ...[
+              const SizedBox(height: AppSpacing.md),
+              OutlinedButton.icon(
+                key: const ValueKey("channel_chat_button"),
+                onPressed: onChatTap,
+                icon: const Icon(Icons.chat_bubble_outline_rounded),
+                label: const Text("Chat"),
+              ),
+            ],
           ],
         ),
       ),
@@ -720,6 +735,7 @@ class _ChannelHeader extends StatelessWidget {
     properties.add(DiagnosticsProperty<TwitchChannelDetails?>("channel", channel));
     properties.add(DiagnosticsProperty<ChannelPreview>("initialChannel", initialChannel));
     properties.add(ObjectFlagProperty<VoidCallback?>.has("onProfileTap", onProfileTap));
+    properties.add(ObjectFlagProperty<VoidCallback?>.has("onChatTap", onChatTap));
     properties.add(ObjectFlagProperty<VoidCallback?>.has("onCategoryTap", onCategoryTap));
   }
 }
@@ -1192,12 +1208,12 @@ String _displayName(
   return initialName.isEmpty ? initialChannel.login : initialName;
 }
 
-StreamChannel? _livePlayerChannel(
+StreamChannel? _playerChannel(
   TwitchChannelDetails? channel,
   ChannelPreview initialChannel,
 ) {
   final liveStream = channel?.liveStream;
-  if (channel == null || liveStream == null) {
+  if (channel == null) {
     return null;
   }
   final login = channel.login.trim();
@@ -1207,18 +1223,18 @@ StreamChannel? _livePlayerChannel(
 
   final id = channel.id.trim();
   final name = _displayName(channel, initialChannel);
-  final streamId = liveStream.id.trim();
-  final title = liveStream.title.trim();
-  final category = liveStream.category.trim();
-  final viewerCount = liveStream.viewerCount;
+  final streamId = liveStream?.id.trim() ?? "";
+  final title = liveStream?.title.trim() ?? "";
+  final category = liveStream?.category.trim() ?? "";
+  final viewerCount = liveStream?.viewerCount ?? 0;
 
   return StreamChannel(
     id: id,
     login: login,
     name: name,
     initials: initialsForName(name),
-    title: title.isEmpty ? "Live now" : title,
-    category: category.isEmpty ? "Live" : category,
+    title: liveStream != null && title.isEmpty ? "Live now" : title,
+    category: liveStream != null && category.isEmpty ? "Live" : category,
     viewers: formatCompactCount(viewerCount),
     isPartner: channel.isPartner,
     avatarColors: colorsForText(id.isEmpty ? login : id),
@@ -1227,8 +1243,8 @@ StreamChannel? _livePlayerChannel(
       count: 3,
     ),
     avatarImageUrl: channel.profileImageUrl ?? initialChannel.avatarImageUrl,
-    thumbnailUrl: twitchThumbnailUrl(liveStream.thumbnailUrl),
-    startedAt: liveStream.startedAt,
+    thumbnailUrl: twitchThumbnailUrl(liveStream?.thumbnailUrl),
+    startedAt: liveStream?.startedAt,
   );
 }
 

@@ -660,6 +660,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               const Divider(height: 1),
                               _chatSection("Alerts"),
                               SwitchListTile(
+                                title: const Text("Highlight mentions and replies"),
+                                value: _settingsStore.chatPreferences.highlightMentions,
+                                onChanged: (value) => _changeChatSettings(
+                                  _settingsStore.chatPreferences.copyWith(highlightMentions: value),
+                                ),
+                              ),
+                              SwitchListTile(
+                                title: const Text("Mention and reply sounds"),
+                                value: _settingsStore.chatPreferences.mentionSounds,
+                                onChanged: (value) => _changeChatSettings(
+                                  _settingsStore.chatPreferences.copyWith(mentionSounds: value),
+                                ),
+                              ),
+                              SwitchListTile(
                                 title: const Text("Auto claim channel points"),
                                 value: _settingsStore.chatPreferences.autoClaimChannelPoints,
                                 onChanged: (value) => _changeChatSettings(

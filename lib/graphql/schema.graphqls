@@ -3612,6 +3612,8 @@ type SelectionSignal {
 }
 
 type Self {
+  chatRestrictedReasons: [String]
+  lastRecentChatMessageAt: Time
   communityPoints: CommunityPointsProperties
   availableEmoteSetsPaginated(after: Cursor, pageLimit: Int!): AvailableEmoteSetsPaginated
   banStatus: [BanStatu]

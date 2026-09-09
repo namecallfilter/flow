@@ -320,6 +320,8 @@ class TwitchChatAccess {
     this.followedAt,
     this.isModerator = false,
     this.isVip = false,
+    this.isSlowModeRestricted,
+    this.lastRecentChatMessageAt,
   });
 
   final String channelId;
@@ -329,6 +331,8 @@ class TwitchChatAccess {
   final DateTime? followedAt;
   final bool isModerator;
   final bool isVip;
+  final bool? isSlowModeRestricted;
+  final DateTime? lastRecentChatMessageAt;
 }
 
 class TwitchChatters {
@@ -793,6 +797,8 @@ class TwitchApiClient {
       followedAt: _dateTimeValue(follower?["followedAt"]),
       isModerator: self?["isModerator"] == true,
       isVip: self?["isVIP"] == true,
+      isSlowModeRestricted: (self?["chatRestrictedReasons"] as List?)?.contains("SLOW_MODE"),
+      lastRecentChatMessageAt: _dateTimeValue(self?["lastRecentChatMessageAt"]),
     );
   }
 
