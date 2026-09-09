@@ -101,7 +101,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
   final _composerKey = GlobalKey();
   final _pinnerTap = TapGestureRecognizer();
   final _sheets = <Route<Object?>>{};
-  final _blockedLogins = <String>{};
+  final _blockedLogins = ValueNotifier(<String>{});
   final _knownChatUsers = <String, TwitchChatMessage>{};
   ({Listenable source, String? login, String? userId})? _chattersKey;
   Future<TwitchChatters>? _chattersRequest;
@@ -218,6 +218,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     _scroll.dispose();
     _pinProgressTimer?.cancel();
     _closeSheets();
+    _blockedLogins.dispose();
     super.dispose();
   }
 
@@ -243,7 +244,10 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
           if (route != null) {
             _sheets.add(route!);
           }
-          return builder(context);
+          return ValueListenableBuilder(
+            valueListenable: _blockedLogins,
+            builder: (context, blocked, child) => builder(context),
+          );
         },
       );
       await route?.completed;
@@ -314,7 +318,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     for (final message in messages) {
       if (_seenMentionMessages.add(message.id) &&
           !message.isHistorical &&
-          !_blockedLogins.contains(message.login.toLowerCase()) &&
+          !_blockedLogins.value.contains(message.login.toLowerCase()) &&
           _mentionsViewer(message, widget.controller)) {
         alert = true;
       }
@@ -461,10 +465,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
           if (message.id == _syncMessageId && !syncing) {
             return false;
           }
-          if (_blockedLogins.contains(message.login.toLowerCase())) {
-            return false;
-          }
-          if (!_showMessage(message, _settings)) {
+          if (!_showMessage(message, _settings, _blockedLogins.value)) {
             return false;
           }
           if (message.isPrivate && message.noticeType == "watch-streak") {
@@ -1278,6 +1279,9 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
   }
 
   void _reply(TwitchChatMessage message) {
+    if (_blockedLogins.value.contains(message.login.toLowerCase())) {
+      return;
+    }
     setState(() {
       _replyTo = message.text.isEmpty ? null : message;
     });
@@ -1306,6 +1310,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
                 settings: _settings,
                 assets: widget.assets,
                 knownUsers: _knownUsers,
+                blockedLogins: _blockedLogins.value,
                 onUserTap: (message) => unawaited(_showUser(message)),
                 onEmoteTap: (emote) => unawaited(_showEmote(emote)),
                 onBadgeTap: (badge) => unawaited(_showBadge(badge)),
@@ -1336,7 +1341,10 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
         ),
       ),
     );
-    if (action == null || !mounted || source != widget._source) {
+    if (action == null ||
+        !mounted ||
+        source != widget._source ||
+        _blockedLogins.value.contains(message.login.toLowerCase())) {
       return;
     }
     if (action == _ChatMessageAction.reply) {
@@ -1378,6 +1386,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
         source: widget._source,
         messages: () => _history,
         knownUsers: () => _knownUsers,
+        blockedLogins: _blockedLogins.value,
         loadHistory: () async {
           final history = await (await loader()).fetchChatReplyThread(
             message.threadRootId ?? message.parentMessageId ?? message.id,
@@ -1434,6 +1443,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
         source: widget._source,
         messages: () => controller?.recentHistory ?? widget.replayController!.messages,
         knownUsers: () => _knownUsers,
+        blockedLogins: _blockedLogins.value,
         settings: () => _settings,
         assets: widget.assets,
         onEmoteTap: (emote) => unawaited(_showEmote(emote)),
@@ -1560,7 +1570,13 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
       }
       await client.blockUser(id);
       if (isCurrent()) {
-        setState(() => _blockedLogins.add(message.login.toLowerCase()));
+        final login = message.login.toLowerCase();
+        setState(() {
+          _blockedLogins.value = {..._blockedLogins.value, login};
+          if (_replyTo?.login.toLowerCase() == login) {
+            _replyTo = null;
+          }
+        });
         messenger.showSnackBar(SnackBar(content: Text("Blocked ${message.displayName}")));
       }
     } on Object catch (error) {
@@ -1852,6 +1868,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
                             settings: _settings,
                             assets: widget.assets,
                             knownUsers: knownUsers,
+                            blockedLogins: _blockedLogins.value,
                             pinned: true,
                             bodyKey: _pinBodyKey,
                             replyContextKey: _pinReplyKey,
@@ -2108,6 +2125,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
                               settings: _settings,
                               assets: widget.assets,
                               knownUsers: knownUsers,
+                              blockedLogins: _blockedLogins.value,
                               showModeration: moderationNotices.contains(
                                 messages[messages.length - index - 1].id,
                               ),
@@ -2144,7 +2162,9 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
                         ],
                       ),
                     ),
-                    if (pinned != null && pinned.id != _dismissedPinId)
+                    if (pinned != null &&
+                        pinned.id != _dismissedPinId &&
+                        !_blockedLogins.value.contains(pinned.message.login.toLowerCase()))
                       Positioned(
                         top: widget.topPadding,
                         left: 8,
@@ -2318,6 +2338,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
                                           settings: _settings,
                                           assets: widget.assets,
                                           knownUsers: knownUsers,
+                                          blockedLogins: _blockedLogins.value,
                                           previewPrefix: "Replying to ${message.displayName}: ",
                                           previewLines: 1,
                                         ),
@@ -2622,6 +2643,7 @@ class _ChatUserSheet extends StatefulWidget {
     required this.source,
     required this.messages,
     required this.knownUsers,
+    required this.blockedLogins,
     required this.settings,
     required this.assets,
     required this.onMore,
@@ -2638,6 +2660,7 @@ class _ChatUserSheet extends StatefulWidget {
   final Listenable source;
   final List<TwitchChatMessage> Function() messages;
   final ValueGetter<Map<String, TwitchChatMessage>> knownUsers;
+  final Set<String> blockedLogins;
   final ChatPreferences Function() settings;
   final TwitchChatAssets? assets;
   final VoidCallback onMore;
@@ -2659,6 +2682,7 @@ class _ChatUserSheet extends StatefulWidget {
     properties.add(DiagnosticsProperty<Listenable>("source", source));
     properties.add(ObjectFlagProperty<Object>.has("messages", messages));
     properties.add(ObjectFlagProperty<Object>.has("knownUsers", knownUsers));
+    properties.add(IterableProperty<String>("blockedLogins", blockedLogins));
     properties.add(ObjectFlagProperty<Object>.has("settings", settings));
     properties.add(DiagnosticsProperty<TwitchChatAssets?>("assets", assets));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onMore", onMore));
@@ -2720,7 +2744,9 @@ class _ChatUserSheetState extends State<_ChatUserSheet> {
   @override
   Widget build(BuildContext context) {
     final settings = widget.settings();
-    final logs = _history.values.where((message) => _showMessage(message, settings)).toList();
+    final logs = _history.values
+        .where((message) => _showMessage(message, settings, widget.blockedLogins))
+        .toList();
     final knownUsers = widget.knownUsers();
     final moderationNotices = _moderationNoticeIds(logs);
     return SafeArea(
@@ -2901,6 +2927,7 @@ class _ChatUserSheetState extends State<_ChatUserSheet> {
                   assets: widget.assets,
                   showTimestamps: true,
                   knownUsers: knownUsers,
+                  blockedLogins: widget.blockedLogins,
                   showModeration: moderationNotices.contains(logs[index].id),
                   onUserTap: (message) {
                     if (message.login.toLowerCase() != widget.message.login.toLowerCase()) {
@@ -2921,14 +2948,19 @@ class _ChatUserSheetState extends State<_ChatUserSheet> {
   }
 }
 
-bool _showMessage(TwitchChatMessage message, ChatPreferences settings) =>
-    message.isPrivate ||
-    ((message.noticeType != "moderation" || settings.showModerationNotices) &&
-        (settings.showDeletedMessages ||
-            !message.isDeleted ||
-            (settings.showModerationNotices &&
-                (message.moderation == TwitchChatModeration.timeout ||
-                    message.moderation == TwitchChatModeration.ban))));
+bool _showMessage(
+  TwitchChatMessage message,
+  ChatPreferences settings,
+  Set<String> blockedLogins,
+) =>
+    !blockedLogins.contains(message.login.toLowerCase()) &&
+    (message.isPrivate ||
+        ((message.noticeType != "moderation" || settings.showModerationNotices) &&
+            (settings.showDeletedMessages ||
+                !message.isDeleted ||
+                (settings.showModerationNotices &&
+                    (message.moderation == TwitchChatModeration.timeout ||
+                        message.moderation == TwitchChatModeration.ban)))));
 
 TwitchChatMessage _retainModeration(TwitchChatMessage? previous, TwitchChatMessage incoming) {
   if (previous == null || (!previous.isDeleted && previous.moderation == null)) {
@@ -2966,6 +2998,7 @@ class _ChatThreadSheet extends StatefulWidget {
     required this.source,
     required this.messages,
     required this.knownUsers,
+    required this.blockedLogins,
     required this.loadHistory,
     required this.settings,
     required this.assets,
@@ -2980,6 +3013,7 @@ class _ChatThreadSheet extends StatefulWidget {
   final Listenable source;
   final List<TwitchChatMessage> Function() messages;
   final ValueGetter<Map<String, TwitchChatMessage>> knownUsers;
+  final Set<String> blockedLogins;
   final Future<List<TwitchChatMessage>> Function() loadHistory;
   final ChatPreferences Function() settings;
   final TwitchChatAssets? assets;
@@ -2999,6 +3033,7 @@ class _ChatThreadSheet extends StatefulWidget {
     properties.add(DiagnosticsProperty<Listenable>("source", source));
     properties.add(ObjectFlagProperty<Object>.has("messages", messages));
     properties.add(ObjectFlagProperty<Object>.has("knownUsers", knownUsers));
+    properties.add(IterableProperty<String>("blockedLogins", blockedLogins));
     properties.add(ObjectFlagProperty<Object>.has("loadHistory", loadHistory));
     properties.add(ObjectFlagProperty<Object>.has("settings", settings));
     properties.add(DiagnosticsProperty<TwitchChatAssets?>("assets", assets));
@@ -3055,7 +3090,10 @@ class _ChatThreadSheetState extends State<_ChatThreadSheet> {
                 parentId,
                 () => TwitchChatMessage(
                   id: parentId,
-                  login: message.parentLogin ?? message.threadRootLogin ?? "",
+                  login:
+                      message.parentLogin ??
+                      (parentId == message.threadRootId ? message.threadRootLogin : null) ??
+                      "",
                   displayName:
                       message.parentDisplayName ?? message.parentLogin ?? "Original message",
                   userId: message.parentUserId,
@@ -3096,7 +3134,7 @@ class _ChatThreadSheetState extends State<_ChatThreadSheet> {
                 return;
               }
               depths[item.id] = depth;
-              if (_showMessage(item, preferences)) {
+              if (_showMessage(item, preferences, widget.blockedLogins)) {
                 thread.add(item);
               }
               for (final child in children[item.id] ?? <TwitchChatMessage>[]) {
@@ -3181,6 +3219,7 @@ class _ChatThreadSheetState extends State<_ChatThreadSheet> {
                               settings: preferences,
                               assets: widget.assets,
                               knownUsers: knownUsers,
+                              blockedLogins: widget.blockedLogins,
                               showModeration: moderationNotices.contains(thread[index].id),
                               showTimestamps: false,
                               showReplyContext: false,
@@ -3355,6 +3394,7 @@ class _ChatMessageRow extends StatefulWidget {
     this.onThreadTap,
     this.onMessageHold,
     this.knownUsers = const {},
+    this.blockedLogins = const {},
     this.showModeration = true,
     this.onEmoteTap,
     this.onBadgeTap,
@@ -3377,6 +3417,7 @@ class _ChatMessageRow extends StatefulWidget {
   final ValueChanged<TwitchChatMessage>? onThreadTap;
   final ValueChanged<TwitchChatMessage>? onMessageHold;
   final Map<String, TwitchChatMessage> knownUsers;
+  final Set<String> blockedLogins;
   final bool showModeration;
   final ValueChanged<ChatAssetEmote>? onEmoteTap;
   final ValueChanged<ChatAssetBadge>? onBadgeTap;
@@ -3403,6 +3444,7 @@ class _ChatMessageRow extends StatefulWidget {
     properties.add(ObjectFlagProperty<Object?>.has("onThreadTap", onThreadTap));
     properties.add(ObjectFlagProperty<Object?>.has("onMessageHold", onMessageHold));
     properties.add(DiagnosticsProperty<Map<String, TwitchChatMessage>>("knownUsers", knownUsers));
+    properties.add(IterableProperty<String>("blockedLogins", blockedLogins));
     properties.add(
       FlagProperty("showModeration", value: showModeration, ifTrue: "show moderation"),
     );
@@ -3808,6 +3850,9 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final parentLogin =
+        message.parentLogin ??
+        (message.parentMessageId == message.threadRootId ? message.threadRootLogin : null);
     final nameColor = message.isDeleted
         ? theme.colorScheme.onSurfaceVariant
         : _chatNameColor(message, theme.brightness);
@@ -3823,7 +3868,7 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
             _ => null,
           };
     final hidden = message.isDeleted && !settings.showDeletedMessages;
-    if (!_showMessage(message, settings) || (hidden && moderation == null)) {
+    if (!_showMessage(message, settings, widget.blockedLogins) || (hidden && moderation == null)) {
       return const SizedBox.shrink();
     }
     final content = <InlineSpan>[];
@@ -4071,28 +4116,35 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
                             ),
                             const SizedBox(width: 4),
                             Expanded(
-                              child: _ChatMessageRow(
-                                message: TwitchChatMessage(
-                                  id: message.parentMessageId!,
-                                  login: message.parentLogin ?? "",
-                                  displayName:
-                                      message.parentDisplayName ?? message.parentLogin ?? "Reply",
-                                  text: message.parentText ?? "View thread",
-                                  emotes: message.parentEmotes,
-                                  gifs: message.parentGifs,
-                                  isOwn:
-                                      widget
-                                          .knownUsers[message.parentLogin?.toLowerCase()]
-                                          ?.isOwn ??
-                                      false,
-                                ),
-                                settings: settings,
-                                assets: assets,
-                                knownUsers: widget.knownUsers,
-                                bodyKey: widget.replyContextKey,
-                                previewPrefix:
-                                    "${message.parentDisplayName ?? message.parentLogin ?? 'Reply'}: ",
-                              ),
+                              child: widget.blockedLogins.contains(parentLogin?.toLowerCase())
+                                  ? Text(
+                                      "Blocked message",
+                                      style: theme.textTheme.bodySmall?.copyWith(
+                                        fontSize: _fontSize - 2,
+                                        color: theme.colorScheme.onSurfaceVariant,
+                                      ),
+                                    )
+                                  : _ChatMessageRow(
+                                      message: TwitchChatMessage(
+                                        id: message.parentMessageId!,
+                                        login: parentLogin ?? "",
+                                        displayName:
+                                            message.parentDisplayName ?? parentLogin ?? "Reply",
+                                        text: message.parentText ?? "View thread",
+                                        emotes: message.parentEmotes,
+                                        gifs: message.parentGifs,
+                                        isOwn:
+                                            widget.knownUsers[parentLogin?.toLowerCase()]?.isOwn ??
+                                            false,
+                                      ),
+                                      settings: settings,
+                                      assets: assets,
+                                      knownUsers: widget.knownUsers,
+                                      blockedLogins: widget.blockedLogins,
+                                      bodyKey: widget.replyContextKey,
+                                      previewPrefix:
+                                          "${message.parentDisplayName ?? parentLogin ?? 'Reply'}: ",
+                                    ),
                             ),
                           ],
                         ),

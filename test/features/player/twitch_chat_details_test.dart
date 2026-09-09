@@ -1220,9 +1220,11 @@ void main() {
     await tester.tap(find.text("Reply to message"));
     await tester.pumpAndSettle();
     expect(
-      _span(tester, find.byKey(const ValueKey("chat_composer_reply_preview")), "@Server")
-          .style!
-          .color,
+      _span(
+        tester,
+        find.byKey(const ValueKey("chat_composer_reply_preview")),
+        "@Server",
+      ).style!.color,
       const Color(0xFFAB1234),
     );
     await tester.enterText(find.byType(TextField), "Answer");
@@ -2689,6 +2691,81 @@ void main() {
     expect(client.blocked, ["1234"]);
     expect(tester.takeException(), isNull);
   });
+
+  for (final parentLogin in ["viewer", null]) {
+    testWidgets(
+      "blocking hides pins, retained history and quoted replies (parent login: $parentLogin)",
+      (
+        tester,
+      ) async {
+        await _cacheImages(tester);
+        final client = _Client();
+        final controller = _Controller(client);
+        const blocked = TwitchChatMessage(
+          id: "blocked",
+          login: "ViEwEr",
+          displayName: "Viewer",
+          userId: "1234",
+          text: "Blocked root message",
+        );
+        final reply = TwitchChatMessage(
+          id: "unblocked",
+          login: "other",
+          displayName: "Other",
+          text: "An allowed reply @Viewer",
+          parentMessageId: "blocked",
+          parentLogin: parentLogin,
+          parentText: "Blocked root message",
+          threadRootId: "blocked",
+          threadRootLogin: "viewer",
+        );
+        controller.items.add(reply);
+        controller.pin = const TwitchPinnedChat(id: "blocked-pin", message: blocked);
+        client.thread.addAll([blocked, reply]);
+        addTearDown(controller.dispose);
+        await tester.pumpWidget(_panel(controller));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey("reply-context-unblocked")));
+        await tester.pumpAndSettle();
+        final thread = find.byKey(const ValueKey("chat_reply_thread"));
+        expect(_log(thread, blocked.text), findsOneWidget);
+        await _tapName(tester, "thread-blocked");
+        final history = find.byKey(const ValueKey("chat_user_history"));
+        expect(_log(history, blocked.text), findsOneWidget);
+        await _openBlockConfirmation(tester);
+        await tester.tap(find.widgetWithText(FilledButton, "Block"));
+        await tester.pumpAndSettle();
+        expect(client.blocked, ["1234"]);
+        expect(_log(history, blocked.text), findsNothing);
+        Navigator.of(tester.element(history)).pop();
+        await tester.pumpAndSettle();
+        expect(_log(thread, blocked.text), findsNothing);
+        expect(_log(thread, reply.text), findsOneWidget);
+        await tester.tap(find.byTooltip("Close thread"));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey("chat_pinned_message")), findsNothing);
+        final context = find.byKey(const ValueKey("reply-context-unblocked"));
+        expect(_log(context, "Blocked message"), findsOneWidget);
+        expect(_log(context, blocked.text), findsNothing);
+        client.thread.clear();
+        await tester.tap(context);
+        await tester.pumpAndSettle();
+        expect(_log(thread, blocked.text), findsNothing);
+        expect(_log(thread, reply.text), findsOneWidget);
+        await tester.tap(find.byTooltip("Close thread"));
+        await tester.pumpAndSettle();
+        final feed = find.byKey(const ValueKey("unblocked"));
+        expect(_log(feed, reply.text), findsOneWidget);
+        await tester.tapAt(_textPoint(tester, feed, "@Viewer"));
+        await tester.pumpAndSettle();
+        expect(_log(history, blocked.text), findsNothing);
+        await tester.tap(find.byTooltip("Reply"));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey("chat_composer_reply_preview")), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   for (final changeCredentials in [false, true]) {
     testWidgets("block confirmation aborts a changed session (credentials: $changeCredentials)", (

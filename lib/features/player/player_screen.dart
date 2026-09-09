@@ -200,7 +200,6 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   TwitchVodChatController? _replay;
   TwitchChatAssets? _chatAssets;
   final _chatPanelKey = GlobalKey();
-  Duration _resumePosition = Duration.zero;
   int _loadGeneration = 0;
   int _playbackSessionGeneration = 0;
   Future<void> _displayModeTail = Future<void>.value();
@@ -319,8 +318,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     super.didUpdateWidget(oldWidget);
     if (oldWidget.channel.login != widget.channel.login ||
         oldWidget.videoId != widget.videoId ||
-        oldWidget.initiallyOffline != widget.initiallyOffline ||
-        (widget.initiallyOffline && !_chatOnly)) {
+        oldWidget.initiallyOffline != widget.initiallyOffline) {
       _chat?.dispose();
       _replay?.dispose();
       _chatAssets?.dispose();
@@ -330,7 +328,6 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       _releasePlayback();
       _position = Duration.zero;
       _duration = Duration.zero;
-      _resumePosition = Duration.zero;
       _seekMetadata = null;
       _viewerText = widget.channel.viewers;
       _startedAt = widget.channel.startedAt;
@@ -381,7 +378,6 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       _controlsVisible = true;
       if (_chatOnly) {
         _waitingForLive = _streamEnded;
-        _resumePosition = _isLive ? Duration.zero : _position;
         _releasePlayback();
       } else if (!_streamEnded) {
         _playWhenReady = true;
@@ -1155,7 +1151,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       playbackUri: _playbackUri,
       proxyUrls: _proxyUrls,
       initialQualityId: _qualitySettings.value.selectedId,
-      initialPosition: _resumePosition,
+      initialPosition: _isLive ? Duration.zero : _position,
       playbackSessionGeneration: playbackSessionGeneration,
       playbackSupported: _playbackSupported,
       playerSurfaceBuilder: widget.playerSurfaceBuilder,

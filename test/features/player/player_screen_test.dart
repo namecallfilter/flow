@@ -9,6 +9,7 @@ import "package:flow/api/twitch_vod_chat.dart";
 import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/player/media3_player_controller.dart";
+import "package:flow/features/player/media3_player_view.dart";
 import "package:flow/features/player/player_navigation.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/features/player/twitch_chat_panel.dart";
@@ -17,11 +18,118 @@ import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  testWidgets("rebuilding an initially offline player preserves its recovered broadcast", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final player = _FakePlayerController();
+    final chats = <_TrackedChatController>[];
+    var loads = 0;
+    Widget app({bool initiallyOffline = true}) => _playerApp(
+      player: player,
+      initiallyOffline: initiallyOffline,
+      viewerCountLoader: (_) async => 100,
+      chatControllerFactory: (login) {
+        final chat = _TrackedChatController(login);
+        chats.add(chat);
+        return chat;
+      },
+      playbackUriLoader: (_) async {
+        loads++;
+        return Uri.parse("https://example.com/live.m3u8");
+      },
+    );
+    await tester.pumpWidget(app());
+    await tester.pump();
+    await tester.pump();
+    expect(loads, 1);
+    final surface = tester.element(find.byType(_FakePlayerSurface));
+    await tester.pumpWidget(app());
+    await tester.pump();
+    expect(chats, hasLength(1));
+    expect(chats.single.disposed, isFalse);
+    expect(loads, 1);
+    expect(tester.element(find.byType(_FakePlayerSurface)), same(surface));
+    await tester.pumpWidget(app(initiallyOffline: false));
+    await tester.pump();
+    expect(chats, hasLength(2));
+    expect(chats.first.disposed, isTrue);
+    expect(loads, 2);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets(
+    "VOD recreations resume current progress after returning from chat only",
+    (tester) async {
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final messenger = tester.binding.defaultBinaryMessenger;
+      final positions = <int>[];
+      messenger.setMockMethodCallHandler(SystemChannels.platform_views, (call) async {
+        if (call.method == "create") {
+          final args = call.arguments as Map<Object?, Object?>;
+          final params =
+              const StandardMessageCodec().decodeMessage(
+                    ByteData.sublistView(args["params"]! as Uint8List),
+                  )!
+                  as Map<Object?, Object?>;
+          positions.add(params["positionMs"]! as int);
+          for (final suffix in ["", "/events"]) {
+            final channel = MethodChannel("flow/twitch_player/${args['id']}$suffix");
+            messenger.setMockMethodCallHandler(channel, (_) async => null);
+            addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+          }
+        }
+        return null;
+      });
+      addTearDown(() => messenger.setMockMethodCallHandler(SystemChannels.platform_views, null));
+      final player = _FakePlayerController();
+      await tester.pumpWidget(
+        _playerApp(player: player, videoId: "123456", useDefaultPlayerSurface: true),
+      );
+      await _pumpNavigation(tester);
+      void progress(int minutes) {
+        tester.widget<Media3PlayerView>(find.byType(Media3PlayerView)).onControllerCreated(player);
+        player.emit(
+          TwitchPlaybackStateEvent(
+            isPlaying: false,
+            isBuffering: false,
+            playWhenReady: false,
+            position: Duration(minutes: minutes),
+            duration: const Duration(hours: 1),
+          ),
+        );
+      }
+
+      progress(10);
+      await tester.pump();
+      await _toggleChatOnly(tester);
+      await _toggleChatOnly(tester);
+      expect(positions, [0, 600000]);
+      progress(20);
+      await tester.pump();
+      player.emit(const TwitchPlaybackReloadEvent());
+      await _pumpNavigation(tester);
+      expect(positions, [0, 600000, 1200000]);
+      progress(30);
+      await tester.pump();
+      player.emit(const TwitchPlaybackReloadEvent());
+      await _pumpNavigation(tester);
+      expect(positions, [0, 600000, 1200000, 1800000]);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
   for (final detailsFallback in [false, true]) {
     testWidgets(
       "offline chat opens live video with metadata (details fallback: $detailsFallback)",
