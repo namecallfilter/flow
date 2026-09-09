@@ -192,6 +192,8 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   bool _chatOnly = false;
   bool _waitingForLive = false;
   bool _showLandscapeChat = false;
+  double? _landscapeChatWidth;
+  bool _resizingChat = false;
   StreamChannel? _liveChannel;
   StreamChannel get _channel => _liveChannel ?? widget.channel;
   TwitchChatController? _chat;
@@ -1139,7 +1141,13 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     final compact = _mode == PlaybackMode.mini || _mode == PlaybackMode.pip || _hideChrome;
     final embedded = _mode != PlaybackMode.expanded;
     final isLandscape = !embedded && mediaQuery.size.width > mediaQuery.size.height;
-    final landscapeChatWidth = (mediaQuery.size.width * 0.36).clamp(280.0, 360.0);
+    final maxChatWidth = math.min(480.0, mediaQuery.size.width * 0.6);
+    final minChatWidth = math.min(220.0, maxChatWidth);
+    final landscapeChatWidth =
+        (_landscapeChatWidth ?? (mediaQuery.size.width * 0.36).clamp(280.0, 360.0)).clamp(
+          minChatWidth,
+          maxChatWidth,
+        );
     final sideChatWidth = isLandscape && _showLandscapeChat ? landscapeChatWidth : 0.0;
     final playbackSessionGeneration = _playbackSessionGeneration;
     final viewport = _PlayerViewport(
@@ -1338,9 +1346,60 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
                 ),
               ),
             );
-            return Flex(
-              direction: isLandscape ? Axis.horizontal : Axis.vertical,
-              children: [playerHeader, chatLayout],
+            void resizeChat(double width) =>
+                setState(() => _landscapeChatWidth = width.clamp(minChatWidth, maxChatWidth));
+            final colors = Theme.of(context).colorScheme;
+            return Stack(
+              children: [
+                Flex(
+                  direction: isLandscape ? Axis.horizontal : Axis.vertical,
+                  children: [playerHeader, chatLayout],
+                ),
+                if (sideChatWidth > 0 && !compact)
+                  Positioned(
+                    left: constraints.maxWidth - sideChatWidth - 12,
+                    top: 0,
+                    bottom: 0,
+                    width: 24,
+                    child: Semantics(
+                      label: "Resize chat",
+                      value: "${landscapeChatWidth.round()} pixels",
+                      increasedValue:
+                          "${(landscapeChatWidth + 24).clamp(minChatWidth, maxChatWidth).round()} pixels",
+                      decreasedValue:
+                          "${(landscapeChatWidth - 24).clamp(minChatWidth, maxChatWidth).round()} pixels",
+                      onIncrease: landscapeChatWidth < maxChatWidth
+                          ? () => resizeChat(landscapeChatWidth + 24)
+                          : null,
+                      onDecrease: landscapeChatWidth > minChatWidth
+                          ? () => resizeChat(landscapeChatWidth - 24)
+                          : null,
+                      child: Listener(
+                        onPointerDown: (_) => setState(() => _resizingChat = true),
+                        onPointerUp: (_) => setState(() => _resizingChat = false),
+                        onPointerCancel: (_) => setState(() => _resizingChat = false),
+                        child: GestureDetector(
+                          key: const ValueKey("player_chat_resize_handle"),
+                          behavior: HitTestBehavior.opaque,
+                          onHorizontalDragUpdate: (details) => resizeChat(
+                            (_landscapeChatWidth ?? landscapeChatWidth).clamp(
+                                  minChatWidth,
+                                  maxChatWidth,
+                                ) -
+                                details.delta.dx,
+                          ),
+                          child: Center(
+                            child: Container(
+                              key: const ValueKey("player_chat_resize_edge"),
+                              width: 2,
+                              color: _resizingChat ? colors.primary : Colors.transparent,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             );
           },
         ),

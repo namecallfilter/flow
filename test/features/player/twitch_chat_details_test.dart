@@ -1163,9 +1163,11 @@ void main() {
       login: "viewer",
       displayName: "Viewer",
       text: "@parent Kappa @Server @MiXeD",
+      color: "#FF1493",
       emotes: [TwitchChatEmote(id: "25", start: 8, end: 13)],
       parentMessageId: "root",
       parentLogin: "parent",
+      parentText: "@Viewer @Server",
       threadRootId: "root",
     );
     client.thread.addAll([
@@ -1186,6 +1188,11 @@ void main() {
     await tester.pumpWidget(_panel(controller, brightness: Brightness.light));
     await tester.pumpAndSettle();
     final feed = find.byKey(const ValueKey("reply"));
+    final preview = find.byKey(const ValueKey("reply-context-reply"));
+    expect(
+      _span(tester, preview, "@Viewer").style!.color,
+      _span(tester, feed, "Viewer: ").style!.color,
+    );
     final fallback = _span(tester, feed, "@MiXeD").style!.color;
     expect(_log(feed, "@parent"), findsNothing);
     await tester.tap(find.byKey(const ValueKey("reply-context-reply")));
@@ -1194,6 +1201,7 @@ void main() {
     expect(_log(threadReply, "@parent"), findsNothing);
     expect(_span(tester, threadReply, "@Server").style!.color, const Color(0xFFAB1234));
     expect(_span(tester, feed, "@Server").style!.color, const Color(0xFFAB1234));
+    expect(_span(tester, preview, "@Server").style!.color, const Color(0xFFAB1234));
     expect(_span(tester, threadReply, "@MiXeD").style!.color, fallback);
     final emote = tester.widget<Image>(
       find.descendant(
@@ -1211,6 +1219,12 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text("Reply to message"));
     await tester.pumpAndSettle();
+    expect(
+      _span(tester, find.byKey(const ValueKey("chat_composer_reply_preview")), "@Server")
+          .style!
+          .color,
+      const Color(0xFFAB1234),
+    );
     await tester.enterText(find.byType(TextField), "Answer");
     await tester.pump();
     await tester.tap(find.byTooltip("Send message"));

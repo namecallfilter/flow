@@ -64,6 +64,11 @@ class ChannelScreen extends StatefulWidget {
 class _ChannelScreenState extends State<ChannelScreen> {
   late final ChannelStore _store;
   final ScrollController _scrollController = ScrollController();
+  (String, String?)? _followSession;
+  ({String channelId, bool isFollowing})? _follow;
+  bool _followBusy = false;
+  bool _followFailed = false;
+  bool _isVisible = false;
 
   @override
   void initState() {
@@ -79,12 +84,88 @@ class _ChannelScreenState extends State<ChannelScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final routeIsCurrent = ModalRoute.isCurrentOf(context) ?? true;
+    final tickerEnabled = TickerMode.valuesOf(context).enabled;
+    final visible = routeIsCurrent && tickerEnabled;
+    if (visible && !_isVisible) {
+      unawaited(_updateFollow());
+    }
+    _isVisible = visible;
+  }
+
+  @override
   void dispose() {
     _scrollController.dispose();
     super.dispose();
   }
 
-  Future<void> _refresh() => _store.load(refresh: true);
+  Future<void> _refresh() async {
+    await Future.wait([_store.load(refresh: true), _updateFollow()]);
+  }
+
+  Future<void> _updateFollow({bool toggle = false}) async {
+    if (_followBusy) {
+      return;
+    }
+    var reload = false;
+    setState(() {
+      _followBusy = true;
+      _followFailed = false;
+    });
+    try {
+      final client = await widget.apiCache.clientLoader();
+      if (!mounted) {
+        return;
+      }
+      final session = (client.accessToken, client.gqlAccessToken);
+      final signedIn = client.gqlAccessToken?.trim().isNotEmpty ?? false;
+      final follow = _follow;
+      if (toggle && !signedIn) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Sign in from Following to follow")),
+        );
+      } else if (toggle && session == _followSession && follow != null) {
+        if (follow.isFollowing) {
+          await client.unfollowChannel(follow.channelId);
+        } else {
+          await client.followChannel(follow.channelId);
+        }
+      }
+      final access = signedIn ? await client.fetchChatAccess(widget.initialChannel.login) : null;
+      final currentClient = await widget.apiCache.clientLoader();
+      if (!mounted) {
+        return;
+      }
+      if (session != (currentClient.accessToken, currentClient.gqlAccessToken)) {
+        reload = true;
+        return;
+      }
+      setState(() {
+        _followSession = session;
+        _follow = access == null
+            ? null
+            : (channelId: access.channelId, isFollowing: access.isFollowing);
+      });
+    } on Object {
+      if (mounted) {
+        setState(() => _followFailed = true);
+        if (toggle) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Could not update follow status. Try again.")),
+          );
+        }
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _followBusy = false);
+        if (reload) {
+          unawaited(_updateFollow());
+        }
+      }
+    }
+  }
 
   void _openBroadcast(TwitchChannelDetails channel, TwitchPastBroadcast broadcast) {
     final name = _displayName(channel, widget.initialChannel);
@@ -207,6 +288,31 @@ class _ChannelScreenState extends State<ChannelScreen> {
                     _ChannelHeader(
                       channel: channel,
                       initialChannel: widget.initialChannel,
+                      followButton: FilledButton.tonalIcon(
+                        key: const ValueKey("channel_follow_button"),
+                        onPressed: _followBusy
+                            ? null
+                            : () => unawaited(_updateFollow(toggle: !_followFailed)),
+                        icon: _followBusy
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : Icon(
+                                _followFailed
+                                    ? Icons.refresh_rounded
+                                    : _follow?.isFollowing == true
+                                    ? Icons.favorite_rounded
+                                    : Icons.favorite_border_rounded,
+                              ),
+                        label: Text(
+                          _followFailed
+                              ? "Retry follow status"
+                              : _follow?.isFollowing == true
+                              ? "Following"
+                              : "Follow",
+                        ),
+                      ),
                       onProfileTap: playerChannel == null || liveStream == null
                           ? null
                           : () => _openChannelPlayer(playerChannel),
@@ -559,6 +665,7 @@ class _ChannelHeader extends StatelessWidget {
   const _ChannelHeader({
     required this.channel,
     required this.initialChannel,
+    required this.followButton,
     required this.onProfileTap,
     required this.onChatTap,
     required this.onCategoryTap,
@@ -566,6 +673,7 @@ class _ChannelHeader extends StatelessWidget {
 
   final TwitchChannelDetails? channel;
   final ChannelPreview initialChannel;
+  final Widget followButton;
   final VoidCallback? onProfileTap;
   final VoidCallback? onChatTap;
   final VoidCallback? onCategoryTap;
@@ -714,15 +822,21 @@ class _ChannelHeader extends StatelessWidget {
                 ),
               ),
             ],
-            if (onChatTap != null) ...[
-              const SizedBox(height: AppSpacing.md),
-              OutlinedButton.icon(
-                key: const ValueKey("channel_chat_button"),
-                onPressed: onChatTap,
-                icon: const Icon(Icons.chat_bubble_outline_rounded),
-                label: const Text("Chat"),
-              ),
-            ],
+            const SizedBox(height: AppSpacing.md),
+            Wrap(
+              spacing: AppSpacing.sm,
+              runSpacing: AppSpacing.xs,
+              children: [
+                followButton,
+                if (onChatTap != null)
+                  OutlinedButton.icon(
+                    key: const ValueKey("channel_chat_button"),
+                    onPressed: onChatTap,
+                    icon: const Icon(Icons.chat_bubble_outline_rounded),
+                    label: const Text("Chat"),
+                  ),
+              ],
+            ),
           ],
         ),
       ),

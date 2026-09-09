@@ -182,6 +182,40 @@ void main() {
       expect(surfaceCreations, 1);
       expect(player._seekPositions, isEmpty);
     }
+    final resizeHandle = find.byKey(const ValueKey("player_chat_resize_handle"));
+    final resizeEdge = find.byKey(const ValueKey("player_chat_resize_edge"));
+    expect(tester.widget<Container>(resizeEdge).color, Colors.transparent);
+    final resize = await tester.startGesture(tester.getCenter(resizeHandle));
+    await tester.pump();
+    expect(find.descendant(of: resizeHandle, matching: find.byType(Icon)), findsNothing);
+    expect(
+      tester.widget<Container>(resizeEdge).color,
+      Theme.of(tester.element(resizeHandle)).colorScheme.primary,
+    );
+    await resize.moveBy(const Offset(-80, 0));
+    await tester.pump();
+    expect(tester.getSize(find.byType(TwitchChatPanel)).width, greaterThan(280));
+    await resize.moveBy(const Offset(-1000, 0));
+    await tester.pump();
+    expect(tester.getSize(find.byType(TwitchChatPanel)).width, 472);
+    expect(tester.getSize(find.byKey(const ValueKey("player_viewport"))).width, 320);
+    await resize.moveBy(const Offset(2000, 0));
+    await tester.pump();
+    expect(tester.getSize(find.byType(TwitchChatPanel)).width, 212);
+    await resize.up();
+    await tester.pump();
+    expect(tester.widget<Container>(resizeEdge).color, Colors.transparent);
+    final press = await tester.startGesture(tester.getCenter(resizeHandle));
+    await tester.pump();
+    expect(
+      tester.widget<Container>(resizeEdge).color,
+      Theme.of(tester.element(resizeHandle)).colorScheme.primary,
+    );
+    await press.cancel();
+    await tester.pump();
+    expect(tester.widget<Container>(resizeEdge).color, Colors.transparent);
+    expect(tester.state(find.byType(TwitchChatPanel)), same(chatState));
+    expect(surfaceCreations, 1);
     host.setPictureInPicture(active: true);
     await tester.pump();
     host.setPictureInPicture(active: false);
@@ -194,6 +228,9 @@ void main() {
     expect(tester.getSize(find.byKey(const ValueKey("player_viewport"))).width, 400);
     expect(tester.state(find.byType(TwitchChatPanel)), same(chatState));
     expect(surfaceCreations, 1);
+    tester.view.physicalSize = const Size(800, 400);
+    await tester.pump();
+    expect(tester.getSize(find.byType(TwitchChatPanel)).width, 220);
     host.dismiss();
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);

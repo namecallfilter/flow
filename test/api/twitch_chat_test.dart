@@ -1161,74 +1161,77 @@ void main() {
     expect(chat.messages.where((message) => message.isPrivate), hasLength(1));
   });
 
-  testWidgets("changed credentials rebind chat before private subscription and claims", (
-    tester,
-  ) async {
-    final verified = Completer<TwitchUser>();
-    final first = _Client();
-    final second = _Client(webToken: "second-token");
-    second.loadUser = () => verified.future;
-    var client = first;
-    final sockets = <_Socket>[];
-    final privateSockets = <_Socket>[];
-    final chat = TwitchChatController(
-      channel: "channel",
-      clientLoader: () async => client,
-      loadPins: false,
-      socketConnector: () async {
-        final socket = _Socket();
-        sockets.add(socket);
-        return socket;
-      },
-      privateSocketConnector: () async {
-        final socket = _Socket();
-        privateSockets.add(socket);
-        return socket;
+  for (final autoClaim in [true, false]) {
+    testWidgets(
+      "changed credentials rebind chat before private subscription and claims (auto-claim: $autoClaim)",
+      (tester) async {
+        final verified = Completer<TwitchUser>();
+        final first = _Client();
+        final second = _Client(webToken: "second-token");
+        second.loadUser = () => verified.future;
+        var client = first;
+        final sockets = <_Socket>[];
+        final privateSockets = <_Socket>[];
+        final chat = TwitchChatController(
+          channel: "channel",
+          clientLoader: () async => client,
+          loadPins: false,
+          socketConnector: () async {
+            final socket = _Socket();
+            sockets.add(socket);
+            return socket;
+          },
+          privateSocketConnector: () async {
+            final socket = _Socket();
+            privateSockets.add(socket);
+            return socket;
+          },
+        );
+        chat.setAutoClaimChannelPoints(enabled: autoClaim);
+        await tester.pump();
+        sockets.last._incoming.add("@room-id=1 :tmi.twitch.tv ROOMSTATE #channel\r\n");
+        await tester.pump();
+        privateSockets.single
+          ..authenticateHermes()
+          ..achievement("old-event");
+        await tester.pump();
+        expect(first.pointClaims, autoClaim ? 1 : 0);
+        expect(chat.messages.where((message) => message.isPrivate), hasLength(autoClaim ? 2 : 1));
+        client = second;
+        await tester.pump(const Duration(minutes: 1));
+        expect(chat.status, TwitchChatStatus.reconnecting);
+        expect(chat.currentUserId, isNull);
+        expect(chat.messages.where((message) => message.isPrivate), isEmpty);
+        expect(chat.recentHistory.where((message) => message.isPrivate), isEmpty);
+        expect(second.pointChecks, 0);
+        expect(second.pointClaims, 0);
+        expect(privateSockets, hasLength(1));
+        expect(privateSockets.single.closed, isTrue);
+        verified.complete(const TwitchUser(id: "456", login: "second", displayName: "Second"));
+        await tester.pump();
+        expect(chat.currentUserId, "456");
+        second.onClaim = () async {
+          expectSync(chat.currentUserId, "456");
+          return 70;
+        };
+        sockets.last._incoming.add("@room-id=1 :tmi.twitch.tv ROOMSTATE #channel\r\n");
+        await tester.pump();
+        expect(second.pointClaims, autoClaim ? 1 : 0);
+        expect(privateSockets, hasLength(2));
+        privateSockets.last.authenticateHermes();
+        final subscription = jsonDecode(privateSockets.last.sent.last) as Map;
+        expect((subscription["subscribe"] as Map)["pubsub"], {"topic": "viewer-milestones.456"});
+        privateSockets.last.achievement("old-event");
+        await tester.pump();
+        expect(chat.messages.where((message) => message.isPrivate), hasLength(autoClaim ? 2 : 1));
+        expect(
+          chat.messages.any((message) => message.noticeText == "Claimed 70 channel points."),
+          autoClaim,
+        );
+        chat.dispose();
       },
     );
-    chat.setAutoClaimChannelPoints(enabled: true);
-    await tester.pump();
-    sockets.last._incoming.add("@room-id=1 :tmi.twitch.tv ROOMSTATE #channel\r\n");
-    await tester.pump();
-    privateSockets.single
-      ..authenticateHermes()
-      ..achievement("old-event");
-    await tester.pump();
-    expect(first.pointClaims, 1);
-    expect(chat.messages.where((message) => message.isPrivate), hasLength(2));
-    client = second;
-    await tester.pump(const Duration(minutes: 1));
-    expect(chat.status, TwitchChatStatus.reconnecting);
-    expect(chat.currentUserId, isNull);
-    expect(chat.messages.where((message) => message.isPrivate), isEmpty);
-    expect(chat.recentHistory.where((message) => message.isPrivate), isEmpty);
-    expect(second.pointChecks, 0);
-    expect(second.pointClaims, 0);
-    expect(privateSockets, hasLength(1));
-    expect(privateSockets.single.closed, isTrue);
-    verified.complete(const TwitchUser(id: "456", login: "second", displayName: "Second"));
-    await tester.pump();
-    expect(chat.currentUserId, "456");
-    second.onClaim = () async {
-      expectSync(chat.currentUserId, "456");
-      return 70;
-    };
-    sockets.last._incoming.add("@room-id=1 :tmi.twitch.tv ROOMSTATE #channel\r\n");
-    await tester.pump();
-    expect(second.pointClaims, 1);
-    expect(privateSockets, hasLength(2));
-    privateSockets.last.authenticateHermes();
-    final subscription = jsonDecode(privateSockets.last.sent.last) as Map;
-    expect((subscription["subscribe"] as Map)["pubsub"], {"topic": "viewer-milestones.456"});
-    privateSockets.last.achievement("old-event");
-    await tester.pump();
-    expect(chat.messages.where((message) => message.isPrivate), hasLength(2));
-    expect(
-      chat.messages.any((message) => message.noticeText == "Claimed 70 channel points."),
-      isTrue,
-    );
-    chat.dispose();
-  });
+  }
   test("IRC notices are private, retained, and never sent to other chatters", () async {
     final chat = controller();
     await server.join(chat);

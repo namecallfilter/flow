@@ -2317,6 +2317,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
                                           message: message,
                                           settings: _settings,
                                           assets: widget.assets,
+                                          knownUsers: knownUsers,
                                           previewPrefix: "Replying to ${message.displayName}: ",
                                           previewLines: 1,
                                         ),
@@ -4087,6 +4088,7 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
                                 ),
                                 settings: settings,
                                 assets: assets,
+                                knownUsers: widget.knownUsers,
                                 bodyKey: widget.replyContextKey,
                                 previewPrefix:
                                     "${message.parentDisplayName ?? message.parentLogin ?? 'Reply'}: ",

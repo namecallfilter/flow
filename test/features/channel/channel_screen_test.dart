@@ -15,12 +15,121 @@ import "package:flow/features/player/player_navigation.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/widgets/app_bottom_nav.dart";
+import "package:flow/shared/widgets/pull_to_refresh.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  testWidgets("channel follow waits for confirmation and ignores repeated taps", (tester) async {
+    final client = _FollowClient();
+    await tester.pumpWidget(_followApp(() async => client));
+    await tester.pumpAndSettle();
+
+    final button = find.byKey(const ValueKey("channel_follow_button"));
+    expect(find.text("Follow"), findsOneWidget);
+    client.changeGate = Completer<void>();
+    await tester.tap(button);
+    await tester.tap(button);
+    await tester.pump();
+    expect(client.changes, [true]);
+    expect(tester.widget<FilledButton>(button).onPressed, isNull);
+    expect(find.text("Following"), findsNothing);
+    await tester.widget<FlowPullToRefresh>(find.byType(FlowPullToRefresh)).onRefresh();
+    await tester.pump();
+    expect(client.statusChecks, 1);
+    expect(tester.widget<FilledButton>(button).onPressed, isNull);
+
+    client.changeGate!.complete();
+    await tester.pumpAndSettle();
+    expect(find.text("Following"), findsOneWidget);
+    client.changeGate = null;
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(client.changes, [true, false]);
+    expect(find.text("Follow"), findsOneWidget);
+  });
+
+  testWidgets("offline follow loads existing status and retries failures without a mutation", (
+    tester,
+  ) async {
+    final client = _FollowClient(isLive: false)
+      ..following = true
+      ..failStatus = true;
+    await tester.pumpWidget(_followApp(() async => client));
+    await tester.pumpAndSettle();
+    final button = find.byKey(const ValueKey("channel_follow_button"));
+    expect(find.text("Retry follow status"), findsOneWidget);
+    expect(find.byKey(const ValueKey("channel_chat_button")), findsOneWidget);
+
+    client.failStatus = false;
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(find.text("Following"), findsOneWidget);
+    expect(client.changes, isEmpty);
+
+    client.failChange = true;
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(client.following, isTrue);
+    expect(find.text("Could not update follow status. Try again."), findsOneWidget);
+    expect(find.text("Retry follow status"), findsOneWidget);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(find.text("Following"), findsOneWidget);
+    expect(client.changes, [false]);
+  });
+
+  testWidgets("guest follow uses the existing sign-in guidance", (tester) async {
+    final client = _FollowClient(token: null);
+    await tester.pumpWidget(_followApp(() async => client));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey("channel_follow_button")));
+    await tester.pumpAndSettle();
+    expect(find.text("Sign in from Following to follow"), findsOneWidget);
+    expect(client.statusChecks, 0);
+    expect(client.changes, isEmpty);
+  });
+
+  testWidgets("follow refreshes retained accounts and rejects stale account actions and results", (
+    tester,
+  ) async {
+    final first = _FollowClient();
+    final second = _FollowClient(token: "second")..following = true;
+    var current = first;
+    Future<TwitchApiClient> loadClient() async => current;
+    await tester.pumpWidget(_followApp(loadClient));
+    await tester.pumpAndSettle();
+    final button = find.byKey(const ValueKey("channel_follow_button"));
+
+    current = second;
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(first.changes, isEmpty);
+    expect(second.changes, isEmpty);
+    expect(find.text("Following"), findsOneWidget);
+
+    second.changeGate = Completer<void>();
+    await tester.tap(button);
+    await tester.pump();
+    expect(second.changes, [false]);
+    current = first;
+    second.changeGate!.complete();
+    await tester.pumpAndSettle();
+    expect(find.text("Follow"), findsOneWidget);
+    expect(first.statusChecks, 2);
+
+    await tester.pumpWidget(_followApp(loadClient, visible: false));
+    await tester.pump();
+    second.following = true;
+    current = second;
+    await tester.pumpWidget(_followApp(loadClient));
+    await tester.pumpAndSettle();
+    expect(find.text("Following"), findsOneWidget);
+    expect(second.changes, [false]);
+  });
+
   testWidgets("opens a VOD player page and reuses playback when it is selected again", (
     tester,
   ) async {
@@ -662,6 +771,68 @@ void main() {
     expect(find.byKey(const ValueKey("past_broadcast_vod-2")), findsOneWidget);
     expect(find.text("Second Stream"), findsOneWidget);
   });
+}
+
+Widget _followApp(TwitchApiClientLoader loadClient, {bool visible = true}) => MaterialApp(
+  theme: buildFlowTheme(Brightness.dark),
+  home: TickerMode(
+    enabled: visible,
+    child: ChannelScreen(
+      apiCache: TwitchApiCache(clientLoader: loadClient),
+      initialChannel: const ChannelPreview(login: "jason", displayName: "Jason"),
+    ),
+  ),
+);
+
+class _FollowClient extends TwitchApiClient {
+  _FollowClient({String? token = "first", bool isLive = true})
+    : super(
+        clientId: "client",
+        accessToken: token ?? "",
+        gqlAccessToken: token,
+        httpClient: MockClient((_) async => _channelDetailsResponse(isLive: isLive)),
+      );
+
+  bool following = false;
+  bool failStatus = false;
+  bool failChange = false;
+  int statusChecks = 0;
+  final changes = <bool>[];
+  Completer<void>? changeGate;
+
+  @override
+  Future<TwitchChatAccess> fetchChatAccess(String login) async {
+    expect(login, "jason");
+    statusChecks++;
+    if (failStatus) {
+      throw TwitchApiException("Status unavailable");
+    }
+    return TwitchChatAccess(
+      channelId: "123",
+      channelDisplayName: "Jason",
+      rules: const [],
+      isFollowing: following,
+    );
+  }
+
+  Future<void> _change(String channelId, bool follow) async {
+    expect(channelId, "123");
+    changes.add(follow);
+    await changeGate?.future;
+    if (failChange) {
+      throw TwitchApiException("Change rejected");
+    }
+    following = follow;
+  }
+
+  @override
+  Future<DateTime> followChannel(String channelId) async {
+    await _change(channelId, true);
+    return DateTime(2026);
+  }
+
+  @override
+  Future<void> unfollowChannel(String channelId) => _change(channelId, false);
 }
 
 http.Response _channelDetailsResponse({
