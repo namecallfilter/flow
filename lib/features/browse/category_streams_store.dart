@@ -24,7 +24,7 @@ abstract class CategoryStreamsStoreBase with Store {
   int _revision = 0;
 
   @observable
-  StreamSort streamSort = StreamSort.viewersHighToLow;
+  StreamSort streamSort = StreamSort.recommendedForYou;
 
   Future<void> restoreStreamSort() => _sortRestore ??= _restoreStreamSort();
 

@@ -1,0 +1,13 @@
+query FlowChatAssets($login: String!) {
+  badges { setID version title imageURL(size: DOUBLE) }
+  emoteSet(id: "0") { emotes { id token } }
+  user(login: $login) {
+    id
+    login
+    displayName
+    chatColor
+    broadcastBadges { setID version title imageURL(size: DOUBLE) }
+    subscriptionProducts { emotes { id token } }
+    channel { localEmoteSets { emotes { id token } } }
+  }
+}

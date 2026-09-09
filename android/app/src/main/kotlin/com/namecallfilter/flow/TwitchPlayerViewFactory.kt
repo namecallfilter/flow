@@ -19,6 +19,7 @@ internal class TwitchPlayerViewFactory(
             viewId = viewId,
             initialUrl = creationParams?.get("url") as? String,
             initialQualityId = creationParams?.get("qualityId") as? String ?: "auto",
+            initialPositionMs = (creationParams?.get("positionMs") as? Number)?.toLong() ?: 0L,
             mediaTitle = creationParams?.get("title") as? String ?: "Flow",
             mediaArtist = creationParams?.get("artist") as? String ?: "",
             isLive = creationParams?.get("isLive") as? Boolean ?: true,

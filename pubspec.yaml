@@ -12,9 +12,12 @@ dependencies:
         sdk: flutter
     flutter_mobx: ^2.3.0
     flutter_secure_storage: ^10.3.1
+    flutter_svg: ^2.3.0
     graphql: ^5.2.4
     http: ^1.6.0
+    icann_tlds: ^1.1.2
     mobx: ^2.6.0
+    punycoder: ^0.3.0
     shared_preferences: ^2.5.5
     webview_flutter: ^4.14.0
 

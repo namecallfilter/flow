@@ -1,0 +1,69 @@
+query FlowPinnedChat($channelID: ID!) {
+  channel(id: $channelID) {
+    id
+    pinnedChatMessages(first: 1, messageType: MOD) {
+      edges {
+        node {
+          id
+          startsAt
+          endsAt
+          pinnedBy {
+            id
+            login
+            displayName
+          }
+          pinnedMessage {
+            id
+            sentAt
+            senderChatColor
+            senderBadges {
+              setID
+              version
+            }
+            content {
+              text
+              fragments {
+                text
+                content {
+                  __typename
+                  ... on Emote {
+                    emoteID: id
+                  }
+                }
+              }
+            }
+            sender {
+              id
+              login
+              displayName
+            }
+            parentMessage {
+              id
+              content {
+                text
+                fragments {
+                  text
+                  content {
+                    __typename
+                    ... on Emote { emoteID: id }
+                  }
+                }
+              }
+              sender {
+                id
+                login
+                displayName
+              }
+            }
+            threadParentMessage {
+              id
+              sender {
+                login
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

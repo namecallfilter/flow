@@ -3,6 +3,9 @@ import "dart:math" as math;
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
+import "package:flow/api/twitch_chat.dart";
+import "package:flow/api/twitch_chat_assets.dart";
+import "package:flow/api/twitch_vod_chat.dart";
 import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/spacing.dart";
 import "package:flow/app/theme.dart";
@@ -11,11 +14,15 @@ import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/player/media3_player_controller.dart";
 import "package:flow/features/player/media3_player_view.dart";
 import "package:flow/features/player/player_navigation.dart";
+import "package:flow/features/player/twitch_chat_panel.dart";
+import "package:flow/features/player/twitch_report_screen.dart";
 import "package:flow/features/player/vod_player_footer.dart";
+import "package:flow/features/settings/settings_screen.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flow/shared/widgets/avatar_ring.dart";
+import "package:flow/shared/widgets/scroll_reactive_chrome.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
@@ -67,9 +74,13 @@ class StreamPlayerScreen extends StatefulWidget {
     required this.channel,
     super.key,
     this.videoId,
+    this.initiallyOffline = false,
     this.playbackUriLoader,
     this.viewerCountLoader,
     this.playerSurfaceBuilder,
+    this.chatControllerFactory,
+    this.replayControllerFactory,
+    this.chatAssetsFactory,
     this.preferences,
     this.displayModeController = const SystemPlayerDisplayModeController(),
     this.clock = DateTime.now,
@@ -78,9 +89,13 @@ class StreamPlayerScreen extends StatefulWidget {
   final TwitchApiCache apiCache;
   final StreamChannel channel;
   final String? videoId;
+  final bool initiallyOffline;
   final PlaybackUriLoader? playbackUriLoader;
   final ViewerCountLoader? viewerCountLoader;
   final PlayerSurfaceBuilder? playerSurfaceBuilder;
+  final TwitchChatController Function(String channel)? chatControllerFactory;
+  final TwitchVodChatController Function(String videoId)? replayControllerFactory;
+  final TwitchChatAssets Function(String channel)? chatAssetsFactory;
   final FlowPreferences? preferences;
   final PlayerDisplayModeController displayModeController;
   final DateTime Function() clock;
@@ -94,6 +109,25 @@ class StreamPlayerScreen extends StatefulWidget {
     properties.add(DiagnosticsProperty<TwitchApiCache>("apiCache", apiCache));
     properties.add(DiagnosticsProperty<StreamChannel>("channel", channel));
     properties.add(StringProperty("videoId", videoId));
+    properties.add(DiagnosticsProperty<bool>("initiallyOffline", initiallyOffline));
+    properties.add(
+      ObjectFlagProperty<TwitchChatController Function(String)?>.has(
+        "chatControllerFactory",
+        chatControllerFactory,
+      ),
+    );
+    properties.add(
+      ObjectFlagProperty<TwitchVodChatController Function(String)?>.has(
+        "replayControllerFactory",
+        replayControllerFactory,
+      ),
+    );
+    properties.add(
+      ObjectFlagProperty<TwitchChatAssets Function(String)?>.has(
+        "chatAssetsFactory",
+        chatAssetsFactory,
+      ),
+    );
     properties.add(
       ObjectFlagProperty<PlaybackUriLoader?>.has("playbackUriLoader", playbackUriLoader),
     );
@@ -126,7 +160,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   int? _seekFeedbackSeconds;
   bool _seekFeedbackVisible = false;
   bool _controlsBeforeSeek = true;
-  bool _seekForward = true;
+  bool _doubleTapOnRight = true;
   TwitchVodSeekMetadata? _seekMetadata;
   bool _hideChrome = false;
   Timer? _uptimeTimer;
@@ -134,22 +168,38 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   Uri? _playbackUri;
   List<String> _proxyUrls = const [];
   int? _latencyMs;
+  final _chatLatencyMs = ValueNotifier<int?>(null);
   TwitchAdEvent? _activeAd;
   final ValueNotifier<_QualitySettingsState> _qualitySettings = ValueNotifier(
     const _QualitySettingsState(qualities: [], selectedId: "auto"),
   );
   late String _viewerText;
+  DateTime? _startedAt;
+  bool _streamEnded = false;
   String? _errorMessage;
   bool _isPlaying = false;
   bool _isBuffering = true;
   bool _playWhenReady = true;
   bool _controlsVisible = true;
   bool _viewerRefreshInFlight = false;
+  int _viewerRefreshGeneration = 0;
   bool _appIsResumed = true;
+  bool _chatWasBackgrounded = false;
   bool _openingDestination = false;
   bool _playerForcedLandscape = false;
   bool _playbackReloadInFlight = false;
   bool _audioOnly = false;
+  bool _chatOnly = false;
+  bool _waitingForLive = false;
+  bool _showLandscapeChat = false;
+  double? _landscapeChatWidth;
+  bool _resizingChat = false;
+  StreamChannel? _liveChannel;
+  StreamChannel get _channel => _liveChannel ?? widget.channel;
+  TwitchChatController? _chat;
+  TwitchVodChatController? _replay;
+  TwitchChatAssets? _chatAssets;
+  final _chatPanelKey = GlobalKey();
   int _loadGeneration = 0;
   int _playbackSessionGeneration = 0;
   Future<void> _displayModeTail = Future<void>.value();
@@ -159,6 +209,13 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   Duration _duration = Duration.zero;
   Duration? _seekPosition;
   AppSettingsStore? _settingsStore;
+  AppSettingsStore? _fallbackChatSettingsStore;
+
+  AppSettingsStore get _chatSettingsStore =>
+      _settingsStore ??
+      (_fallbackChatSettingsStore ??= AppSettingsStore(
+        preferences: widget.preferences ?? SharedPreferencesFlowPreferences(),
+      ));
   ReactionDisposer? _pipSettingsReaction;
   bool _pictureInPictureEnabled = true;
   bool _miniPlayerEnabled = true;
@@ -172,13 +229,17 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _chatOnly = _streamEnded = _waitingForLive = widget.initiallyOffline && _isLive;
+    _createChat();
     _viewerText = widget.channel.viewers;
+    _startedAt = widget.channel.startedAt;
     _uptimeTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted &&
           _appIsResumed &&
           !_openingDestination &&
           _controlsVisible &&
-          widget.channel.startedAt != null) {
+          !_streamEnded &&
+          _startedAt != null) {
         setState(() {});
       }
     });
@@ -189,7 +250,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         unawaited(_refreshViewerCount());
       }
     });
-    if (_playbackSupported) {
+    if (_playbackSupported && !_chatOnly) {
       unawaited(_loadPlaybackUri());
     } else {
       _isBuffering = false;
@@ -199,9 +260,132 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    final wasResumed = _appIsResumed;
     _appIsResumed = state == AppLifecycleState.resumed;
+    if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused) {
+      _chatWasBackgrounded = true;
+    }
     if (_appIsResumed) {
       unawaited(_refreshViewerCount());
+      if (!wasResumed) {
+        if (_chatWasBackgrounded ||
+            _chat?.status == TwitchChatStatus.disconnected ||
+            _chat?.status == TwitchChatStatus.reconnecting) {
+          _chat?.reconnect();
+        }
+        if (_replay?.status == TwitchChatStatus.disconnected) {
+          _replay?.reconnect();
+        }
+      }
+      _chatWasBackgrounded = false;
+    }
+  }
+
+  void _createChat() {
+    _chatAssets =
+        widget.chatAssetsFactory?.call(widget.channel.login) ??
+        TwitchChatAssets(
+          clientLoader: widget.apiCache.clientLoader,
+          channelLogin: widget.channel.login,
+          channelId: widget.channel.id,
+        );
+    if (widget.videoId case final videoId?) {
+      _replay =
+          widget.replayControllerFactory?.call(videoId) ??
+          TwitchVodChatController(clientLoader: widget.apiCache.clientLoader, videoId: videoId);
+    } else {
+      _chat =
+          widget.chatControllerFactory?.call(widget.channel.login) ??
+          TwitchChatController(
+            clientLoader: widget.apiCache.clientLoader,
+            channel: widget.channel.login,
+          );
+    }
+    _chat?.addListener(_observeChatAssets);
+    _replay?.addListener(_observeChatAssets);
+    _observeChatAssets();
+  }
+
+  void _observeChatAssets() {
+    _chatAssets?.observeMessages([
+      ...?_chat?.messages ?? _replay?.messages,
+      ?_chat?.pinnedMessage,
+    ]);
+  }
+
+  @override
+  void didUpdateWidget(StreamPlayerScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.channel.login != widget.channel.login ||
+        oldWidget.videoId != widget.videoId ||
+        oldWidget.initiallyOffline != widget.initiallyOffline) {
+      _chat?.dispose();
+      _replay?.dispose();
+      _chatAssets?.dispose();
+      _chat = null;
+      _replay = null;
+      _createChat();
+      _releasePlayback();
+      _position = Duration.zero;
+      _duration = Duration.zero;
+      _seekMetadata = null;
+      _viewerText = widget.channel.viewers;
+      _startedAt = widget.channel.startedAt;
+      _liveChannel = null;
+      _showLandscapeChat = false;
+      _streamEnded = _waitingForLive = widget.initiallyOffline && _isLive;
+      if (widget.initiallyOffline || oldWidget.initiallyOffline) {
+        _chatOnly = widget.initiallyOffline && _isLive;
+      }
+      _viewerRefreshGeneration++;
+      _viewerRefreshInFlight = false;
+      _errorMessage = null;
+      unawaited(_loadSeekMetadata());
+      unawaited(_refreshViewerCount());
+      if (!_chatOnly) {
+        _playWhenReady = true;
+        unawaited(_loadPlaybackUri());
+      }
+    }
+  }
+
+  void _releasePlayback() {
+    _loadGeneration++;
+    _playbackSessionGeneration++;
+    _controlsTimer?.cancel();
+    _seekFeedbackTimer?.cancel();
+    _seekFeedbackSeconds = null;
+    _seekPosition = null;
+    unawaited(_playerEvents?.cancel());
+    _playerEvents = null;
+    unawaited(_playerController?.pause());
+    _playerController?.dispose();
+    _playerController = null;
+    _playbackUri = null;
+    _activeAd = null;
+    _isPlaying = false;
+    _isBuffering = false;
+    _playWhenReady = false;
+  }
+
+  void _toggleChatOnly() {
+    if (_chatOnly && _streamEnded) {
+      return;
+    }
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() {
+      _chatOnly = !_chatOnly;
+      _controlsVisible = true;
+      if (_chatOnly) {
+        _waitingForLive = _streamEnded;
+        _releasePlayback();
+      } else if (!_streamEnded) {
+        _playWhenReady = true;
+      }
+    });
+    _host?.setChatOnly(enabled: _chatOnly);
+    if (!_chatOnly) {
+      unawaited(_loadPlaybackUri());
     }
   }
 
@@ -221,13 +405,23 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
           (_) => settings.pictureInPictureEnabled,
           (enabled) {
             _pictureInPictureEnabled = enabled;
-            unawaited(_playerController?.setPictureInPictureEnabled(enabled: enabled));
+            unawaited(
+              _playerController?.setPictureInPictureEnabled(enabled: enabled && !_streamEnded),
+            );
           },
           fireImmediately: true,
         );
       }
     }
     final mode = presentation?.mode ?? PlaybackMode.expanded;
+    if (_mode == PlaybackMode.mini &&
+        mode == PlaybackMode.expanded &&
+        _chat?.status == TwitchChatStatus.disconnected) {
+      _chat?.reconnect();
+    }
+    if (_mode != mode && mode != PlaybackMode.expanded) {
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
     if (_mode != mode && mode == PlaybackMode.mini && _playerForcedLandscape) {
       _playerForcedLandscape = false;
       unawaited(_queueDisplayMode(widget.displayModeController.restore));
@@ -238,6 +432,9 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _chat?.dispose();
+    _replay?.dispose();
+    _chatAssets?.dispose();
     _controlsTimer?.cancel();
     _seekFeedbackTimer?.cancel();
     _uptimeTimer?.cancel();
@@ -247,6 +444,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     _playerController?.dispose();
     _playerController = null;
     _qualitySettings.dispose();
+    _chatLatencyMs.dispose();
     _pipSettingsReaction?.call();
     unawaited(_queueDisplayMode(widget.displayModeController.restore));
     super.dispose();
@@ -259,7 +457,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     }
     try {
       final metadata = await widget.apiCache.fetchVodSeekMetadata(videoId);
-      if (mounted) {
+      if (mounted && widget.videoId == videoId) {
         setState(() => _seekMetadata = metadata);
       }
     } on Object {
@@ -271,7 +469,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     if (_duration <= Duration.zero) {
       return;
     }
-    final seconds = _seekForward ? 10 : -10;
+    final seconds = _doubleTapOnRight ? 10 : -10;
     final position = Duration(
       milliseconds: (_position.inMilliseconds + seconds * 1000).clamp(0, _duration.inMilliseconds),
     );
@@ -286,6 +484,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       _seekFeedbackVisible = true;
     });
     unawaited(_playerController?.seekTo(position));
+    _replay?.updatePosition(position, seek: true);
     _seekFeedbackTimer?.cancel();
     _seekFeedbackTimer = Timer(const Duration(milliseconds: 800), () {
       if (mounted) {
@@ -306,6 +505,9 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   }
 
   Future<Uri> _fetchPlaybackUri() {
+    if (_streamEnded) {
+      return Future.error(StateError("The stream has ended."));
+    }
     if (widget.videoId case final videoId?) {
       return (widget.playbackUriLoader ?? widget.apiCache.fetchVodPlaybackUri)(videoId);
     }
@@ -314,7 +516,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   }
 
   Future<void> _loadPlaybackUri({bool refresh = false}) async {
-    if (!_playbackSupported) {
+    if (!_playbackSupported || _chatOnly || _streamEnded) {
       return;
     }
     final generation = ++_loadGeneration;
@@ -330,6 +532,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       _activeAd = null;
       if (refresh) {
         _latencyMs = null;
+        _chatLatencyMs.value = null;
         _controlsVisible = true;
       }
     });
@@ -361,6 +564,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         _controlsVisible = true;
         _errorMessage = _playerErrorMessage(error);
       });
+      unawaited(_refreshViewerCount());
     }
   }
 
@@ -438,72 +642,181 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     }
   }
 
-  Future<void> _refreshViewerCount() async {
+  Future<void> _refreshViewerCount({bool restartIfLive = false}) async {
     if (!_isLive || _viewerRefreshInFlight) {
       return;
     }
     _viewerRefreshInFlight = true;
+    final generation = ++_viewerRefreshGeneration;
+    final login = widget.channel.login;
     try {
       final loader = widget.viewerCountLoader;
-      final viewerCount = loader == null
-          ? await _fetchViewerCount(widget.channel.login)
-          : await loader(widget.channel.login);
-      if (mounted && viewerCount != null && viewerCount >= 0) {
-        setState(() => _viewerText = formatCompactCount(viewerCount));
+      int? viewerCount;
+      DateTime? startedAt;
+      bool? isOnline;
+      StreamChannel? liveChannel;
+      if (loader == null) {
+        final page = await widget.apiCache.fetchLiveStreamsPage(
+          first: 1,
+          userLogins: [login],
+          refresh: true,
+        );
+        var stream = page.data.firstOrNull;
+        if (stream == null) {
+          final channel = await widget.apiCache.fetchChannelDetails(
+            login,
+            videosFirst: 1,
+            refresh: true,
+          );
+          if (channel.login.isNotEmpty && channel.login.toLowerCase() == login.toLowerCase()) {
+            isOnline = channel.liveStream != null;
+            if (channel.liveStream case final live?) {
+              stream = TwitchFollowedStream(
+                id: live.id,
+                userId: channel.id,
+                userLogin: channel.login,
+                userName: channel.displayName,
+                title: live.title,
+                gameName: live.category,
+                gameId: live.categoryId,
+                viewerCount: live.viewerCount,
+                isPartner: channel.isPartner,
+                thumbnailUrl: live.thumbnailUrl,
+                profileImageUrl: channel.profileImageUrl,
+                startedAt: live.startedAt,
+              );
+            }
+          }
+        } else {
+          isOnline = true;
+        }
+        viewerCount = stream?.viewerCount;
+        startedAt = stream?.startedAt;
+        if (_waitingForLive && stream != null) {
+          liveChannel = streamChannelFromStream(
+            stream,
+            avatarImageUrl: widget.channel.avatarImageUrl,
+          );
+        }
+      } else {
+        viewerCount = await loader(login);
+        if (viewerCount != null && viewerCount >= 0) {
+          isOnline = true;
+        }
+      }
+      if (!mounted || generation != _viewerRefreshGeneration) {
+        return;
+      }
+      if (isOnline == false) {
+        _markStreamEnded();
+      } else if (isOnline == true) {
+        final openVideo = _waitingForLive && _appIsResumed;
+        setState(() {
+          if (viewerCount != null && viewerCount >= 0) {
+            _viewerText = formatCompactCount(viewerCount);
+          }
+          _startedAt = startedAt ?? _startedAt;
+          if ((restartIfLive || openVideo) && _streamEnded) {
+            _releasePlayback();
+            _streamEnded = false;
+            _playWhenReady = true;
+          }
+          if (openVideo) {
+            _waitingForLive = false;
+            _chatOnly = false;
+            _liveChannel = liveChannel;
+          }
+        });
+        if (openVideo) {
+          _host?.setChatOnly(enabled: false);
+        }
+        if (restartIfLive || openVideo) {
+          await _loadPlaybackUri(refresh: true);
+        }
       }
     } on Object {
-      // Viewer count is supplemental; preserve the last known value on failure.
+      // Failed status requests cannot tell us whether the broadcast ended.
     } finally {
-      _viewerRefreshInFlight = false;
+      if (generation == _viewerRefreshGeneration) {
+        _viewerRefreshInFlight = false;
+      }
     }
   }
 
-  Future<int?> _fetchViewerCount(String login) async {
-    final page = await widget.apiCache.fetchLiveStreamsPage(
-      first: 1,
-      userLogins: [login],
-      refresh: true,
-    );
-    return page.data.isEmpty ? null : page.data.first.viewerCount;
+  void _markStreamEnded() {
+    if (_streamEnded) {
+      return;
+    }
+    _loadGeneration++;
+    _controlsTimer?.cancel();
+    setState(() {
+      _streamEnded = true;
+      _waitingForLive = _chatOnly;
+      _isPlaying = false;
+      _isBuffering = false;
+      _playWhenReady = false;
+      _controlsVisible = true;
+      _activeAd = null;
+      _errorMessage = null;
+      _chatLatencyMs.value = 0;
+    });
+    unawaited(_playerController?.stop());
+    unawaited(_playerController?.setPictureInPictureEnabled(enabled: false));
   }
 
   void _handleControllerCreated(
     TwitchPlayerController controller,
     int playbackSessionGeneration,
   ) {
-    if (!mounted || playbackSessionGeneration != _playbackSessionGeneration) {
+    if (!mounted || _chatOnly || playbackSessionGeneration != _playbackSessionGeneration) {
       controller.dispose();
       return;
     }
     unawaited(_playerEvents?.cancel());
     _playerController?.dispose();
     _playerController = controller;
-    unawaited(controller.setPictureInPictureEnabled(enabled: _pictureInPictureEnabled));
+    unawaited(
+      controller.setPictureInPictureEnabled(enabled: _pictureInPictureEnabled && !_streamEnded),
+    );
     _playerEvents = controller.events.listen(
-      _handlePlayerEvent,
+      (event) {
+        if (playbackSessionGeneration == _playbackSessionGeneration) {
+          _handlePlayerEvent(event);
+        }
+      },
       onError: (Object error) {
-        if (mounted) {
+        if (mounted && !_streamEnded) {
           setState(() {
             _isBuffering = false;
             _controlsVisible = true;
             _activeAd = null;
             _errorMessage = _playerErrorMessage(error);
           });
+          unawaited(_refreshViewerCount());
         }
       },
     );
-    if (!_playWhenReady || (_host == null && _openingDestination)) {
+    if (_streamEnded) {
+      unawaited(controller.stop());
+    } else if (!_playWhenReady || (_host == null && _openingDestination)) {
       unawaited(controller.pause());
     }
   }
 
   void _handlePlayerEvent(TwitchPlayerEvent event) {
-    if (!mounted) {
+    if (!mounted || _chatOnly) {
+      return;
+    }
+    if (_streamEnded &&
+        event is! TwitchPictureInPictureTransitionEvent &&
+        event is! TwitchPictureInPictureEvent &&
+        event is! TwitchPlaybackDismissedEvent) {
       return;
     }
     switch (event) {
       case TwitchLatencyEvent(:final latencyMs):
         if (_playWhenReady) {
+          _chatLatencyMs.value = latencyMs;
           if (_controlsVisible &&
               _appIsResumed &&
               !_openingDestination &&
@@ -523,12 +836,16 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         :final duration,
         :final isEnded,
       ):
+        if (_isLive && isEnded) {
+          _markStreamEnded();
+          return;
+        }
         final startedPlaying = isPlaying && !isBuffering && (!_isPlaying || _isBuffering);
         setState(() {
           _isPlaying = isPlaying;
           _isBuffering = isBuffering;
           _playWhenReady = playWhenReady && !isEnded;
-          if (_seekFeedbackSeconds == null) {
+          if (_seekFeedbackSeconds == null && (_isLive || duration > Duration.zero)) {
             _position = position;
           }
           _duration = duration;
@@ -536,6 +853,9 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
             _controlsVisible = true;
           }
         });
+        if (duration > Duration.zero && _seekPosition == null && _seekFeedbackSeconds == null) {
+          _replay?.updatePosition(position);
+        }
         if (startedPlaying) {
           _scheduleControlsHide();
         } else if (!isPlaying || isBuffering) {
@@ -548,6 +868,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
           _activeAd = null;
           _errorMessage = message;
         });
+        unawaited(_refreshViewerCount());
       case TwitchQualitiesEvent(:final qualities, :final selectedId, :final currentLabel):
         setState(() => _audioOnly = selectedId == "audio_only");
         _qualitySettings.value = _QualitySettingsState(
@@ -595,6 +916,9 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   }
 
   void _toggleControls() {
+    if (_streamEnded) {
+      return;
+    }
     setState(() => _controlsVisible = !_controlsVisible);
     if (_controlsVisible && _isPlaying) {
       _scheduleControlsHide();
@@ -682,7 +1006,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
               displayName: widget.channel.name,
               avatarImageUrl: widget.channel.avatarImageUrl,
               isPartner: widget.channel.isPartner,
-              isLive: _isLive,
+              isLive: _isLive && !_streamEnded,
             ),
           ),
         ),
@@ -696,7 +1020,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   }
 
   Future<void> _openCategory() async {
-    final categoryName = widget.channel.category.trim();
+    final categoryName = _channel.category.trim();
     if (categoryName.isEmpty || categoryName.toLowerCase() == "live") {
       return;
     }
@@ -758,7 +1082,6 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     _openingDestination = true;
     _controlsTimer?.cancel();
     final resumeOnReturn = _host == null && _playWhenReady;
-    _host?.minimize();
     try {
       if (resumeOnReturn) {
         await _playerController?.pause();
@@ -773,7 +1096,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       await open();
     } finally {
       _openingDestination = false;
-      if (mounted && resumeOnReturn && ModalRoute.of(context)?.isCurrent == true) {
+      if (mounted && !_streamEnded && resumeOnReturn && ModalRoute.of(context)?.isCurrent == true) {
         await _playerController?.play();
       }
     }
@@ -785,18 +1108,50 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     );
   }
 
+  Future<void> _openChatSettings() async {
+    Widget builder(BuildContext context) => SettingsScreen(
+      showBackButton: true,
+      settingsStore: _chatSettingsStore,
+    );
+    await _openOverlayPage(builder);
+  }
+
+  Future<void> _reportUser(String login) => _openOverlayPage(
+    (_) => TwitchReportScreen(login: login),
+  );
+
+  Future<void> _openOverlayPage(WidgetBuilder builder) async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    if (_host case final host?) {
+      await host.openOverlayPage(builder: builder);
+    } else {
+      await Navigator.of(context, rootNavigator: true).push<void>(
+        MaterialPageRoute<void>(builder: builder),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
     final compact = _mode == PlaybackMode.mini || _mode == PlaybackMode.pip || _hideChrome;
     final embedded = _mode != PlaybackMode.expanded;
     final isLandscape = !embedded && mediaQuery.size.width > mediaQuery.size.height;
+    final maxChatWidth = math.min(480.0, mediaQuery.size.width * 0.6);
+    final minChatWidth = math.min(220.0, maxChatWidth);
+    final landscapeChatWidth =
+        (_landscapeChatWidth ?? (mediaQuery.size.width * 0.36).clamp(280.0, 360.0)).clamp(
+          minChatWidth,
+          maxChatWidth,
+        );
+    final sideChatWidth = isLandscape && _showLandscapeChat ? landscapeChatWidth : 0.0;
     final playbackSessionGeneration = _playbackSessionGeneration;
     final viewport = _PlayerViewport(
-      channel: widget.channel,
+      channel: _channel,
       playbackUri: _playbackUri,
       proxyUrls: _proxyUrls,
       initialQualityId: _qualitySettings.value.selectedId,
+      initialPosition: _isLive ? Duration.zero : _position,
       playbackSessionGeneration: playbackSessionGeneration,
       playbackSupported: _playbackSupported,
       playerSurfaceBuilder: widget.playerSurfaceBuilder,
@@ -810,7 +1165,8 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       onRestore: _mode == PlaybackMode.mini ? _host?.restore : null,
       audioOnly: _audioOnly,
       isLive: _isLive,
-      pictureInPictureEnabled: _pictureInPictureEnabled,
+      streamEnded: _streamEnded,
+      pictureInPictureEnabled: _pictureInPictureEnabled && !_streamEnded,
       miniPlayerEnabled: _miniPlayerEnabled,
       position: _seekPosition ?? _position,
       duration: _duration,
@@ -826,6 +1182,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
           _position = position;
         });
         unawaited(_playerController?.seekTo(position));
+        _replay?.updatePosition(position, seek: true);
         _scheduleControlsHide();
       },
       controlsVisible: _controlsVisible && _seekFeedbackSeconds == null,
@@ -837,14 +1194,23 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       liveDuration: _liveDuration,
       errorMessage: _errorMessage,
       onSurfaceTap: _toggleControls,
-      onDoubleTapDown: _isLive
-          ? null
-          : (details) => _seekForward = details.localPosition.dx >= mediaQuery.size.width / 2,
-      onDoubleTap: _isLive ? null : _seekByTenSeconds,
+      onDoubleTapDown: !_isLive || isLandscape
+          ? (details) => _doubleTapOnRight =
+                details.localPosition.dx >= (mediaQuery.size.width - sideChatWidth) / 2
+          : null,
+      onDoubleTap: !_isLive
+          ? _seekByTenSeconds
+          : isLandscape
+          ? () {
+              if (_doubleTapOnRight) {
+                setState(() => _showLandscapeChat = !_showLandscapeChat);
+              }
+            }
+          : null,
       onSeekTapUp: _isLive
           ? null
           : (details) {
-              _seekForward = details.localPosition.dx >= mediaQuery.size.width / 2;
+              _doubleTapOnRight = details.localPosition.dx >= mediaQuery.size.width / 2;
               _seekByTenSeconds();
             },
       seekFeedbackSeconds: _seekFeedbackSeconds,
@@ -853,7 +1219,8 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       onDismiss: _host?.dismiss ?? Navigator.of(context).maybePop,
       onTogglePlayback: _togglePlayback,
       onJumpToLive: _jumpToLive,
-      onRefresh: () => _loadPlaybackUri(refresh: true),
+      onRefresh: () =>
+          _streamEnded ? _refreshViewerCount(restartIfLive: true) : _loadPlaybackUri(refresh: true),
       onToggleLandscape: () => _toggleLandscape(isLandscape: isLandscape),
       onSettings: _showQualitySettings,
       onProfileTap: () => unawaited(_openChannel()),
@@ -862,11 +1229,12 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
 
     return Scaffold(
       key: ValueKey("player_page_${widget.channel.login}"),
+      resizeToAvoidBottomInset: !embedded,
       backgroundColor: _host == null
           ? Theme.of(context).scaffoldBackgroundColor
           : Colors.transparent,
       body: SafeArea(
-        top: _host == null && !isLandscape && !embedded,
+        top: _host == null && !_chatOnly && !isLandscape && !embedded,
         bottom: false,
         left: false,
         right: false,
@@ -874,22 +1242,160 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
           builder: (context, constraints) {
             final viewportHeight = isLandscape || _mode == PlaybackMode.pip
                 ? constraints.maxHeight
-                : constraints.maxWidth * 9 / 16;
-            return Align(
-              alignment: Alignment.topCenter,
-              child: SizedBox(
-                width: constraints.maxWidth,
-                height: viewportHeight,
-                child: Listener(
-                  onPointerDown: (event) {
-                    _controlsPointers.add(event.pointer);
-                    _controlsTimer?.cancel();
-                  },
-                  onPointerUp: _handleControlsPointerEnd,
-                  onPointerCancel: _handleControlsPointerEnd,
-                  child: viewport,
+                : math.min(constraints.maxHeight, constraints.maxWidth * 9 / 16);
+            final chatHeaderHeight = mediaQuery.viewPadding.top + 64;
+            final expandedChatHeight = math.max(
+              0.0,
+              mediaQuery.size.height -
+                  mediaQuery.padding.top -
+                  mediaQuery.size.width * 9 / 16 -
+                  mediaQuery.viewInsets.bottom,
+            );
+            final chatPanel = ValueListenableBuilder<int?>(
+              valueListenable: _chatLatencyMs,
+              builder: (context, latencyMs, _) => TwitchChatPanel(
+                key: _chatPanelKey,
+                controller: _chat,
+                replayController: _replay,
+                assets: _chatAssets,
+                preferences: widget.preferences ?? _settingsStore?.preferences,
+                settingsStore: _chatSettingsStore,
+                latencyMs: _chatOnly || _streamEnded ? 0 : latencyMs,
+                topPadding: _chatOnly ? chatHeaderHeight : 0,
+                chatOnly: _chatOnly,
+                canShowVideo: !_streamEnded,
+                isLive: _isLive,
+                onToggleChatOnly: _toggleChatOnly,
+                onOpenSettings: _openChatSettings,
+                onReportUser: _reportUser,
+                onInlineBackHandlerChanged: (handler) => _host?.setInlineBackHandler(handler),
+              ),
+            );
+            final playerHeader = GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onVerticalDragStart: !embedded && !isLandscape && _host != null
+                  ? (_) => _host!.beginSwipe()
+                  : null,
+              onVerticalDragUpdate: !embedded && !isLandscape && _host != null
+                  ? (details) => _host!.updateSwipe(details.delta.dy)
+                  : null,
+              onVerticalDragEnd: !embedded && !isLandscape && _host != null
+                  ? (details) => _host!.endSwipe(details.primaryVelocity ?? 0)
+                  : null,
+              onVerticalDragCancel: !embedded && !isLandscape ? _host?.cancelSwipe : null,
+              child: _chatOnly
+                  ? _chatOnlyHeader()
+                  : SizedBox(
+                      width: constraints.maxWidth - sideChatWidth,
+                      height: viewportHeight,
+                      child: Listener(
+                        onPointerDown: (event) {
+                          _controlsPointers.add(event.pointer);
+                          _controlsTimer?.cancel();
+                        },
+                        onPointerUp: _handleControlsPointerEnd,
+                        onPointerCancel: _handleControlsPointerEnd,
+                        child: viewport,
+                      ),
+                    ),
+            );
+            if (_chatOnly) {
+              return Stack(
+                fit: StackFit.expand,
+                children: [
+                  chatPanel,
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    height: chatHeaderHeight,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        const TopHeaderMaterial(),
+                        SafeArea(bottom: false, child: playerHeader),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            }
+            final chatWidth = isLandscape ? landscapeChatWidth : mediaQuery.size.width;
+            final chatHeight = isLandscape ? constraints.maxHeight : expandedChatHeight;
+            final chatLayout = Expanded(
+              child: IgnorePointer(
+                ignoring: compact || (isLandscape && sideChatWidth == 0),
+                child: ClipRect(
+                  key: const ValueKey("player_chat_clip"),
+                  child: OverflowBox(
+                    alignment: Alignment.topLeft,
+                    minWidth: chatWidth,
+                    maxWidth: chatWidth,
+                    minHeight: chatHeight,
+                    maxHeight: chatHeight,
+                    child: MediaQuery.removePadding(
+                      context: context,
+                      removeLeft: isLandscape,
+                      child: SafeArea(top: false, bottom: false, child: chatPanel),
+                    ),
+                  ),
                 ),
               ),
+            );
+            void resizeChat(double width) =>
+                setState(() => _landscapeChatWidth = width.clamp(minChatWidth, maxChatWidth));
+            final colors = Theme.of(context).colorScheme;
+            return Stack(
+              children: [
+                Flex(
+                  direction: isLandscape ? Axis.horizontal : Axis.vertical,
+                  children: [playerHeader, chatLayout],
+                ),
+                if (sideChatWidth > 0 && !compact)
+                  Positioned(
+                    left: constraints.maxWidth - sideChatWidth - 12,
+                    top: 0,
+                    bottom: 0,
+                    width: 24,
+                    child: Semantics(
+                      label: "Resize chat",
+                      value: "${landscapeChatWidth.round()} pixels",
+                      increasedValue:
+                          "${(landscapeChatWidth + 24).clamp(minChatWidth, maxChatWidth).round()} pixels",
+                      decreasedValue:
+                          "${(landscapeChatWidth - 24).clamp(minChatWidth, maxChatWidth).round()} pixels",
+                      onIncrease: landscapeChatWidth < maxChatWidth
+                          ? () => resizeChat(landscapeChatWidth + 24)
+                          : null,
+                      onDecrease: landscapeChatWidth > minChatWidth
+                          ? () => resizeChat(landscapeChatWidth - 24)
+                          : null,
+                      child: Listener(
+                        onPointerDown: (_) => setState(() => _resizingChat = true),
+                        onPointerUp: (_) => setState(() => _resizingChat = false),
+                        onPointerCancel: (_) => setState(() => _resizingChat = false),
+                        child: GestureDetector(
+                          key: const ValueKey("player_chat_resize_handle"),
+                          behavior: HitTestBehavior.opaque,
+                          onHorizontalDragUpdate: (details) => resizeChat(
+                            (_landscapeChatWidth ?? landscapeChatWidth).clamp(
+                                  minChatWidth,
+                                  maxChatWidth,
+                                ) -
+                                details.delta.dx,
+                          ),
+                          child: Center(
+                            child: Container(
+                              key: const ValueKey("player_chat_resize_edge"),
+                              width: 2,
+                              color: _resizingChat ? colors.primary : Colors.transparent,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             );
           },
         ),
@@ -897,8 +1403,132 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     );
   }
 
+  Widget _chatOnlyHeader() => Padding(
+    key: const ValueKey("player_chat_header"),
+    padding: const EdgeInsets.fromLTRB(4, 8, 16, 8),
+    child: Row(
+      children: [
+        IconButton(
+          tooltip: "Back",
+          onPressed: _host?.minimize ?? Navigator.of(context).maybePop,
+          icon: const Icon(Icons.arrow_back_rounded),
+        ),
+        const SizedBox(width: 4),
+        AvatarRing(
+          initials: widget.channel.initials,
+          size: 36,
+          avatarColors: widget.channel.avatarColors,
+          imageUrl: widget.channel.avatarImageUrl,
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Tooltip(
+                message: _channel.title.isEmpty ? _channel.name : _channel.title,
+                showDuration: const Duration(seconds: 5),
+                enableFeedback: true,
+                child: Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(
+                        text: widget.channel.name,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      TextSpan(text: "  ${_channel.title}"),
+                    ],
+                  ),
+                  key: const ValueKey("player_chat_name_and_title"),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Row(
+                children: [
+                  if (_streamEnded) ...[
+                    Text(
+                      _waitingForLive ? "Offline" : "Stream ended",
+                      style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    ),
+                    const SizedBox(width: 10),
+                  ] else if (_isLive) ...[
+                    const _LiveDot(key: ValueKey("player_live_dot")),
+                    const SizedBox(width: 5),
+                    _OverlayMetric(
+                      key: const ValueKey("player_live_duration"),
+                      text: _formatLiveDuration(_liveDuration),
+                      tooltip: _liveDuration == null
+                          ? "Broadcast duration unavailable"
+                          : "Live for ${_formatLiveDuration(_liveDuration)}",
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                    const SizedBox(width: 10),
+                    Icon(
+                      Icons.visibility_rounded,
+                      size: 19,
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                    const SizedBox(width: 5),
+                    _OverlayMetric(
+                      key: const ValueKey("player_viewers"),
+                      text: _viewerText,
+                      tooltip: "$_viewerText viewers",
+                      color: Theme.of(context).colorScheme.onSurface,
+                    ),
+                    const SizedBox(width: 10),
+                  ],
+                  if (_channel.category.isNotEmpty) ...[
+                    Icon(
+                      Icons.category_rounded,
+                      size: 14,
+                      color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.78),
+                    ),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Tooltip(
+                        message: _channel.category,
+                        showDuration: const Duration(seconds: 5),
+                        enableFeedback: true,
+                        child: Semantics(
+                          button: true,
+                          label: "Open ${_channel.category} category",
+                          child: GestureDetector(
+                            key: const ValueKey("player_chat_category_button"),
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => unawaited(_openCategory()),
+                            child: Text(
+                              key: const ValueKey("player_chat_category"),
+                              _channel.category,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withValues(alpha: 0.78),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
   Duration? get _liveDuration {
-    final startedAt = widget.channel.startedAt;
+    final startedAt = _startedAt;
     if (startedAt == null) {
       return null;
     }
@@ -940,6 +1570,7 @@ class _PlayerViewport extends StatelessWidget {
     required this.playbackUri,
     required this.proxyUrls,
     required this.initialQualityId,
+    required this.initialPosition,
     required this.playbackSessionGeneration,
     required this.playbackSupported,
     required this.playerSurfaceBuilder,
@@ -950,6 +1581,7 @@ class _PlayerViewport extends StatelessWidget {
     required this.onRestore,
     required this.audioOnly,
     required this.isLive,
+    required this.streamEnded,
     required this.pictureInPictureEnabled,
     required this.miniPlayerEnabled,
     required this.position,
@@ -987,6 +1619,7 @@ class _PlayerViewport extends StatelessWidget {
   final Uri? playbackUri;
   final List<String> proxyUrls;
   final String initialQualityId;
+  final Duration initialPosition;
   final int playbackSessionGeneration;
   final bool playbackSupported;
   final PlayerSurfaceBuilder? playerSurfaceBuilder;
@@ -997,6 +1630,7 @@ class _PlayerViewport extends StatelessWidget {
   final VoidCallback? onRestore;
   final bool audioOnly;
   final bool isLive;
+  final bool streamEnded;
   final bool pictureInPictureEnabled;
   final bool miniPlayerEnabled;
   final Duration position;
@@ -1064,6 +1698,7 @@ class _PlayerViewport extends StatelessWidget {
                       playbackUriRefresher: playbackUriRefresher,
                       proxyUrls: proxyUrls,
                       initialQualityId: initialQualityId,
+                      initialPosition: initialPosition,
                       mediaTitle: channel.title,
                       mediaArtist: channel.name,
                       isLive: isLive,
@@ -1079,6 +1714,17 @@ class _PlayerViewport extends StatelessWidget {
                 child: Center(
                   child: Icon(Icons.headphones_rounded, color: Colors.white70, size: 40),
                 ),
+              ),
+            ),
+          if (streamEnded)
+            IgnorePointer(
+              child: ColoredBox(
+                color: Colors.black,
+                child: compact
+                    ? const Center(
+                        child: Text("Stream ended", style: TextStyle(color: Colors.white70)),
+                      )
+                    : null,
               ),
             ),
           if (compact && onRestore != null)
@@ -1153,37 +1799,46 @@ class _PlayerViewport extends StatelessWidget {
                                   onProfileTap: onProfileTap,
                                   onCategoryTap: onCategoryTap,
                                 ),
-                                TooltipTheme(
-                                  data: TooltipTheme.of(context).copyWith(
-                                    preferBelow: isLandscape ? null : false,
+                                if (!streamEnded)
+                                  TooltipTheme(
+                                    data: TooltipTheme.of(context).copyWith(
+                                      preferBelow: isLandscape ? null : false,
+                                    ),
+                                    child: isLive
+                                        ? _PlayerFooter(
+                                            viewers: viewerText,
+                                            liveDuration: liveDuration,
+                                            latencyMs: latencyMs,
+                                            isLandscape: isLandscape,
+                                            onJumpToLive: onJumpToLive,
+                                            onRefresh: onRefresh,
+                                            onToggleLandscape: onToggleLandscape,
+                                          )
+                                        : VodPlayerFooter(
+                                            position: position,
+                                            duration: duration,
+                                            onChangeStart: onSeekChanged,
+                                            onChanged: onSeekChanged,
+                                            metadata: seekMetadata,
+                                            seeking: seeking,
+                                            onChangeEnd: onSeekEnd,
+                                            onToggleFullscreen: onToggleLandscape,
+                                          ),
                                   ),
-                                  child: isLive
-                                      ? _PlayerFooter(
-                                          viewers: viewerText,
-                                          liveDuration: liveDuration,
-                                          latencyMs: latencyMs,
-                                          isLandscape: isLandscape,
-                                          onJumpToLive: onJumpToLive,
-                                          onRefresh: onRefresh,
-                                          onToggleLandscape: onToggleLandscape,
-                                        )
-                                      : VodPlayerFooter(
-                                          position: position,
-                                          duration: duration,
-                                          onChangeStart: onSeekChanged,
-                                          onChanged: onSeekChanged,
-                                          metadata: seekMetadata,
-                                          seeking: seeking,
-                                          onChangeEnd: onSeekEnd,
-                                          onToggleFullscreen: onToggleLandscape,
-                                        ),
-                                ),
                               ],
                             ),
                           ),
                         ),
                       ),
-                      if (playbackSupported && !seeking)
+                      if (streamEnded)
+                        Center(
+                          child: _PlayerError(
+                            message: "Stream ended",
+                            onRetry: onRefresh,
+                            retryLabel: "Check again",
+                          ),
+                        )
+                      else if (playbackSupported && !seeking)
                         if (errorMessage case final message?)
                           Center(
                             child: FittedBox(
@@ -1249,6 +1904,7 @@ class _PlayerViewport extends StatelessWidget {
     properties.add(DiagnosticsProperty<Uri?>("playbackUri", playbackUri));
     properties.add(IntProperty("proxyUrlCount", proxyUrls.length));
     properties.add(StringProperty("initialQualityId", initialQualityId));
+    properties.add(DiagnosticsProperty<Duration>("initialPosition", initialPosition));
     properties.add(IntProperty("playbackSessionGeneration", playbackSessionGeneration));
     properties.add(
       FlagProperty(
@@ -1279,6 +1935,7 @@ class _PlayerViewport extends StatelessWidget {
     properties.add(DiagnosticsProperty<bool>("compact", compact));
     properties.add(ObjectFlagProperty<VoidCallback?>.has("onRestore", onRestore));
     properties.add(DiagnosticsProperty<bool>("audioOnly", audioOnly));
+    properties.add(DiagnosticsProperty<bool>("streamEnded", streamEnded));
     properties.add(DiagnosticsProperty<bool>("isLive", isLive));
     properties.add(DiagnosticsProperty<Duration>("position", position));
     properties.add(DiagnosticsProperty<Duration>("duration", duration));
@@ -1578,14 +2235,19 @@ class _PlayerHeader extends StatelessWidget {
                       key: const ValueKey("player_category_button"),
                       behavior: HitTestBehavior.opaque,
                       onTap: onCategoryTap,
-                      child: Text(
-                        channel.category,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.78),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
+                      child: Tooltip(
+                        message: channel.category,
+                        showDuration: const Duration(seconds: 5),
+                        enableFeedback: true,
+                        child: Text(
+                          channel.category,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.78),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ),
@@ -1795,10 +2457,15 @@ class _CenterPlaybackControl extends StatelessWidget {
 }
 
 class _PlayerError extends StatelessWidget {
-  const _PlayerError({required this.message, required this.onRetry});
+  const _PlayerError({
+    required this.message,
+    required this.onRetry,
+    this.retryLabel = "Try again",
+  });
 
   final String message;
   final Future<void> Function() onRetry;
+  final String retryLabel;
 
   @override
   Widget build(BuildContext context) => Container(
@@ -1825,7 +2492,7 @@ class _PlayerError extends StatelessWidget {
           onPressed: onRetry,
           style: TextButton.styleFrom(foregroundColor: Colors.white),
           icon: const Icon(Icons.refresh_rounded),
-          label: const Text("Try again"),
+          label: Text(retryLabel),
         ),
       ],
     ),
@@ -1835,6 +2502,7 @@ class _PlayerError extends StatelessWidget {
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(StringProperty("message", message));
+    properties.add(StringProperty("retryLabel", retryLabel));
     properties.add(ObjectFlagProperty<Future<void> Function()>.has("onRetry", onRetry));
   }
 }
@@ -2038,10 +2706,16 @@ class _OverlayIconButton extends StatelessWidget {
 }
 
 class _OverlayMetric extends StatelessWidget {
-  const _OverlayMetric({required this.text, required this.tooltip, super.key});
+  const _OverlayMetric({
+    required this.text,
+    required this.tooltip,
+    this.color = Colors.white,
+    super.key,
+  });
 
   final String text;
   final String tooltip;
+  final Color color;
 
   @override
   Widget build(BuildContext context) => Tooltip(
@@ -2050,11 +2724,11 @@ class _OverlayMetric extends StatelessWidget {
     child: Text(
       text,
       maxLines: 1,
-      style: const TextStyle(
-        color: Colors.white,
+      style: TextStyle(
+        color: color,
         fontSize: 14,
         fontWeight: FontWeight.w700,
-        fontFeatures: [FontFeature.tabularFigures()],
+        fontFeatures: const [FontFeature.tabularFigures()],
       ),
     ),
   );
@@ -2064,6 +2738,7 @@ class _OverlayMetric extends StatelessWidget {
     super.debugFillProperties(properties);
     properties.add(StringProperty("text", text));
     properties.add(StringProperty("tooltip", tooltip));
+    properties.add(ColorProperty("color", color));
   }
 }
 

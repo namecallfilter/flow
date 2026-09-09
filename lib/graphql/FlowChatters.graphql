@@ -1,0 +1,15 @@
+query FlowChatters($login: String!) {
+  user(login: $login) {
+    channel {
+      chatters {
+        count
+        broadcasters { login }
+        chatbots { login }
+        moderators { login }
+        vips { login }
+        staff { login }
+        viewers { login }
+      }
+    }
+  }
+}

@@ -1,0 +1,23 @@
+# Verified against https://gql.twitch.tv/gql on 2026-09-07 using Flow's public client ID.
+# Offset requests may return preceding context (300 returned messages beginning at 290).
+# Cursor requests omit contentOffsetSeconds. emoteID is the CDN ID; id includes a range.
+query VideoCommentsByOffsetOrCursor($videoID: ID!, $contentOffsetSeconds: Int, $cursor: Cursor) {
+  video(id: $videoID) {
+    comments(contentOffsetSeconds: $contentOffsetSeconds, after: $cursor) {
+      edges {
+        cursor
+        node {
+          id
+          contentOffsetSeconds
+          commenter { login displayName }
+          message {
+            fragments { text emote { emoteID } }
+            userBadges { setID version }
+            userColor
+          }
+        }
+      }
+      pageInfo { hasNextPage }
+    }
+  }
+}

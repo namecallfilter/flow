@@ -38,7 +38,7 @@ class TwitchAuthConfig {
       "TWITCH_REDIRECT_URI",
       defaultValue: defaultRedirectUri,
     ),
-    this.scope = "user:read:follows",
+    this.scope = "user:read:follows chat:read chat:edit",
   });
 
   static const defaultRedirectUri = "https://twitch.tv/login";

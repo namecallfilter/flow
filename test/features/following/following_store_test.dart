@@ -211,6 +211,9 @@ void main() {
         ],
       ),
     );
+    expect(store.streamSort, StreamSort.recommendedForYou);
+    expect(store.liveChannels.map((channel) => channel.viewerCount), [999, 1001, 1000]);
+    await store.selectStreamSort(StreamSort.viewersHighToLow);
     expect(store.liveChannels.map((channel) => channel.viewerCount), [1001, 1000, 999]);
     await store.selectStreamSort(StreamSort.viewersLowToHigh);
     expect(store.liveChannels.map((channel) => channel.viewerCount), [999, 1000, 1001]);

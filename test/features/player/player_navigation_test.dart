@@ -2,14 +2,579 @@ import "dart:async";
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
+import "package:flow/api/twitch_chat.dart";
+import "package:flow/api/twitch_chat_assets.dart";
+import "package:flow/api/twitch_vod_chat.dart";
 import "package:flow/features/player/media3_player_controller.dart";
 import "package:flow/features/player/player_navigation.dart";
 import "package:flow/features/player/player_screen.dart";
+import "package:flow/features/player/twitch_chat_panel.dart";
+import "package:flow/features/player/twitch_emote_picker.dart";
+import "package:flow/features/settings/settings_screen.dart";
+import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  for (final chatOnly in [false, true]) {
+    testWidgets("hosted rules acceptance survives a keyboard cycle (chat only: $chatOnly)", (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1;
+      tester.view.padding = const FakeViewPadding(top: 24);
+      tester.view.viewPadding = const FakeViewPadding(top: 24);
+      addTearDown(tester.view.reset);
+      final host = PlaybackHost();
+      final chat = _ReadyChat(rules: ["Be kind", "No spoilers"]);
+      for (var index = 0; index < 80; index++) {
+        chat.receive("Existing message $index");
+      }
+      final player = _PlaybackProbe()..chat = chat;
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorObservers: [host],
+          home: const Scaffold(body: Text("Browse Flow")),
+        ),
+      );
+      await openStreamPlayer(
+        tester.element(find.text("Browse Flow")),
+        builder: (_) => player.screen("creator"),
+      );
+      await tester.pumpAndSettle();
+      if (chatOnly) {
+        await tester.tap(find.byKey(const ValueKey("chat_menu")));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey("chat_only_toggle")));
+        await tester.pumpAndSettle();
+      }
+      final panel = tester.element(find.byType(TwitchChatPanel));
+      final disposals = player.disposals;
+      final input = find.byKey(const ValueKey("chat_message_input"));
+      final barriers = find.byType(ModalBarrier).evaluate().length;
+      expect(tester.widget<TextField>(input).readOnly, isTrue);
+      await tester.tap(input);
+      await tester.pumpAndSettle();
+      final rules = find.text("Chat Rules");
+      final route = ModalRoute.of(tester.element(rules))!;
+      expect(route.reverseTransitionDuration, greaterThan(Duration.zero));
+      _expectPaintsAbove(tester, rules, find.byType(TwitchChatPanel));
+      await tester.tap(find.text("Okay, Got It!"));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(route.animation!.status, AnimationStatus.reverse);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+      await tester.pump(const Duration(milliseconds: 50));
+      _expectPaintsAbove(tester, rules, find.byType(TwitchChatPanel));
+      await tester.pumpAndSettle();
+      expect(rules, findsNothing);
+      expect(route.overlayEntries.any((entry) => entry.mounted), isFalse);
+      expect(find.byType(ModalBarrier).evaluate(), hasLength(barriers));
+      expect(tester.widget<TextField>(input).readOnly, isFalse);
+      expect(tester.widget<TextField>(input).focusNode!.hasFocus, isTrue);
+      expect(tester.testTextInput.isVisible, isTrue);
+      expect(input.hitTestable(), findsOneWidget);
+      expect(tester.getBottomLeft(input).dy, lessThanOrEqualTo(500));
+      await tester.enterText(input, "Draft after accepting");
+
+      tester.testTextInput.hide();
+      tester.widget<TextField>(input).focusNode!.unfocus();
+      tester.view.viewInsets = FakeViewPadding.zero;
+      await tester.pumpAndSettle();
+      expect(rules, findsNothing);
+      expect(find.byType(ModalBarrier).evaluate(), hasLength(barriers));
+      expect(tester.widget<TextField>(input).controller!.text, "Draft after accepting");
+      chat.receive("Arrived after keyboard closed");
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining("Arrived after keyboard closed", findRichText: true),
+        findsOneWidget,
+      );
+      final messages = find.byKey(const ValueKey("chat_messages"));
+      final scroll = tester.widget<ListView>(messages).controller!;
+      await tester.drag(messages, const Offset(0, 220));
+      await tester.pumpAndSettle();
+      expect(scroll.position.pixels, greaterThan(scroll.position.minScrollExtent));
+      chat.receive("Arrived while reading older messages");
+      await tester.pumpAndSettle();
+      expect(find.text("1 new message"), findsOneWidget);
+      await tester.tap(find.text("1 new message"));
+      await tester.pumpAndSettle();
+      expect(scroll.position.pixels, scroll.position.minScrollExtent);
+      expect(
+        find.textContaining("Arrived while reading older messages", findRichText: true),
+        findsOneWidget,
+      );
+      expect(tester.element(find.byType(TwitchChatPanel)), same(panel));
+      expect(host.mode, PlaybackMode.expanded);
+      expect(player.loads, 1);
+      expect(player.disposals, disposals);
+      host.dismiss();
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final miniEnabled in [true, false]) {
+    testWidgets(
+      "Back closes the inline picker before leaving hosted playback (mini: $miniEnabled)",
+      (tester) async {
+        tester.view.physicalSize = const Size(400, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final host = PlaybackHost()..setMiniPlayerEnabled(enabled: miniEnabled);
+        final player = _PlaybackProbe()..chat = _ReadyChat();
+        await tester.pumpWidget(
+          MaterialApp(
+            navigatorObservers: [host],
+            home: const Scaffold(body: Text("Browse Flow")),
+          ),
+        );
+        await openStreamPlayer(
+          tester.element(find.text("Browse Flow")),
+          builder: (_) => player.screen("creator"),
+        );
+        await tester.pumpAndSettle();
+        final surface = tester.element(find.byType(_PlayerSurface));
+        await tester.tap(find.byKey(const ValueKey("chat_emote_toggle")));
+        await tester.pumpAndSettle();
+        expect(find.byType(TwitchEmotePicker), findsOneWidget);
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+        expect(find.byType(TwitchEmotePicker), findsNothing);
+        expect(host.mode, PlaybackMode.expanded);
+        expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+        expect(player.loads, 1);
+        expect(player.disposals, 0);
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+        if (miniEnabled) {
+          expect(host.mode, PlaybackMode.mini);
+          expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+        } else {
+          expect(find.byType(_PlayerSurface), findsNothing);
+          expect(player.disposals, 1);
+        }
+        host.dismiss();
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  for (final aboveSettings in [false, true]) {
+    testWidgets("nested chat sheets stay above their parent (settings: $aboveSettings)", (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final host = PlaybackHost();
+      final player = _PlaybackProbe();
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorObservers: [host],
+          home: const Scaffold(body: Text("Browse Flow")),
+        ),
+      );
+      await openStreamPlayer(
+        tester.element(find.text("Browse Flow")),
+        builder: (_) => player.screen("creator"),
+      );
+      await tester.pumpAndSettle();
+      final playerContext = tester.element(find.byType(StreamPlayerScreen));
+      final surface = tester.element(find.byType(_PlayerSurface));
+      if (aboveSettings) {
+        unawaited(
+          host.openOverlayPage(builder: (_) => const Scaffold(body: Text("Player settings"))),
+        );
+        await tester.pumpAndSettle();
+      }
+      Future<void> showSheet(String name, double height, {VoidCallback? onNext}) =>
+          showModalBottomSheet<void>(
+            context: playerContext,
+            isScrollControlled: true,
+            builder: (_) => SizedBox(
+              key: ValueKey(name),
+              height: height,
+              child: Column(
+                children: [
+                  Text(name),
+                  if (onNext != null) TextButton(onPressed: onNext, child: Text("More from $name")),
+                ],
+              ),
+            ),
+          );
+      unawaited(
+        showSheet(
+          "History",
+          500,
+          onNext: () => unawaited(
+            showSheet(
+              "Options",
+              160,
+              onNext: () {
+                Navigator.of(playerContext).pop();
+                unawaited(showSheet("Confirm", 220));
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final history = find.byKey(const ValueKey("History"));
+      final historyElement = tester.element(history);
+      final underlying = aboveSettings ? find.text("Player settings") : find.byType(_PlayerSurface);
+      _expectPaintsAbove(tester, history, underlying);
+      await tester.tap(find.text("More from History"));
+      for (var frame = 0; frame < 25; frame++) {
+        await tester.pump(Duration(milliseconds: frame == 0 ? 0 : 16));
+        _expectPaintsAbove(tester, find.byKey(const ValueKey("Options")), history);
+        _expectPaintsAbove(tester, history, underlying);
+      }
+      await tester.tap(find.text("More from Options"));
+      final options = find.byKey(const ValueKey("Options"));
+      final confirm = find.byKey(const ValueKey("Confirm"));
+      for (var frame = 0; frame < 25; frame++) {
+        await tester.pump(Duration(milliseconds: frame == 0 ? 0 : 16));
+        _expectPaintsAbove(tester, confirm, history);
+        if (options.evaluate().isNotEmpty) {
+          _expectPaintsAbove(tester, confirm, options);
+          _expectPaintsAbove(tester, options, history);
+        }
+        _expectPaintsAbove(tester, history, underlying);
+      }
+      expect(options, findsNothing);
+      Navigator.of(playerContext).pop();
+      for (var frame = 0; frame < 25; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        if (confirm.evaluate().isNotEmpty) {
+          _expectPaintsAbove(tester, confirm, history);
+        }
+        _expectPaintsAbove(tester, history, underlying);
+      }
+      expect(find.text("More from History").hitTestable(), findsOneWidget);
+      expect(tester.element(history), same(historyElement));
+      unawaited(
+        host.openOverlayPage(
+          builder: (_) => const Scaffold(
+            key: ValueKey("Report page"),
+            body: Text("Report user"),
+          ),
+        ),
+      );
+      final report = find.byKey(const ValueKey("Report page"));
+      final coveredHistory = find.byKey(const ValueKey("History"), skipOffstage: false);
+      for (var frame = 0; frame < 40; frame++) {
+        await tester.pump(Duration(milliseconds: frame == 0 ? 0 : 16));
+        _expectPaintsAbove(tester, report, coveredHistory);
+      }
+      expect(find.text("Report user").hitTestable(), findsOneWidget);
+      expect(host.mode, PlaybackMode.expanded);
+      Navigator.of(playerContext).pop();
+      for (var frame = 0; frame < 40; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        if (report.evaluate().isNotEmpty) {
+          _expectPaintsAbove(tester, report, coveredHistory);
+        }
+      }
+      expect(report, findsNothing);
+      expect(history, findsOneWidget);
+      expect(find.text("More from History").hitTestable(), findsOneWidget);
+      expect(tester.element(history), same(historyElement));
+      Navigator.of(playerContext).removeRoute(ModalRoute.of(tester.element(history))!);
+      await tester.pumpAndSettle();
+      expect(history, findsNothing);
+      if (aboveSettings) {
+        expect(find.text("Player settings").hitTestable(), findsOneWidget);
+        Navigator.of(playerContext).pop();
+        await tester.pumpAndSettle();
+      }
+      expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+      expect(player.loads, 1);
+      expect(player.pauses, 0);
+      expect(player.disposals, 0);
+      host.dismiss();
+      await tester.pumpAndSettle();
+    });
+  }
+
+  testWidgets("a trailing tap cannot restore a mini-player being swiped away", (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final host = PlaybackHost();
+    final player = _PlaybackProbe();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorObservers: [host],
+        home: const Scaffold(body: Text("Browse Flow")),
+      ),
+    );
+    await openStreamPlayer(
+      tester.element(find.text("Browse Flow")),
+      builder: (_) => player.screen("creator"),
+    );
+    await tester.pumpAndSettle();
+    host.minimize();
+    await tester.pumpAndSettle();
+    final page = find.byKey(const ValueKey("player_page_creator"));
+    final drag = await tester.startGesture(tester.getCenter(page));
+    await drag.moveBy(const Offset(-30, 0));
+    await tester.pump();
+    await drag.moveBy(const Offset(-100, 0));
+    await tester.pump();
+    await drag.up();
+    await tester.pump();
+    await tester.tapAt(tester.getCenter(page));
+    await tester.pump();
+    expect(host.mode, PlaybackMode.mini);
+    for (var frame = 0; frame < 20; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      if (page.evaluate().isNotEmpty) {
+        expect(
+          tester.widget<PlaybackPresentation>(find.byType(PlaybackPresentation)).mode,
+          PlaybackMode.mini,
+        );
+        expect(tester.getSize(page), const Size(200, 112.5));
+      }
+    }
+    expect(find.byType(_PlayerSurface), findsNothing);
+    expect(find.text("Browse Flow").hitTestable(), findsOneWidget);
+    expect(player.disposals, 1);
+  });
+
+  for (final miniEnabled in [true, false]) {
+    testWidgets(
+      "expanded chat stays above the keyboard and chat drags do not minimize playback (mini: $miniEnabled)",
+      (
+        tester,
+      ) async {
+        tester.view.physicalSize = const Size(400, 800);
+        tester.view.devicePixelRatio = 1;
+        tester.view.padding = const FakeViewPadding(top: 24);
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPadding);
+        addTearDown(tester.view.resetViewInsets);
+        final host = PlaybackHost()..setMiniPlayerEnabled(enabled: miniEnabled);
+        final player = _PlaybackProbe();
+        await tester.pumpWidget(
+          MaterialApp(
+            navigatorObservers: [host],
+            home: const Scaffold(body: Text("Browse Flow")),
+          ),
+        );
+        await openStreamPlayer(
+          tester.element(find.text("Browse Flow")),
+          builder: (_) => player.screen("creator"),
+        );
+        await tester.pumpAndSettle();
+        final surface = tester.element(find.byType(_PlayerSurface));
+        final composer = find.byKey(const ValueKey("chat_message_input"));
+        expect(tester.getBottomLeft(find.byKey(const ValueKey("player_page_creator"))).dy, 800);
+        expect(composer.hitTestable(), findsOneWidget);
+        expect(tester.getTopLeft(composer).dy, greaterThan(249));
+
+        await tester.dragFrom(const Offset(200, 400), const Offset(0, 200));
+        await tester.pumpAndSettle();
+        expect(host.mode, PlaybackMode.expanded);
+        tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+        await tester.pumpAndSettle();
+        expect(tester.getBottomLeft(composer).dy, lessThanOrEqualTo(500));
+        expect(composer.hitTestable(), findsOneWidget);
+        expect(tester.getSize(find.byType(_PlayerSurface)), const Size(400, 225));
+        expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+        expect(player.loads, 1);
+        host.dismiss();
+        await tester.pumpAndSettle();
+      },
+    );
+  }
+
+  for (final videoId in <String?>[null, "123456"]) {
+    testWidgets(
+      "chat-only swipe translates and dismisses ${videoId == null ? "live" : "VOD"}",
+      (tester) async {
+        tester.view.physicalSize = const Size(400, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final host = PlaybackHost();
+        final player = _PlaybackProbe();
+        await tester.pumpWidget(
+          MaterialApp(
+            navigatorObservers: [host],
+            home: const Scaffold(body: Text("Browse Flow")),
+          ),
+        );
+        await openStreamPlayer(
+          tester.element(find.text("Browse Flow")),
+          builder: (_) => player.screen("creator", videoId: videoId),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey("chat_menu")));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey("chat_only_toggle")));
+        await tester.pumpAndSettle();
+        final page = find.byKey(const ValueKey("player_page_creator"));
+        final chat = tester.element(find.byType(TwitchChatPanel));
+        final drag = await tester.startGesture(const Offset(220, 32));
+        await drag.moveBy(const Offset(0, 40));
+        await tester.pump();
+        await drag.moveBy(const Offset(0, 120));
+        await tester.pump();
+        final heldTop = tester.getTopLeft(page).dy;
+        expect(heldTop, greaterThan(0));
+        expect(tester.getSize(page), const Size(400, 800));
+        expect(tester.element(find.byType(TwitchChatPanel)), same(chat));
+        await drag.up();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 140));
+        expect(tester.getTopLeft(page).dy, greaterThan(heldTop));
+        expect(tester.getSize(page), const Size(400, 800));
+        expect(host.mode, PlaybackMode.expanded);
+        expect(find.byKey(const ValueKey("player_mini")), findsNothing);
+        await tester.pumpAndSettle();
+        expect(find.byType(StreamPlayerScreen), findsNothing);
+        expect(find.text("Browse Flow").hitTestable(), findsOneWidget);
+      },
+    );
+
+    for (final chatOnly in [false, true]) {
+      testWidgets(
+        "chat settings returns to the same ${videoId == null ? "live" : "VOD"} session (chat only: $chatOnly)",
+        (tester) async {
+          tester.view.physicalSize = const Size(400, 800);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+          final host = PlaybackHost();
+          final player = _PlaybackProbe();
+          await tester.pumpWidget(
+            MaterialApp(
+              navigatorObservers: [host],
+              home: const Scaffold(body: Text("Browse Flow")),
+            ),
+          );
+          await openStreamPlayer(
+            tester.element(find.text("Browse Flow")),
+            builder: (_) => player.screen("creator", videoId: videoId),
+          );
+          await tester.pumpAndSettle();
+          if (chatOnly) {
+            await tester.tap(find.byKey(const ValueKey("chat_menu")));
+            await tester.pumpAndSettle();
+            await tester.tap(find.byKey(const ValueKey("chat_only_toggle")));
+            await tester.pumpAndSettle();
+          }
+          final screen = tester.element(find.byType(StreamPlayerScreen));
+          final panel = tester.element(find.byType(TwitchChatPanel));
+          final surface = chatOnly ? null : tester.element(find.byType(_PlayerSurface));
+          final store = tester.widget<TwitchChatPanel>(find.byType(TwitchChatPanel)).settingsStore;
+          final input = find.byKey(const ValueKey("chat_message_input"));
+          final draft = videoId == null ? tester.widget<TextField>(input).controller! : null;
+          final pauses = player.pauses;
+          final disposals = player.disposals;
+          await tester.tap(find.byKey(const ValueKey("chat_menu")));
+          await tester.pumpAndSettle();
+          draft?.text = "Unsent draft";
+          await tester.tap(find.text("Settings"));
+          await tester.pumpAndSettle();
+          expect(find.byType(SettingsScreen), findsOneWidget);
+          expect(find.byKey(const ValueKey("settings_back")).hitTestable(), findsOneWidget);
+          expect(
+            tester.widget<SettingsScreen>(find.byType(SettingsScreen)).settingsStore,
+            same(store),
+          );
+          expect(host.mode, PlaybackMode.expanded);
+          expect(player.pauses, pauses);
+          expect(player.disposals, disposals);
+          await tester.tap(find.byKey(const ValueKey("settings_back")));
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
+          expect(find.byType(SettingsScreen), findsOneWidget);
+          _expectPaintsAbove(
+            tester,
+            find.byType(SettingsScreen),
+            find.byType(StreamPlayerScreen),
+          );
+          await tester.pumpAndSettle();
+          expect(find.byType(SettingsScreen), findsNothing);
+          expect(tester.element(find.byType(StreamPlayerScreen)), same(screen));
+          expect(tester.element(find.byType(TwitchChatPanel)), same(panel));
+          if (surface != null) {
+            expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+          }
+          if (draft != null) {
+            expect(tester.widget<TextField>(input).controller, same(draft));
+            expect(draft.text, "Unsent draft");
+          }
+          expect(
+            find.byKey(ValueKey(videoId == null ? "chat_send" : "chat_menu")).hitTestable(),
+            findsOneWidget,
+          );
+          expect(player.loads, 1);
+          expect(player.surfaces, 1);
+          expect(player.pauses, pauses);
+          expect(player.disposals, disposals);
+          host.dismiss();
+          await tester.pumpAndSettle();
+        },
+      );
+    }
+
+    testWidgets(
+      "chat-only back closes ${videoId == null ? "live" : "VOD"} without mini-player or PiP",
+      (
+        tester,
+      ) async {
+        tester.view.physicalSize = const Size(400, 800);
+        tester.view.devicePixelRatio = 1;
+        tester.view.padding = const FakeViewPadding(top: 24);
+        tester.view.viewPadding = const FakeViewPadding(top: 24);
+        addTearDown(tester.view.reset);
+        final host = PlaybackHost();
+        final player = _PlaybackProbe();
+        await tester.pumpWidget(
+          MaterialApp(
+            navigatorObservers: [host],
+            home: const Scaffold(body: Text("Browse Flow")),
+          ),
+        );
+        await openStreamPlayer(
+          tester.element(find.text("Browse Flow")),
+          builder: (_) => player.screen("creator", videoId: videoId),
+        );
+        await tester.pumpAndSettle();
+        expect(tester.getTopLeft(find.byKey(const ValueKey("player_page_background"))).dy, 0);
+        expect(find.byKey(const ValueKey("chat_only_toggle")), findsNothing);
+        await tester.tap(find.byKey(const ValueKey("chat_menu")));
+        await tester.pumpAndSettle();
+        expect(find.text("Chat only"), findsOneWidget);
+        await tester.tap(find.byKey(const ValueKey("chat_only_toggle")));
+        await tester.pumpAndSettle();
+        expect(find.byType(_PlayerSurface), findsNothing);
+        expect(player.disposals, 1);
+        expect(player.pauses, 1);
+        expect(
+          tester.getRect(find.byKey(const ValueKey("player_page_creator"))),
+          const Rect.fromLTWH(0, 0, 400, 800),
+        );
+        expect(tester.getTopLeft(find.byKey(const ValueKey("player_chat_header"))).dy, 24);
+        player.eventsController.add(const TwitchPictureInPictureEvent(active: true));
+        await tester.pumpAndSettle();
+        expect(host.mode, PlaybackMode.expanded);
+        await tester.tap(find.byTooltip("Back"));
+        await tester.pumpAndSettle();
+        expect(find.byType(StreamPlayerScreen), findsNothing);
+        expect(find.byKey(const ValueKey("player_mini")), findsNothing);
+        expect(find.byKey(const ValueKey("player_chat_mini")), findsNothing);
+        expect(find.text("Browse Flow").hitTestable(), findsOneWidget);
+        expect(player.disposals, 1);
+      },
+    );
+  }
+
   testWidgets("a newer stream selection wins while an earlier tooltip is closing", (
     tester,
   ) async {
@@ -316,9 +881,13 @@ void main() {
     final target = find.byKey(const ValueKey("player_surface_tap_target"));
     final screen = tester.element(find.byType(StreamPlayerScreen));
     final surface = tester.element(find.byType(_PlayerSurface));
-    expect(tester.getSize(background), const Size(400, 776));
-    expect(tester.getSize(page), const Size(400, 225));
-    expect(tester.getTopLeft(background).dy, tester.getTopLeft(page).dy);
+    expect(tester.getSize(background), const Size(400, 800));
+    expect(tester.getSize(page), const Size(400, 776));
+    expect(tester.getSize(find.byType(_PlayerSurface)), const Size(400, 225));
+    final chat = tester.element(find.byType(TwitchChatPanel));
+    final chatSize = tester.getSize(find.byType(TwitchChatPanel));
+    final chatClip = find.byKey(const ValueKey("player_chat_clip"));
+    expect(tester.getTopLeft(background).dy, 0);
     final shortDrag = await tester.startGesture(tester.getCenter(target));
     await shortDrag.moveBy(const Offset(0, 30));
     await tester.pump();
@@ -327,6 +896,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     expect(tester.getTopLeft(page).dy, greaterThan(0));
     expect(tester.getSize(page).width, lessThan(400));
+    expect(tester.element(find.byType(TwitchChatPanel)), same(chat));
+    expect(tester.getSize(find.byType(TwitchChatPanel)), chatSize);
+    expect(tester.getSize(chatClip).height, allOf(greaterThan(0), lessThan(chatSize.height)));
     expect(tester.getTopLeft(background).dy, greaterThan(0));
     expect(tester.getTopLeft(background).dx, tester.getTopLeft(page).dx);
     expect(tester.getSize(background).width, tester.getSize(page).width);
@@ -344,7 +916,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(host.mode, PlaybackMode.expanded);
     expect(tester.getTopLeft(page).dy, 24);
-    expect(tester.getSize(background), const Size(400, 776));
+    expect(tester.getSize(background), const Size(400, 800));
     expect(tester.element(find.byType(StreamPlayerScreen)), same(screen));
     expect(tester.element(find.byType(_PlayerSurface)), same(surface));
 
@@ -354,12 +926,16 @@ void main() {
     await completedDrag.moveBy(const Offset(0, 140));
     await tester.pump(const Duration(milliseconds: 16));
     final heldWidth = tester.getSize(page).width;
+    final heldChatHeight = tester.getSize(chatClip).height;
     expect(heldWidth, allOf(greaterThan(200), lessThan(400)));
-    expect(tester.getSize(page).height, closeTo(heldWidth * 9 / 16, .01));
+    expect(tester.getSize(find.byType(_PlayerSurface)).height, closeTo(heldWidth * 9 / 16, .01));
     expect(tester.getTopLeft(background).dy, greaterThan(0));
     await completedDrag.moveBy(const Offset(0, 100));
     await tester.pump();
     expect(tester.getSize(page).width, lessThan(heldWidth));
+    expect(tester.getSize(chatClip).height, lessThan(heldChatHeight));
+    expect(tester.getSize(find.byType(TwitchChatPanel)), chatSize);
+    expect(tester.element(find.byType(TwitchChatPanel)), same(chat));
     expect(tester.element(find.byType(StreamPlayerScreen)), same(screen));
     expect(tester.element(find.byType(_PlayerSurface)), same(surface));
     await completedDrag.moveBy(const Offset(0, 250));
@@ -374,7 +950,10 @@ void main() {
     expect(panelClip.borderRadius, BorderRadius.circular(10));
     expect(panelClip.borderRadius, videoClip.borderRadius);
     expect(tester.getBottomLeft(background).dy, lessThan(heldBackgroundBottom));
-    expect(tester.getBottomLeft(background).dy, greaterThan(tester.getBottomLeft(page).dy));
+    expect(
+      tester.getBottomLeft(background).dy,
+      greaterThan(tester.getBottomLeft(find.byType(_PlayerSurface)).dy),
+    );
     await completedDrag.up();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 140));
@@ -383,6 +962,9 @@ void main() {
     expect(tester.getTopLeft(background).dy, allOf(greaterThan(0), lessThan(800)));
     await tester.pumpAndSettle();
     expect(tester.getSize(page).width, 200);
+    expect(tester.getSize(chatClip).height, 0);
+    expect(tester.getSize(find.byType(TwitchChatPanel)), chatSize);
+    expect(tester.element(find.byType(TwitchChatPanel)), same(chat));
     final miniBottom = tester.getBottomLeft(page).dy;
     expect(tester.getRect(background), tester.getRect(page));
     expect(background.hitTestable(), findsNothing);
@@ -392,13 +974,19 @@ void main() {
     await tester.pump();
     expect(tester.getRect(background), tester.getRect(page));
     await tester.pump(const Duration(milliseconds: 140));
+    expect(tester.getSize(chatClip).height, allOf(greaterThan(0), lessThan(chatSize.height)));
+    expect(tester.getSize(find.byType(TwitchChatPanel)), chatSize);
+    expect(tester.element(find.byType(TwitchChatPanel)), same(chat));
     expect(tester.getTopLeft(background).dy, allOf(greaterThan(0), lessThan(800)));
-    expect(tester.getSize(background).height, greaterThan(tester.getSize(page).height));
+    expect(
+      tester.getSize(background).height,
+      greaterThan(tester.getSize(find.byType(_PlayerSurface)).height),
+    );
     expect(tester.getBottomLeft(background).dy, allOf(greaterThan(miniBottom), lessThan(800)));
     await tester.pumpAndSettle();
     expect(host.mode, PlaybackMode.expanded);
     expect(tester.getSize(page).width, 400);
-    expect(tester.getSize(background), const Size(400, 776));
+    expect(tester.getSize(background), const Size(400, 800));
     expect(tester.element(find.byType(StreamPlayerScreen)), same(screen));
     expect(tester.element(find.byType(_PlayerSurface)), same(surface));
     expect(player.loads, 1);
@@ -571,7 +1159,7 @@ void main() {
           );
           expect(
             tester.getSize(find.byKey(const ValueKey("player_page_creator"))),
-            const Size(400, 225),
+            const Size(400, 800),
           );
           expect(find.text("Browse Flow").hitTestable(), findsNothing);
           expect(reopened.loads, 1);
@@ -626,7 +1214,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(host.mode, PlaybackMode.mini);
     expect(find.byKey(const ValueKey("player_mini")), findsOneWidget);
-    expect(find.byType(IconButton), findsNothing);
+    expect(find.byType(IconButton).hitTestable(), findsNothing);
     expect(find.text("Browse Flow"), findsOneWidget);
     unawaited(
       navigator.currentState!.push<void>(
@@ -644,7 +1232,7 @@ void main() {
     player.eventsController.add(const TwitchPictureInPictureEvent(active: true));
     await tester.pumpAndSettle();
     expect(host.mode, PlaybackMode.pip);
-    expect(find.byType(IconButton), findsNothing);
+    expect(find.byType(IconButton).hitTestable(), findsNothing);
     player.eventsController.add(const TwitchPictureInPictureEvent(active: false));
     await tester.pumpAndSettle();
     expect(host.mode, PlaybackMode.expanded);
@@ -714,6 +1302,7 @@ void main() {
         await tester.pumpAndSettle();
       }
       final beforePip = tester.getRect(page);
+      final beforePipVideo = tester.getRect(find.byType(_PlayerSurface));
       player.eventsController.add(const TwitchPictureInPictureTransitionEvent(active: true));
       await tester.idle();
       await tester.pump();
@@ -722,7 +1311,7 @@ void main() {
       if (mode == PlaybackMode.expanded) {
         expect(tester.getSize(background), const Size(400, 800));
       }
-      expect(find.byType(IconButton), findsNothing);
+      expect(find.byType(IconButton).hitTestable(), findsNothing);
       expect(tester.element(find.byType(StreamPlayerScreen)), same(screen));
       expect(tester.element(find.byType(_PlayerSurface)), same(surface));
 
@@ -730,7 +1319,8 @@ void main() {
       await tester.idle();
       await tester.pump();
       expect(host.mode, PlaybackMode.pip);
-      expect(tester.getRect(page), beforePip);
+      expect(tester.getRect(page), beforePipVideo);
+      expect(tester.getRect(find.byType(_PlayerSurface)), beforePipVideo);
       expect(background, findsNothing);
       tester.view.physicalSize = const Size(240, 135);
       await tester.pump();
@@ -845,7 +1435,8 @@ void main() {
       tester.getSize(find.byKey(const ValueKey("player_page_background"))),
       const Size(400, 800),
     );
-    expect(tester.getSize(find.byKey(const ValueKey("player_page_creator"))), const Size(400, 225));
+    expect(tester.getSize(find.byKey(const ValueKey("player_page_creator"))), const Size(400, 800));
+    expect(tester.getSize(find.byType(_PlayerSurface)), const Size(400, 225));
     expect(find.text("Channel VOD").hitTestable(), findsNothing);
     expect(player.loadedIds, ["123456"]);
     final surface = tester.element(find.byType(_PlayerSurface));
@@ -902,10 +1493,14 @@ void _expectPaintsAbove(WidgetTester tester, Finder above, Finder below) {
 }
 
 class _PlaybackProbe implements TwitchPlayerController {
+  @override
+  Future<void> stop() async {}
+
   final eventsController = StreamController<TwitchPlayerEvent>.broadcast();
   final selectedQualities = <String>[];
   final loadedIds = <String>[];
   Future<Uri>? pendingUri;
+  TwitchChatController? chat;
   bool startsBuffering = false;
   int loads = 0;
   int surfaces = 0;
@@ -914,6 +1509,7 @@ class _PlaybackProbe implements TwitchPlayerController {
   int disposals = 0;
 
   StreamPlayerScreen screen(String login, {String? videoId}) => StreamPlayerScreen(
+    preferences: MemoryFlowPreferences(),
     apiCache: TwitchApiCache(
       clientLoader: () async => TwitchApiClient(clientId: "client", accessToken: "token"),
     ),
@@ -928,6 +1524,23 @@ class _PlaybackProbe implements TwitchPlayerController {
       thumbnailColors: const [Colors.black, Colors.grey],
     ),
     videoId: videoId,
+    chatControllerFactory: (channel) =>
+        chat ??
+        TwitchChatController(
+          channel: channel,
+          clientLoader: () async => TwitchApiClient(clientId: "client", accessToken: "token"),
+          autoConnect: false,
+        ),
+    replayControllerFactory: (id) => TwitchVodChatController(
+      videoId: id,
+      clientLoader: () async => throw StateError("Replay is offline in widget tests"),
+      autoLoad: false,
+    ),
+    chatAssetsFactory: (channel) => TwitchChatAssets(
+      channelLogin: channel,
+      clientLoader: () async => throw StateError("Chat assets are offline in widget tests"),
+      autoLoad: false,
+    ),
     playbackUriLoader: (id) async {
       loads++;
       loadedIds.add(id);
@@ -970,6 +1583,43 @@ class _PlaybackProbe implements TwitchPlayerController {
   Future<void> seekTo(Duration position) async {}
   @override
   Future<void> togglePlayback() async {}
+}
+
+class _ReadyChat extends TwitchChatController {
+  _ReadyChat({this.rules = const []})
+    : super(
+        channel: "creator",
+        clientLoader: () async => throw StateError("No network in widget test"),
+        autoConnect: false,
+      );
+
+  final List<String> rules;
+  final _items = <TwitchChatMessage>[];
+
+  void receive(String text) {
+    _items.add(
+      TwitchChatMessage(id: "${_items.length}", login: "viewer", displayName: "Viewer", text: text),
+    );
+    notifyListeners();
+  }
+
+  @override
+  List<TwitchChatMessage> get messages => _items;
+  @override
+  List<TwitchChatMessage> get recentHistory => _items;
+  @override
+  int get receivedMessageCount => _items.length;
+  @override
+  TwitchChatStatus get status => TwitchChatStatus.connected;
+  @override
+  bool get isSignedIn => true;
+  @override
+  bool get canSend => true;
+  @override
+  String get currentUserId => "123";
+  @override
+  TwitchChatAccess get chatAccess =>
+      TwitchChatAccess(channelId: "1", channelDisplayName: "Creator", rules: rules);
 }
 
 class _PlayerSurface extends StatefulWidget {

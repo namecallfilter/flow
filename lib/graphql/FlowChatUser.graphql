@@ -1,0 +1,44 @@
+query FlowChatUser(
+  $userID: ID
+  $lookupLogin: String
+  $login: String!
+  $channelID: ID
+  $channelLogin: String!
+  $withRelationship: Boolean!
+) {
+  targetUser: user(id: $userID, login: $lookupLogin) {
+    id
+    login
+    displayName
+    profileImageURL(width: 300)
+    createdAt
+    chatColor
+    displayBadges(channelID: $channelID) {
+      ...FlowChatUserBadge
+    }
+    relationship(targetUserID: $channelID) @include(if: $withRelationship) {
+      cumulativeTenure: subscriptionTenure(tenureMethod: CUMULATIVE) {
+        months
+      }
+      subscriptionBenefit {
+        id
+        tier
+        purchasedWithPrime
+      }
+    }
+  }
+  channelViewer(userLogin: $login, channelLogin: $channelLogin) {
+    id
+    earnedBadges {
+      ...FlowChatUserBadge
+    }
+  }
+}
+
+fragment FlowChatUserBadge on Badge {
+  id
+  setID
+  version
+  title
+  imageURL(size: DOUBLE)
+}

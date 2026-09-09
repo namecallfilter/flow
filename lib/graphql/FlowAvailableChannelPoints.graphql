@@ -1,0 +1,16 @@
+query FlowAvailableChannelPoints($login: String!) {
+  user(login: $login) {
+    id
+    login
+    channel {
+      id
+      self {
+        communityPoints {
+          availableClaim {
+            id
+          }
+        }
+      }
+    }
+  }
+}

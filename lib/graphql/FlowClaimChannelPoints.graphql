@@ -1,0 +1,11 @@
+mutation FlowClaimChannelPoints($channelID: ID!, $claimID: ID!) {
+  claimCommunityPoints(input: {channelID: $channelID, claimID: $claimID}) {
+    claim {
+      id
+      pointsEarnedTotal
+    }
+    error {
+      code
+    }
+  }
+}

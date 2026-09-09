@@ -10,6 +10,259 @@ import "package:http/testing.dart";
 void main() {
   tearDown(() => TwitchApiClient.restoreWebSessionDeviceId(null));
 
+  test(
+    "chat profile lookup prefers stable IDs and supports normalized login-only history",
+    () async {
+      final requests = <Map<String, Object?>>[];
+      final client = TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "unused-token",
+        httpClient: MockClient((request) async {
+          expect(request.headers["authorization"], isNull);
+          requests.add(jsonDecode(request.body) as Map<String, Object?>);
+          return _jsonResponse({
+            "data": {
+              "users": [
+                {
+                  "id": "123",
+                  "login": "renamed",
+                  "displayName": "Renamed",
+                  "profileImageURL": "https://example.com/avatar.png",
+                },
+              ],
+            },
+          });
+        }),
+      );
+      final byId = await client.fetchChatUser(userId: "123", login: "previousname");
+      expect(byId!.login, "renamed");
+      expect(byId.profileImageUrl, "https://example.com/avatar.png");
+      expect((requests.last["variables"]! as Map<String, Object?>)["ids"], ["123"]);
+      expect((requests.last["variables"]! as Map<String, Object?>)["logins"], isNull);
+      final byLogin = await client.fetchChatUser(login: " Renamed ");
+      expect(byLogin!.id, "123");
+      expect((requests.last["variables"]! as Map<String, Object?>)["logins"], ["renamed"]);
+      expect(await client.fetchChatUser(userId: "456", login: "renamed"), isNull);
+      final count = requests.length;
+      expect(await client.fetchChatUser(), isNull);
+      expect(requests.length, count);
+    },
+  );
+
+  test("chat profile loads channel-specific subscription details and every earned badge", () async {
+    final client = TwitchApiClient(
+      clientId: "client",
+      accessToken: "native-token",
+      gqlAccessToken: "web-token",
+      httpClient: MockClient((request) async {
+        expect(request.headers["authorization"], "OAuth web-token");
+        final payload = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(payload["variables"], {
+          "userID": "123",
+          "lookupLogin": null,
+          "login": "viewer",
+          "channelID": "456",
+          "channelLogin": "channel",
+          "withRelationship": true,
+        });
+        expect(payload["query"], contains("relationship(targetUserID:"));
+        expect(payload["query"], contains("channelViewer(userLogin:"));
+        return _jsonResponse({
+          "data": {
+            "targetUser": {
+              "id": "123",
+              "login": "viewer",
+              "displayName": "Viewer",
+              "chatColor": "#00FF7F",
+              "createdAt": "2018-10-12T18:27:29Z",
+              "profileImageURL": "https://example.com/avatar.png",
+              "displayBadges": [
+                {
+                  "id": "mod",
+                  "setID": "moderator",
+                  "version": "1",
+                  "title": "Moderator",
+                  "imageURL": "https://example.com/mod.png",
+                },
+              ],
+              "relationship": {
+                "cumulativeTenure": {"months": 14},
+                "subscriptionBenefit": {"id": "sub", "tier": "1000", "purchasedWithPrime": true},
+              },
+            },
+            "channelViewer": {
+              "id": "123:456",
+              "earnedBadges": [
+                {
+                  "id": "mod",
+                  "setID": "moderator",
+                  "version": "1",
+                  "title": "Moderator",
+                  "imageURL": "https://example.com/mod.png",
+                },
+                for (var index = 0; index < 24; index++)
+                  {
+                    "id": "$index",
+                    "setID": "earned$index",
+                    "version": "1",
+                    "title": "Badge $index",
+                    "imageURL": "https://example.com/$index.png",
+                  },
+              ],
+            },
+          },
+        });
+      }),
+    );
+    final profile = (await client.fetchChatUser(
+      userId: "123",
+      login: " Viewer ",
+      channelId: "456",
+      channelLogin: " Channel ",
+    ))!;
+    expect(profile.createdAt?.toUtc(), DateTime.utc(2018, 10, 12, 18, 27, 29));
+    expect(profile.chatColor, "#00FF7F");
+    expect(profile.badges, hasLength(25));
+    expect(profile.badges.first.id, "moderator/1");
+    expect(profile.badges.last.title, "Badge 23");
+    expect(profile.isSubscribed, isTrue);
+    expect(profile.subscriptionTier, "1000");
+    expect(profile.subscriptionMonths, 14);
+    expect(profile.subscriptionIsPrime, isTrue);
+  });
+
+  test(
+    "chat profile retains public metadata when subscription relationship is unavailable",
+    () async {
+      var grants = 0;
+      var requests = 0;
+      final client = TwitchApiClient(
+        clientId: "client",
+        accessToken: "native-token",
+        gqlAccessToken: "web-token",
+        integrityContextLoader: (_) async {
+          grants++;
+          return null;
+        },
+        httpClient: MockClient((request) async {
+          requests++;
+          return _jsonResponse({
+            "errors": [
+              {
+                "message": "failed integrity check",
+                "path": ["targetUser", "relationship"],
+              },
+            ],
+            "data": {
+              "targetUser": {
+                "id": "123",
+                "login": "viewer",
+                "displayName": "Viewer",
+                "chatColor": "#00FF7F",
+                "createdAt": "2018-10-12T18:27:29Z",
+                "relationship": null,
+              },
+              "channelViewer": {
+                "id": "123:456",
+                "earnedBadges": [
+                  {
+                    "id": "sub",
+                    "setID": "subscriber",
+                    "version": "12",
+                    "title": "Subscriber",
+                    "imageURL": "https://example.com/sub.png",
+                  },
+                ],
+              },
+            },
+          });
+        }),
+      );
+      final profile = (await client.fetchChatUser(
+        login: "viewer",
+        channelId: "456",
+        channelLogin: "channel",
+      ))!;
+      expect(grants, 1);
+      expect(requests, 1);
+      expect(profile.createdAt?.year, 2018);
+      expect(profile.chatColor, "#00FF7F");
+      expect(profile.badges.single.id, "subscriber/12");
+      expect(profile.isSubscribed, isNull);
+      expect(profile.subscriptionTier, isNull);
+      expect(profile.subscriptionMonths, isNull);
+    },
+  );
+
+  test(
+    "blocks the selected user through the signed-in web account and confirms the target",
+    () async {
+      final client = TwitchApiClient(
+        clientId: "oauth-client",
+        accessToken: "oauth-token",
+        gqlAccessToken: "web-token",
+        httpClient: MockClient((request) async {
+          expect(request.headers["authorization"], "OAuth web-token");
+          expect(request.headers["client-id"], "kimne78kx3ncx6brgo4mv6wki5h1ko");
+          final payload = jsonDecode(request.body) as Map<String, Object?>;
+          expect(payload["query"], contains("mutation FlowBlockUser"));
+          expect(payload["variables"], {"targetUserID": "123"});
+          return _jsonResponse({
+            "data": {
+              "blockUser": {
+                "targetUser": {"id": "123"},
+              },
+            },
+          });
+        }),
+      );
+      await client.blockUser("123");
+    },
+  );
+
+  test("blocking requires an account and rejects malformed IDs before sending", () async {
+    var calls = 0;
+    final client = TwitchApiClient(
+      clientId: "client-123",
+      accessToken: "",
+      httpClient: MockClient((_) async {
+        calls++;
+        return _jsonResponse({});
+      }),
+    );
+    await expectLater(client.blockUser("123"), throwsA(isA<TwitchApiException>()));
+    await expectLater(client.blockUser("not-an-id"), throwsA(isA<TwitchApiException>()));
+    expect(calls, 0);
+  });
+
+  test("blocking rejects GraphQL errors and unconfirmed targets", () async {
+    for (final response in [
+      {
+        "errors": [
+          {"message": "Not authorized"},
+        ],
+      },
+      {
+        "data": {"blockUser": null},
+      },
+      {
+        "data": {
+          "blockUser": {
+            "targetUser": {"id": "456"},
+          },
+        },
+      },
+    ]) {
+      final client = TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "oauth-token",
+        gqlAccessToken: "web-token",
+        httpClient: MockClient((_) async => _jsonResponse(response)),
+      );
+      await expectLater(client.blockUser("123"), throwsA(isA<TwitchApiException>()));
+    }
+  });
+
   for (final isPartner in [true, false, null]) {
     test("retains explicit partner status across channel queries ($isPartner)", () async {
       final broadcaster = {"id": "creator", "login": "creator", "isPartner": isPartner};
@@ -195,8 +448,7 @@ void main() {
       );
     });
     final loads = [
-      for (final client in clients)
-        client.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou),
+      for (final client in clients) client.fetchTopCategoriesPage(),
     ];
     await initialRequests.future;
     await observationStarted.future;
@@ -250,11 +502,11 @@ void main() {
     );
     final existing = client();
     final recovering = client();
-    await existing.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
-    await recovering.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
-    await existing.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
+    await existing.fetchTopCategoriesPage();
+    await recovering.fetchTopCategoriesPage();
+    await existing.fetchTopCategoriesPage();
     TwitchApiClient.restoreWebSessionDeviceId(null);
-    await recovering.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
+    await recovering.fetchTopCategoriesPage();
     expect(sentTokens, [null, null, "new-grant", "new-grant", null]);
   });
 
@@ -300,7 +552,7 @@ void main() {
       final failures = [
         for (var i = 0; i < 2; i++)
           expectLater(
-            client.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou),
+            client.fetchTopCategoriesPage(),
             throwsA(isA<TwitchApiException>()),
           ),
       ];
@@ -312,7 +564,7 @@ void main() {
       }
       await Future.wait(failures);
       expect(observations, 1);
-      await client.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
+      await client.fetchTopCategoriesPage();
       expect(observations, 2);
     });
   }
@@ -440,7 +692,6 @@ void main() {
         }),
       );
       final load = client.fetchLiveStreamsPage(
-        sort: StreamSort.recommendedForYou,
         cursor: "personal-next",
       );
       final failure = expectLater(load, throwsA(isA<TwitchApiException>()));
@@ -522,7 +773,6 @@ void main() {
         }),
       );
       final load = client.fetchLiveStreamsPage(
-        sort: StreamSort.recommendedForYou,
         gameIds: directory == "category" ? ["category-id"] : const [],
         cursor: "personal-page-2",
       );
@@ -536,7 +786,7 @@ void main() {
     });
   }
 
-  test("personalized recommendations use mobile context and retain auth across pages", () async {
+  test("default recommendations use mobile context and retain auth across pages", () async {
     final requests = <http.Request>[];
     final client = TwitchApiClient(
       clientId: "client-123",
@@ -558,16 +808,10 @@ void main() {
         });
       }),
     );
-    await client.fetchLiveStreamsPage(sort: StreamSort.recommendedForYou);
-    await client.fetchLiveStreamsPage(
-      sort: StreamSort.recommendedForYou,
-      cursor: "personal-page-2",
-    );
-    await client.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
-    await client.fetchTopCategoriesPage(
-      sort: CategorySort.recommendedForYou,
-      cursor: "game-page-2",
-    );
+    await client.fetchLiveStreams();
+    await client.fetchLiveStreamsPage(cursor: "personal-page-2");
+    await client.fetchTopCategoriesPage();
+    await client.fetchTopCategoriesPage(cursor: "game-page-2");
     final options = requests.map((request) {
       expect(request.headers["Authorization"], "OAuth web-token-123");
       expect(request.headers["Client-Id"], "kimne78kx3ncx6brgo4mv6wki5h1ko");
@@ -653,15 +897,21 @@ void main() {
         }),
       ),
     );
-    final streams = await client.fetchLiveStreamsPage(sort: StreamSort.recommendedForYou);
-    final games = await client.fetchTopCategoriesPage(sort: CategorySort.recommendedForYou);
+    final streams = await client.fetchLiveStreamsPage();
+    final games = await client.fetchTopCategoriesPage();
     expect(streams.data, hasLength(8));
     expect(streams.cursor, "stream-3");
     expect(games.data, hasLength(12));
     expect(games.data.first.viewerCount, 4200);
     expect(games.cursor, "game-7");
-    expect((await client.fetchLiveStreamsPage()).cursor, "stream-7");
-    expect((await client.fetchTopCategoriesPage()).cursor, "game-11");
+    expect(
+      (await client.fetchLiveStreamsPage(sort: StreamSort.viewersHighToLow)).cursor,
+      "stream-7",
+    );
+    expect(
+      (await client.fetchTopCategoriesPage(sort: CategorySort.viewersHighToLow)).cursor,
+      "game-11",
+    );
   });
 
   test("following pagination stops repeated cursors and merges duplicate channels", () async {

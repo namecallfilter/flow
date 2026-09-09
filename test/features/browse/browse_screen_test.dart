@@ -4,6 +4,7 @@ import "dart:convert";
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
+import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/browse/browse_screen.dart";
 import "package:flow/features/browse/browse_search_store.dart";
@@ -149,14 +150,17 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    // Live channels have already been fetched while the Categories section is visible.
-    expect(
-      requests.where((request) => _isGraphQlOperation(request, "FlowTopStreams")),
-      hasLength(1),
+    // Recommended live channels have already been fetched and their next page prefetched.
+    final initialRequests = requests.where(
+      (request) => _isGraphQlOperation(request, "FlowTopStreams"),
     );
+    expect(initialRequests, hasLength(2));
+    for (final request in initialRequests) {
+      expect(_graphQlVariables(request)["options"], containsPair("sort", "RELEVANCE"));
+    }
     await tester.tap(find.byKey(const ValueKey("browse_segment_live_channels")));
     await tester.pumpAndSettle();
-    await tester.tap(find.text("Viewers: High to Low"));
+    await tester.tap(find.text("Recommended For You"));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(PopupMenuItem<StreamSort>, "Recently Started"));
     await tester.pumpAndSettle();
@@ -580,11 +584,13 @@ void main() {
   testWidgets("shows partner badges and preserves search result navigation", (
     tester,
   ) async {
+    final settings = AppSettingsStore(preferences: MemoryFlowPreferences());
     final rootNavigator = GlobalKey<NavigatorState>();
     final tabNavigator = GlobalKey<NavigatorState>();
     await tester.pumpWidget(
       MaterialApp(
         navigatorKey: rootNavigator,
+        builder: (_, child) => AppSettingsScope(settingsStore: settings, child: child!),
         theme: buildFlowTheme(Brightness.dark),
         home: Navigator(
           key: tabNavigator,

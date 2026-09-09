@@ -42,6 +42,9 @@ abstract class AppSettingsStoreBase with Store {
   bool miniPlayerEnabled = true;
 
   @observable
+  ChatPreferences chatPreferences = const ChatPreferences();
+
+  @observable
   bool adProxyEnabled = false;
 
   @observable
@@ -85,6 +88,7 @@ abstract class AppSettingsStoreBase with Store {
       subscriptionLoad.then((_) => true),
       preferences.readPictureInPictureEnabled(),
       preferences.readMiniPlayerEnabled(),
+      preferences.readChatPreferences(),
     ]);
     runInAction(() {
       themeMode = values[0] as ThemeMode;
@@ -93,6 +97,7 @@ abstract class AppSettingsStoreBase with Store {
       adProxyWhitelistedChannels = ObservableList.of(values[3] as List<String>);
       pictureInPictureEnabled = values[5] as bool;
       miniPlayerEnabled = values[6] as bool;
+      chatPreferences = values[7] as ChatPreferences;
       isLoaded = true;
     });
   }
@@ -155,6 +160,12 @@ abstract class AppSettingsStoreBase with Store {
   Future<void> setMiniPlayerEnabled({required bool enabled}) async {
     await preferences.saveMiniPlayerEnabled(enabled: enabled);
     miniPlayerEnabled = enabled;
+  }
+
+  @action
+  Future<void> setChatPreferences(ChatPreferences settings) async {
+    await preferences.saveChatPreferences(settings);
+    chatPreferences = settings;
   }
 
   @action

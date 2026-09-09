@@ -13,6 +13,9 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Rect
 import android.graphics.drawable.Icon
+import android.media.AudioAttributes
+import android.media.Ringtone
+import android.media.RingtoneManager
 import android.media.session.MediaSession
 import android.net.Uri
 import android.os.Build
@@ -36,6 +39,7 @@ class MainActivity : FlutterActivity() {
         ExperimentalBandwidthMeter.Builder(applicationContext).build()
     }
     private var activePlayer: TwitchPlayerView? = null
+    private var chatMentionSound: Ringtone? = null
     private var wasInPictureInPicture = false
     private var playbackVisible = false
     private var playbackResumed = false
@@ -118,6 +122,11 @@ class MainActivity : FlutterActivity() {
                 }
             }
 
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "flow/chat_notifications")
+            .setMethodCallHandler { call, result ->
+                if (call.method == "mention") playChatMention(result) else result.notImplemented()
+            }
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "flow/external_url")
             .setMethodCallHandler { call, result ->
                 if (call.method == "openExternalUrl") {
@@ -126,6 +135,24 @@ class MainActivity : FlutterActivity() {
                     result.notImplemented()
                 }
             }
+    }
+
+    private fun playChatMention(result: MethodChannel.Result) {
+        try {
+            chatMentionSound?.stop()
+            chatMentionSound = RingtoneManager.getRingtone(
+                this, RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
+            )?.apply {
+                audioAttributes = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+                play()
+            }
+            result.success(null)
+        } catch (error: Exception) {
+            result.error("mention_sound_failed", error.message, null)
+        }
     }
 
     internal fun registerPlayer(player: TwitchPlayerView) {
@@ -320,6 +347,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        chatMentionSound?.stop()
         if (audioMediaSession.isInitialized()) audioMediaSession.value.release()
         stopService(Intent(this, AudioPlaybackService::class.java))
         if (supportsPictureInPicture()) unregisterReceiver(pictureInPictureReceiver)
@@ -334,6 +362,9 @@ class MainActivity : FlutterActivity() {
 
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
             .addCategory(Intent.CATEGORY_BROWSABLE)
+            .apply {
+                selector = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_BROWSER)
+            }
 
         try {
             startActivity(intent)

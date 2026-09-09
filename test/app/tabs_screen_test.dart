@@ -4,6 +4,9 @@ import "dart:convert";
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
+import "package:flow/api/twitch_chat.dart";
+import "package:flow/api/twitch_chat_assets.dart";
+import "package:flow/api/twitch_vod_chat.dart";
 import "package:flow/app/routes.dart";
 import "package:flow/app/tabs_screen.dart";
 import "package:flow/app/tabs_store.dart";
@@ -106,7 +109,8 @@ void main() {
           authController: _authController(
             secureStore: _MemoryTwitchStore(),
             onRequest: (request) {
-              if (_isGraphQlOperation(request, "FlowTopStreams")) {
+              if (_isGraphQlOperation(request, "FlowTopStreams") &&
+                  _graphQlVariables(request)["after"] == null) {
                 topStreamsRequests++;
               }
             },
@@ -215,6 +219,8 @@ void main() {
     final browseCache = _DelayedTopLevelBrowseCache();
     final followingStore = FollowingStore(authController: authController);
     final browseStore = BrowseStore(apiCache: browseCache)
+      ..categorySort = CategorySort.viewersHighToLow
+      ..streamSort = StreamSort.viewersHighToLow
       ..categoriesLoaded = true
       ..liveChannelsLoaded = true;
 
@@ -724,6 +730,23 @@ void main() {
           await openStreamPlayer(
             tester.element(find.byKey(const ValueKey("following_title"))),
             builder: (_) => StreamPlayerScreen(
+              preferences: MemoryFlowPreferences(),
+              chatControllerFactory: (channel) => TwitchChatController(
+                channel: channel,
+                clientLoader: () async => throw StateError("Chat is offline in widget tests"),
+                autoConnect: false,
+              ),
+              replayControllerFactory: (id) => TwitchVodChatController(
+                videoId: id,
+                clientLoader: () async => throw StateError("Replay is offline in widget tests"),
+                autoLoad: false,
+              ),
+              chatAssetsFactory: (channel) => TwitchChatAssets(
+                channelLogin: channel,
+                clientLoader: () async =>
+                    throw StateError("Chat assets are offline in widget tests"),
+                autoLoad: false,
+              ),
               apiCache: TwitchApiCache(
                 clientLoader: () async => TwitchApiClient(
                   clientId: "client-123",
@@ -882,7 +905,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets("refreshes Following and Browse roots while hidden and on resume", (
+  testWidgets("refreshes Following and viewer-sorted Browse roots while hidden and on resume", (
     tester,
   ) async {
     var topCategoriesRequests = 0;
@@ -890,6 +913,9 @@ void main() {
     var followedLiveRequests = 0;
     var categoryStreamsRequests = 0;
     var channelDetailsRequests = 0;
+    final preferences = MemoryFlowPreferences();
+    await preferences.saveCategorySort(CategorySort.viewersHighToLow);
+    await preferences.saveStreamSort("browse", StreamSort.viewersHighToLow);
     final store = _MemoryTwitchStore()
       ..accessToken = "token-123"
       ..webSessionToken = "gql-token-123";
@@ -898,6 +924,7 @@ void main() {
       MaterialApp(
         theme: buildFlowTheme(Brightness.light),
         home: FlowTabsScreen(
+          preferences: preferences,
           authController: _authController(
             secureStore: store,
             onRequest: (request) {
@@ -969,13 +996,15 @@ void main() {
     expect(channelDetailsRequests, 0);
   });
 
-  testWidgets("coalesces timer and resume refreshes during initial root loads", (
+  testWidgets("coalesces timer and resume refreshes during initial viewer-sorted root loads", (
     tester,
   ) async {
     final authController = _DelayedTopLevelAuthController();
     final browseCache = _DelayedTopLevelBrowseCache();
     final followingStore = FollowingStore(authController: authController);
-    final browseStore = BrowseStore(apiCache: browseCache);
+    final browseStore = BrowseStore(apiCache: browseCache)
+      ..categorySort = CategorySort.viewersHighToLow
+      ..streamSort = StreamSort.viewersHighToLow;
 
     await tester.pumpWidget(
       MaterialApp(

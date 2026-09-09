@@ -57,7 +57,7 @@ abstract class FollowingStoreBase with Store {
   bool? offlineExpandedOverride;
 
   @observable
-  StreamSort streamSort = StreamSort.viewersHighToLow;
+  StreamSort streamSort = StreamSort.recommendedForYou;
 
   Future<void> restoreStreamSort() => _sortRestore ??= _restoreStreamSort();
 

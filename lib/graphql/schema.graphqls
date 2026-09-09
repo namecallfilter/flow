@@ -9,7 +9,9 @@ schema {
 scalar AdRequestContext
 scalar AddBrowserPushSubscriptionInput
 scalar AddRecommendationFeedbackInput
-scalar BlockUserInput
+input BlockUserInput {
+  targetUserID: ID!
+}
 scalar CompletePasskeyRegistrationInput
 scalar ConfirmLiveShoppingOrdersInput
 scalar ConnectAdIdentityInput
@@ -96,7 +98,9 @@ scalar SponsorshipsParams
 scalar StoryPreviewsWithOrderInput
 scalar Time
 scalar UndoRecommendationFeedbackInput
-scalar UnfollowUserInput
+input UnfollowUserInput {
+  targetID: ID!
+}
 scalar UnlinkAmazonConnectionInput
 scalar UnlockChosenModifiedSubscriberEmoteInput
 scalar UnlockChosenSubscriberEmoteInput
@@ -160,6 +164,10 @@ enum Self_Progress_Type_Enum {
 }
 
 enum Self_SubscriptionTenure_TenureMethod_Enum {
+  CUMULATIVE
+}
+
+enum SubscriptionTenureMethod {
   CUMULATIVE
 }
 
@@ -526,6 +534,7 @@ interface VideoQuality {
 }
 
 type Mutation {
+  claimCommunityPoints(input: ClaimCommunityPointsInput!): ClaimCommunityPointsPayload
   addBrowserPushSubscription(input: AddBrowserPushSubscriptionInput!): AddBrowserPushSubscription
   addRecommendationFeedback(input: AddRecommendationFeedbackInput!): AddRecommendationFeedback
   beginUseBitsInExtension(
@@ -552,7 +561,7 @@ type Mutation {
   endUseBitsInExtension(input: Mutation_EndUseBitsInExtension_Input_Input): EndUseBitsInExtension
   exchangeRelayCode(input: Mutation_ExchangeRelayCode_Input_Input): ExchangeRelayCode
   extensionLinkUser(input: Mutation_ExtensionLinkUser_Input_Input): ExtensionLinkUser
-  followUser(input: JSON): FollowUser
+  followUser(input: FollowUserInput!): FollowUser
   initPasskeyRegistration: InitPasskeyRegistration
   linkPrimeAccount(input: LinkPrimeAccountInput!): LinkPrimeAccount
   markAllCreatorNotificationsAsRead(
@@ -638,10 +647,12 @@ type Query {
     channelID: ID
     contentType: ReactionsContentType!
   ): AvailableReactionsByContentType
+  badges: [Badge]
   batchGetWatchStreaks: [BatchGetWatchStreak]
   bitsOffers: [BitsOffer]
   canCreateClip(broadcasterID: ID, vodID: ID): CanCreateClip
   channel(id: ID, name: String): Channel
+  channelViewer(userLogin: String!, channelLogin: String!): ChannelViewer
   cheerConfig: CheerConfig
   clip(slug: ID!): Clip
   collection(id: ID!): Collection
@@ -656,6 +667,7 @@ type Query {
   currentUser: User
   discoveryPreference: DiscoveryPreference
   emote(id: ID!): Emote
+  emoteSet(id: ID!): LocalEmoteSet
   extension(id: ID!, version: String): Extension
   featuredStreams(acceptedMature: Boolean, first: Int, language: String): [FeaturedStream]
   feedItems(input: Query_FeedItems_Input_Input): [FeedItem]
@@ -673,6 +685,7 @@ type Query {
   ): HasSpendableBalanceVideoBannerPromoEligibility
   identityVerificationRequirement: IdentityVerificationRequirement
   isUsernameAvailable(username: String!): Boolean
+  message(id: ID!): Message
   liveShoppingProductDetails(
     input: Query_LiveShoppingProductDetails_Input_Input
   ): [LiveShoppingProductDetail]
@@ -1272,8 +1285,10 @@ type AvailableReactionsByContentType {
 
 type Badge {
   id: ID
+  title: String
   imageURL(size: Badge_ImageURL_Size_Enum): String
   setID: ID
+  version: String
 }
 
 type BanStatu {
@@ -1459,6 +1474,7 @@ type Channel {
   activePremiumEvent: ActivePremiumEvent
   activeStreamEventCelebration: ActiveStreamEventCelebration
   activityFeed: ActivityFeed
+  chatters: ChattersInfo
   clipsSettings: ClipsSetting
   communityPointsSettings: CommunityPointsSetting
   creatorPromotion: CreatorPromotion
@@ -1468,6 +1484,8 @@ type Channel {
   id: ID
   localEmoteSets: [LocalEmoteSet]
   name: String
+  pinnedChatMessages(first: Int, messageType: PinnedChatMessageType): PinnedChatMessageConnection
+  recentChatMessages: [Message!]
   schedule: Schedule
   self: Self
   selfInstalledExtensions: [ExtensionInstallationSelfEdge]
@@ -1475,6 +1493,48 @@ type Channel {
   sponsorships(sponsorshipsParams: SponsorshipsParams): [Sponsorship]
   stream: Stream
   trailer: Trailer
+}
+
+type ChannelViewer {
+  id: ID
+  earnedBadges: [Badge]
+}
+
+type ChattersInfo {
+  count: Int
+  broadcasters: [Chatter]
+  chatbots: [Chatter]
+  moderators: [Chatter]
+  vips: [Chatter]
+  staff: [Chatter]
+  viewers: [Chatter]
+}
+
+type Chatter {
+  login: String
+}
+
+enum PinnedChatMessageType {
+  MOD
+  CHEER
+}
+
+type PinnedChatMessageConnection {
+  edges: [PinnedChatMessageEdge]
+}
+
+type PinnedChatMessageEdge {
+  node: PinnedChatMessage
+}
+
+type PinnedChatMessage {
+  id: ID
+  type: PinnedChatMessageType
+  startsAt: Time
+  endsAt: Time
+  updatedAt: Time
+  pinnedMessage: Message
+  pinnedBy: User
 }
 
 type ChannelGoal {
@@ -2284,6 +2344,33 @@ type FollowEdge_Node {
   roles: [UserRoles]
 }
 
+type ChatSettings {
+  rules: [String]
+}
+
+input ClaimCommunityPointsInput {
+  channelID: ID!
+  claimID: ID!
+}
+
+type ClaimCommunityPointsPayload {
+  claim: CommunityPointsClaim
+  error: ClaimCommunityPointsError
+}
+
+type ClaimCommunityPointsError {
+  code: String
+}
+
+type CommunityPointsProperties {
+  availableClaim: CommunityPointsClaim
+}
+
+type CommunityPointsClaim {
+  id: ID
+  pointsEarnedTotal: Int
+}
+
 type FollowUser {
   error: Error
   follow: FollowEdge
@@ -2743,6 +2830,35 @@ type Mention {
 type Message {
   edges: [WhisperMessageEdge]
   id: ID
+  sentAt: Time
+  deletedAt: Time
+  sender: User
+  senderChatColor: String
+  senderBadges(channelID: ID): [Badge]
+  content: MessageContent
+  replies: MessageReplyConnection
+  parentMessage: Message
+  threadParentMessage: Message
+}
+
+input FollowUserInput {
+  targetID: ID!
+  disableNotifications: Boolean!
+}
+
+type MessageReplyConnection {
+  nodes: [Message]
+  totalCount: Int
+}
+
+type MessageContent {
+  text: String
+  fragments: [MessageFragment]
+}
+
+type MessageFragment {
+  text: String
+  content: Token
 }
 
 type Mobile {
@@ -3496,6 +3612,9 @@ type SelectionSignal {
 }
 
 type Self {
+  chatRestrictedReasons: [String]
+  lastRecentChatMessageAt: Time
+  communityPoints: CommunityPointsProperties
   availableEmoteSetsPaginated(after: Cursor, pageLimit: Int!): AvailableEmoteSetsPaginated
   banStatus: [BanStatu]
   benefit: Benefit
@@ -3513,6 +3632,7 @@ type Self {
   isEditor: Boolean
   isEligibleForRewards: Boolean
   isModerator: Boolean
+  isVIP: Boolean
   isUnlocked: Boolean
   numberOfBitsUntilUnlock: String
   progress(type: Self_Progress_Type_Enum): [Progres]
@@ -3965,7 +4085,7 @@ type SubscriptionBenefit {
   pendingSubscription: PendingSubscription
   platform: String
   product: Product
-  purchasedWithPrime: String
+  purchasedWithPrime: Boolean
   tier: String
 }
 
@@ -4001,7 +4121,7 @@ type SubscriptionSummary {
 
 type SubscriptionTenure {
   daysRemaining: String
-  months: String
+  months: Int
 }
 
 type SubsidizedSubscription {
@@ -4292,9 +4412,13 @@ type User implements Curator & OnsiteNotificationContent & ShelfContentEdge_Node
   bitsBalance: String
   bitsOffers: [BitsOffer]
   blockedUsers: [BlockedUser]
+  broadcastBadges: [Badge]
   broadcastSettings: BroadcastSettings
+  chatSettings: ChatSettings
   channel: Channel
   chatUISettings: ChatUISetting
+  chatColor: String
+  displayBadges(channelID: ID): [Badge]
   cheer: Cheer
   clips(criteria: UserClipsInput, first: Int): [ClipConnection]
   content: String
@@ -4344,6 +4468,7 @@ type User implements Curator & OnsiteNotificationContent & ShelfContentEdge_Node
   productConsent: ProductConsent
   profileImageURL(width: Int): String
   profileURL: String
+  relationship(targetUserID: ID): UserRelationship
   programAgreement(invitationType: User_ProgramAgreement_InvitationType_Enum): ProgramAgreement
   purchaseOrder(id: ID!): PurchaseOrder
   roles: [UserRoles]
@@ -4442,6 +4567,7 @@ type VerifyContactMethod {
 type Video implements OnsiteNotificationContent & ShelfContentEdge_Node & VideoEdge_Node {
   _empty: String
   broadcastType: String
+  comments(after: Cursor, contentOffsetSeconds: Int): VideoCommentConnection
   contentClassificationLabelPolicyProperties: [ContentClassificationLabelPolicyProperties]
   contentClassificationLabels: [ContentClassificationLabel]
   contentPolicyProperties: [ContentPolicyProperty]
@@ -4468,7 +4594,36 @@ type Video implements OnsiteNotificationContent & ShelfContentEdge_Node & VideoE
 
 type VideoComment implements OnsiteNotificationContent {
   _empty: String
+  commenter: User
+  contentOffsetSeconds: Int
   id: ID
+  message: VideoCommentMessage
+}
+
+type UserRelationship {
+  subscriptionTenure(tenureMethod: SubscriptionTenureMethod): SubscriptionTenure
+  subscriptionBenefit: SubscriptionBenefit
+}
+
+type VideoCommentConnection {
+  edges: [VideoCommentEdge]
+  pageInfo: PageInfo
+}
+
+type VideoCommentEdge {
+  cursor: Cursor
+  node: VideoComment
+}
+
+type VideoCommentMessage {
+  fragments: [VideoCommentMessageFragment]
+  userBadges: [Badge]
+  userColor: String
+}
+
+type VideoCommentMessageFragment {
+  emote: Emote
+  text: String
 }
 
 type VideoConnection {

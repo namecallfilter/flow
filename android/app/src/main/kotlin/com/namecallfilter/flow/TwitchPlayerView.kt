@@ -61,6 +61,7 @@ internal class TwitchPlayerView(
     private val mediaTitle: String,
     private val mediaArtist: String,
     initialQualityId: String,
+    private val initialPositionMs: Long,
     private val isLive: Boolean,
     private var pictureInPictureEnabled: Boolean,
     private val proxyUrls: List<String>,
@@ -102,6 +103,7 @@ internal class TwitchPlayerView(
     private var lastCorrectionWaitReason: String? = null
     private var initialized = false
     private var disposed = false
+    private var stopped = false
     private var pausedAtRealtimeMs: Long? = null
     private var correctionRequestedAtRealtimeMs: Long? = null
     private var recoveryRequested = false
@@ -110,7 +112,7 @@ internal class TwitchPlayerView(
     val isAudioOnly: Boolean
         get() = selectedQualityId == AUDIO_ONLY_QUALITY_ID
     val canPublishMediaSession: Boolean
-        get() = !disposed && player.playbackState != Player.STATE_ENDED && player.playerError == null
+        get() = !disposed && !stopped && player.playbackState != Player.STATE_ENDED && player.playerError == null
     val mediaMetadata: MediaMetadata
         get() = MediaMetadata.Builder()
             .putString(MediaMetadata.METADATA_KEY_TITLE, mediaTitle)
@@ -305,7 +307,7 @@ internal class TwitchPlayerView(
         methodChannel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "initialize" -> {
-                    if (!initialized) {
+                    if (!initialized && !stopped) {
                         initialized = true
                         initialUrl?.takeIf { it.isNotBlank() }?.let(::load)
                     }
@@ -318,7 +320,17 @@ internal class TwitchPlayerView(
                 }
 
                 "pause" -> {
+                    resumeOnForeground = false
                     player.pause()
+                    result.success(null)
+                }
+
+                "stop" -> {
+                    stopped = true
+                    resumeOnForeground = false
+                    sessionGeneration++
+                    player.pause()
+                    player.stop()
                     result.success(null)
                 }
 
@@ -439,6 +451,7 @@ internal class TwitchPlayerView(
     }
 
     private fun load(url: String) {
+        if (stopped || disposed) return
         val playbackUrl = withDeviceSupportedTwitchCodecs(url)
         val generation = ++sessionGeneration
         liveSpeedControl.reset()
@@ -471,7 +484,7 @@ internal class TwitchPlayerView(
                         .build(),
                 ),
                 // Media3 treats zero as the placeholder default and moves EVENT VODs to the live edge.
-                1L,
+                initialPositionMs.coerceAtLeast(1L),
             )
             player.prepare()
             return
@@ -652,6 +665,7 @@ internal class TwitchPlayerView(
     }
 
     private fun resumeAtLiveEdge() {
+        if (stopped || disposed) return
         if (!isLive) {
             if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
             player.play()
@@ -665,6 +679,7 @@ internal class TwitchPlayerView(
     }
 
     private fun requestLatencyCorrection(reason: LiveLatencyCorrectionReason) {
+        if (stopped || disposed) return
         // A new deliberate action may retry a URI refresh that previously failed.
         recoveryRequested = false
         val nowRealtimeMs = SystemClock.elapsedRealtime()

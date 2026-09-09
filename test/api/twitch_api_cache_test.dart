@@ -58,7 +58,7 @@ void main() {
     expect(requests, 4);
   });
 
-  test("live directory cache and cursors are isolated by server ordering", () async {
+  test("directory cache defaults to recommendations and isolates server ordering", () async {
     final requests = <Map<String, Object?>>[];
     final client = TwitchApiClient(
       clientId: "client-123",
@@ -66,11 +66,20 @@ void main() {
       gqlAccessToken: "web-token-123",
       httpClient: MockClient((request) async {
         final body = jsonDecode(request.body) as Map<String, Object?>;
-        requests.add(body["variables"]! as Map<String, Object?>);
-        expect(request.headers["Authorization"], isNull);
+        final variables = body["variables"]! as Map<String, Object?>;
+        requests.add(variables);
+        final sort = (variables["options"]! as Map<String, Object?>)["sort"];
+        expect(
+          request.headers["Authorization"],
+          sort == "RELEVANCE" ? "OAuth web-token-123" : null,
+        );
         return _jsonResponse({
           "data": {
             "streams": {
+              "edges": <Object?>[],
+              "pageInfo": {"hasNextPage": false},
+            },
+            "games": {
               "edges": <Object?>[],
               "pageInfo": {"hasNextPage": false},
             },
@@ -79,18 +88,27 @@ void main() {
       }),
     );
     final cache = TwitchApiCache(clientLoader: () async => client);
-    for (final sort in StreamSort.values.where((sort) => sort != StreamSort.recommendedForYou)) {
+    await cache.fetchLiveStreamsPage();
+    for (final sort in StreamSort.values) {
       await cache.fetchLiveStreamsPage(sort: sort);
       await cache.fetchLiveStreamsPage(sort: sort);
     }
     await cache.fetchLiveStreamsPage(sort: StreamSort.viewersLowToHigh, cursor: "ascending-page-2");
+    expect(requests.last["after"], "ascending-page-2");
+    await cache.fetchTopCategoriesPage();
+    for (final sort in CategorySort.values) {
+      await cache.fetchTopCategoriesPage(sort: sort);
+      await cache.fetchTopCategoriesPage(sort: sort);
+    }
     expect(requests.map((variables) => (variables["options"]! as Map<String, Object?>)["sort"]), [
+      "RELEVANCE",
       "VIEWER_COUNT",
       "VIEWER_COUNT_ASC",
       "RECENT",
       "VIEWER_COUNT_ASC",
+      "RELEVANCE",
+      "VIEWER_COUNT",
     ]);
-    expect(requests.last["after"], "ascending-page-2");
   });
   test("a slow request cannot replace the result of a newer refresh", () async {
     final responses = <Completer<http.Response>>[];
