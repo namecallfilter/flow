@@ -402,6 +402,60 @@ const fragmentDefinitionFlowChatReplyMessage = FragmentDefinitionNode(
                     directives: [],
                     selectionSet: null,
                   ),
+                  FieldNode(
+                    name: NameNode(value: 'fragments'),
+                    alias: null,
+                    arguments: [],
+                    directives: [],
+                    selectionSet: SelectionSetNode(
+                      selections: [
+                        FieldNode(
+                          name: NameNode(value: 'text'),
+                          alias: null,
+                          arguments: [],
+                          directives: [],
+                          selectionSet: null,
+                        ),
+                        FieldNode(
+                          name: NameNode(value: 'content'),
+                          alias: null,
+                          arguments: [],
+                          directives: [],
+                          selectionSet: SelectionSetNode(
+                            selections: [
+                              FieldNode(
+                                name: NameNode(value: '__typename'),
+                                alias: null,
+                                arguments: [],
+                                directives: [],
+                                selectionSet: null,
+                              ),
+                              InlineFragmentNode(
+                                typeCondition: TypeConditionNode(
+                                  on: NamedTypeNode(
+                                    name: NameNode(value: 'Emote'),
+                                    isNonNull: false,
+                                  ),
+                                ),
+                                directives: [],
+                                selectionSet: SelectionSetNode(
+                                  selections: [
+                                    FieldNode(
+                                      name: NameNode(value: 'id'),
+                                      alias: NameNode(value: 'emoteID'),
+                                      arguments: [],
+                                      directives: [],
+                                      selectionSet: null,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -1573,30 +1627,54 @@ class Fragment$FlowChatReplyMessage$parentMessage {
 }
 
 class Fragment$FlowChatReplyMessage$parentMessage$content {
-  Fragment$FlowChatReplyMessage$parentMessage$content({this.text});
+  Fragment$FlowChatReplyMessage$parentMessage$content({
+    this.text,
+    this.fragments,
+  });
 
   factory Fragment$FlowChatReplyMessage$parentMessage$content.fromJson(
     Map<String, dynamic> json,
   ) {
     final l$text = json.containsKey('text') ? json['text'] : null;
+    final l$fragments = json.containsKey('fragments')
+        ? json['fragments']
+        : null;
     return Fragment$FlowChatReplyMessage$parentMessage$content(
       text: (l$text as String?),
+      fragments: (l$fragments as List<dynamic>?)
+          ?.map(
+            (e) => e == null
+                ? null
+                : Fragment$FlowChatReplyMessage$parentMessage$content$fragments.fromJson(
+                    (e as Map<String, dynamic>),
+                  ),
+          )
+          .toList(),
     );
   }
 
   final String? text;
 
+  final List<Fragment$FlowChatReplyMessage$parentMessage$content$fragments?>?
+  fragments;
+
   Map<String, dynamic> toJson() {
     final _resultData = <String, dynamic>{};
     final l$text = text;
     _resultData['text'] = l$text;
+    final l$fragments = fragments;
+    _resultData['fragments'] = l$fragments?.map((e) => e?.toJson()).toList();
     return _resultData;
   }
 
   @override
   int get hashCode {
     final l$text = text;
-    return Object.hashAll([l$text]);
+    final l$fragments = fragments;
+    return Object.hashAll([
+      l$text,
+      l$fragments == null ? null : Object.hashAll(l$fragments.map((v) => v)),
+    ]);
   }
 
   @override
@@ -1611,6 +1689,805 @@ class Fragment$FlowChatReplyMessage$parentMessage$content {
     final l$text = text;
     final lOther$text = other.text;
     if (l$text != lOther$text) {
+      return false;
+    }
+    final l$fragments = fragments;
+    final lOther$fragments = other.fragments;
+    if (l$fragments != null && lOther$fragments != null) {
+      if (l$fragments.length != lOther$fragments.length) {
+        return false;
+      }
+      for (int i = 0; i < l$fragments.length; i++) {
+        final l$fragments$entry = l$fragments[i];
+        final lOther$fragments$entry = lOther$fragments[i];
+        if (l$fragments$entry != lOther$fragments$entry) {
+          return false;
+        }
+      }
+    } else if (l$fragments != lOther$fragments) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Fragment$FlowChatReplyMessage$parentMessage$content$fragments {
+  Fragment$FlowChatReplyMessage$parentMessage$content$fragments({
+    this.text,
+    this.content,
+  });
+
+  factory Fragment$FlowChatReplyMessage$parentMessage$content$fragments.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$text = json.containsKey('text') ? json['text'] : null;
+    final l$content = json.containsKey('content') ? json['content'] : null;
+    return Fragment$FlowChatReplyMessage$parentMessage$content$fragments(
+      text: (l$text as String?),
+      content: l$content == null
+          ? null
+          : Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content.fromJson(
+              (l$content as Map<String, dynamic>),
+            ),
+    );
+  }
+
+  final String? text;
+
+  final Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content?
+  content;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$text = text;
+    _resultData['text'] = l$text;
+    final l$content = content;
+    _resultData['content'] = l$content?.toJson();
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$text = text;
+    final l$content = content;
+    return Object.hashAll([l$text, l$content]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Fragment$FlowChatReplyMessage$parentMessage$content$fragments ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$text = text;
+    final lOther$text = other.text;
+    if (l$text != lOther$text) {
+      return false;
+    }
+    final l$content = content;
+    final lOther$content = other.content;
+    if (l$content != lOther$content) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content {
+  Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content({
+    required this.$__typename,
+  });
+
+  factory Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    switch (json["__typename"] as String) {
+      case "Emote":
+        return Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$Emote.fromJson(
+          json,
+        );
+
+      case "ActivityFeedCheermote":
+        return Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote.fromJson(
+          json,
+        );
+
+      case "ActivityFeedIntegerToken":
+        return Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken.fromJson(
+          json,
+        );
+
+      case "ActivityFeedPercentToken":
+        return Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken.fromJson(
+          json,
+        );
+
+      case "ActivityFeedTextToken":
+        return Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken.fromJson(
+          json,
+        );
+
+      case "User":
+        return Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$User.fromJson(
+          json,
+        );
+
+      case "UserDoesNotExist":
+        return Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserDoesNotExist.fromJson(
+          json,
+        );
+
+      case "UserError":
+        return Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserError.fromJson(
+          json,
+        );
+
+      default:
+        final l$$__typename = json['__typename'];
+        return Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content(
+          $__typename: (l$$__typename as String),
+        );
+    }
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+extension UtilityExtension$Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content
+    on Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content {
+  _T when<_T>({
+    required _T Function(
+      Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$Emote,
+    )
+    emote,
+    required _T Function(
+      Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote,
+    )
+    activityFeedCheermote,
+    required _T Function(
+      Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken,
+    )
+    activityFeedIntegerToken,
+    required _T Function(
+      Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken,
+    )
+    activityFeedPercentToken,
+    required _T Function(
+      Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken,
+    )
+    activityFeedTextToken,
+    required _T Function(
+      Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$User,
+    )
+    user,
+    required _T Function(
+      Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserDoesNotExist,
+    )
+    userDoesNotExist,
+    required _T Function(
+      Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserError,
+    )
+    userError,
+    required _T Function() orElse,
+  }) {
+    switch ($__typename) {
+      case "Emote":
+        return emote(
+          this
+              as Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$Emote,
+        );
+
+      case "ActivityFeedCheermote":
+        return activityFeedCheermote(
+          this
+              as Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote,
+        );
+
+      case "ActivityFeedIntegerToken":
+        return activityFeedIntegerToken(
+          this
+              as Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken,
+        );
+
+      case "ActivityFeedPercentToken":
+        return activityFeedPercentToken(
+          this
+              as Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken,
+        );
+
+      case "ActivityFeedTextToken":
+        return activityFeedTextToken(
+          this
+              as Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken,
+        );
+
+      case "User":
+        return user(
+          this
+              as Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$User,
+        );
+
+      case "UserDoesNotExist":
+        return userDoesNotExist(
+          this
+              as Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserDoesNotExist,
+        );
+
+      case "UserError":
+        return userError(
+          this
+              as Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserError,
+        );
+
+      default:
+        return orElse();
+    }
+  }
+
+  _T maybeWhen<_T>({
+    _T Function(
+      Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$Emote,
+    )?
+    emote,
+    _T Function(
+      Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote,
+    )?
+    activityFeedCheermote,
+    _T Function(
+      Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken,
+    )?
+    activityFeedIntegerToken,
+    _T Function(
+      Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken,
+    )?
+    activityFeedPercentToken,
+    _T Function(
+      Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken,
+    )?
+    activityFeedTextToken,
+    _T Function(
+      Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$User,
+    )?
+    user,
+    _T Function(
+      Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserDoesNotExist,
+    )?
+    userDoesNotExist,
+    _T Function(
+      Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserError,
+    )?
+    userError,
+    required _T Function() orElse,
+  }) {
+    switch ($__typename) {
+      case "Emote":
+        if (emote != null) {
+          return emote(
+            this
+                as Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$Emote,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "ActivityFeedCheermote":
+        if (activityFeedCheermote != null) {
+          return activityFeedCheermote(
+            this
+                as Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "ActivityFeedIntegerToken":
+        if (activityFeedIntegerToken != null) {
+          return activityFeedIntegerToken(
+            this
+                as Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "ActivityFeedPercentToken":
+        if (activityFeedPercentToken != null) {
+          return activityFeedPercentToken(
+            this
+                as Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "ActivityFeedTextToken":
+        if (activityFeedTextToken != null) {
+          return activityFeedTextToken(
+            this
+                as Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "User":
+        if (user != null) {
+          return user(
+            this
+                as Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$User,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "UserDoesNotExist":
+        if (userDoesNotExist != null) {
+          return userDoesNotExist(
+            this
+                as Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserDoesNotExist,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "UserError":
+        if (userError != null) {
+          return userError(
+            this
+                as Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserError,
+          );
+        } else {
+          return orElse();
+        }
+
+      default:
+        return orElse();
+    }
+  }
+}
+
+class Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$Emote
+    implements
+        Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content {
+  Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$Emote({
+    this.emoteID,
+    this.$__typename = 'Emote',
+  });
+
+  factory Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$Emote.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$emoteID = json.containsKey('emoteID') ? json['emoteID'] : null;
+    final l$$__typename = json['__typename'];
+    return Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$Emote(
+      emoteID: (l$emoteID as String?),
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String? emoteID;
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$emoteID = emoteID;
+    _resultData['emoteID'] = l$emoteID;
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$emoteID = emoteID;
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$emoteID, l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$Emote ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$emoteID = emoteID;
+    final lOther$emoteID = other.emoteID;
+    if (l$emoteID != lOther$emoteID) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote
+    implements
+        Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content {
+  Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote({
+    this.$__typename = 'ActivityFeedCheermote',
+  });
+
+  factory Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken
+    implements
+        Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content {
+  Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken({
+    this.$__typename = 'ActivityFeedIntegerToken',
+  });
+
+  factory Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken
+    implements
+        Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content {
+  Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken({
+    this.$__typename = 'ActivityFeedPercentToken',
+  });
+
+  factory Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken
+    implements
+        Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content {
+  Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken({
+    this.$__typename = 'ActivityFeedTextToken',
+  });
+
+  factory Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$User
+    implements
+        Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content {
+  Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$User({
+    this.$__typename = 'User',
+  });
+
+  factory Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$User.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$User(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$User ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserDoesNotExist
+    implements
+        Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content {
+  Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserDoesNotExist({
+    this.$__typename = 'UserDoesNotExist',
+  });
+
+  factory Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserDoesNotExist.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserDoesNotExist(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserDoesNotExist ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserError
+    implements
+        Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content {
+  Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserError({
+    this.$__typename = 'UserError',
+  });
+
+  factory Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserError.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserError(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserError ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
       return false;
     }
     return true;
@@ -3402,30 +4279,54 @@ class Query$FlowChatReplies$message$parentMessage
 
 class Query$FlowChatReplies$message$parentMessage$content
     implements Fragment$FlowChatReplyMessage$parentMessage$content {
-  Query$FlowChatReplies$message$parentMessage$content({this.text});
+  Query$FlowChatReplies$message$parentMessage$content({
+    this.text,
+    this.fragments,
+  });
 
   factory Query$FlowChatReplies$message$parentMessage$content.fromJson(
     Map<String, dynamic> json,
   ) {
     final l$text = json.containsKey('text') ? json['text'] : null;
+    final l$fragments = json.containsKey('fragments')
+        ? json['fragments']
+        : null;
     return Query$FlowChatReplies$message$parentMessage$content(
       text: (l$text as String?),
+      fragments: (l$fragments as List<dynamic>?)
+          ?.map(
+            (e) => e == null
+                ? null
+                : Query$FlowChatReplies$message$parentMessage$content$fragments.fromJson(
+                    (e as Map<String, dynamic>),
+                  ),
+          )
+          .toList(),
     );
   }
 
   final String? text;
 
+  final List<Query$FlowChatReplies$message$parentMessage$content$fragments?>?
+  fragments;
+
   Map<String, dynamic> toJson() {
     final _resultData = <String, dynamic>{};
     final l$text = text;
     _resultData['text'] = l$text;
+    final l$fragments = fragments;
+    _resultData['fragments'] = l$fragments?.map((e) => e?.toJson()).toList();
     return _resultData;
   }
 
   @override
   int get hashCode {
     final l$text = text;
-    return Object.hashAll([l$text]);
+    final l$fragments = fragments;
+    return Object.hashAll([
+      l$text,
+      l$fragments == null ? null : Object.hashAll(l$fragments.map((v) => v)),
+    ]);
   }
 
   @override
@@ -3440,6 +4341,816 @@ class Query$FlowChatReplies$message$parentMessage$content
     final l$text = text;
     final lOther$text = other.text;
     if (l$text != lOther$text) {
+      return false;
+    }
+    final l$fragments = fragments;
+    final lOther$fragments = other.fragments;
+    if (l$fragments != null && lOther$fragments != null) {
+      if (l$fragments.length != lOther$fragments.length) {
+        return false;
+      }
+      for (int i = 0; i < l$fragments.length; i++) {
+        final l$fragments$entry = l$fragments[i];
+        final lOther$fragments$entry = lOther$fragments[i];
+        if (l$fragments$entry != lOther$fragments$entry) {
+          return false;
+        }
+      }
+    } else if (l$fragments != lOther$fragments) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowChatReplies$message$parentMessage$content$fragments
+    implements Fragment$FlowChatReplyMessage$parentMessage$content$fragments {
+  Query$FlowChatReplies$message$parentMessage$content$fragments({
+    this.text,
+    this.content,
+  });
+
+  factory Query$FlowChatReplies$message$parentMessage$content$fragments.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$text = json.containsKey('text') ? json['text'] : null;
+    final l$content = json.containsKey('content') ? json['content'] : null;
+    return Query$FlowChatReplies$message$parentMessage$content$fragments(
+      text: (l$text as String?),
+      content: l$content == null
+          ? null
+          : Query$FlowChatReplies$message$parentMessage$content$fragments$content.fromJson(
+              (l$content as Map<String, dynamic>),
+            ),
+    );
+  }
+
+  final String? text;
+
+  final Query$FlowChatReplies$message$parentMessage$content$fragments$content?
+  content;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$text = text;
+    _resultData['text'] = l$text;
+    final l$content = content;
+    _resultData['content'] = l$content?.toJson();
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$text = text;
+    final l$content = content;
+    return Object.hashAll([l$text, l$content]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Query$FlowChatReplies$message$parentMessage$content$fragments ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$text = text;
+    final lOther$text = other.text;
+    if (l$text != lOther$text) {
+      return false;
+    }
+    final l$content = content;
+    final lOther$content = other.content;
+    if (l$content != lOther$content) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowChatReplies$message$parentMessage$content$fragments$content
+    implements
+        Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content {
+  Query$FlowChatReplies$message$parentMessage$content$fragments$content({
+    required this.$__typename,
+  });
+
+  factory Query$FlowChatReplies$message$parentMessage$content$fragments$content.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    switch (json["__typename"] as String) {
+      case "Emote":
+        return Query$FlowChatReplies$message$parentMessage$content$fragments$content$$Emote.fromJson(
+          json,
+        );
+
+      case "ActivityFeedCheermote":
+        return Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedCheermote.fromJson(
+          json,
+        );
+
+      case "ActivityFeedIntegerToken":
+        return Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedIntegerToken.fromJson(
+          json,
+        );
+
+      case "ActivityFeedPercentToken":
+        return Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedPercentToken.fromJson(
+          json,
+        );
+
+      case "ActivityFeedTextToken":
+        return Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedTextToken.fromJson(
+          json,
+        );
+
+      case "User":
+        return Query$FlowChatReplies$message$parentMessage$content$fragments$content$$User.fromJson(
+          json,
+        );
+
+      case "UserDoesNotExist":
+        return Query$FlowChatReplies$message$parentMessage$content$fragments$content$$UserDoesNotExist.fromJson(
+          json,
+        );
+
+      case "UserError":
+        return Query$FlowChatReplies$message$parentMessage$content$fragments$content$$UserError.fromJson(
+          json,
+        );
+
+      default:
+        final l$$__typename = json['__typename'];
+        return Query$FlowChatReplies$message$parentMessage$content$fragments$content(
+          $__typename: (l$$__typename as String),
+        );
+    }
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Query$FlowChatReplies$message$parentMessage$content$fragments$content ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+extension UtilityExtension$Query$FlowChatReplies$message$parentMessage$content$fragments$content
+    on Query$FlowChatReplies$message$parentMessage$content$fragments$content {
+  _T when<_T>({
+    required _T Function(
+      Query$FlowChatReplies$message$parentMessage$content$fragments$content$$Emote,
+    )
+    emote,
+    required _T Function(
+      Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedCheermote,
+    )
+    activityFeedCheermote,
+    required _T Function(
+      Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedIntegerToken,
+    )
+    activityFeedIntegerToken,
+    required _T Function(
+      Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedPercentToken,
+    )
+    activityFeedPercentToken,
+    required _T Function(
+      Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedTextToken,
+    )
+    activityFeedTextToken,
+    required _T Function(
+      Query$FlowChatReplies$message$parentMessage$content$fragments$content$$User,
+    )
+    user,
+    required _T Function(
+      Query$FlowChatReplies$message$parentMessage$content$fragments$content$$UserDoesNotExist,
+    )
+    userDoesNotExist,
+    required _T Function(
+      Query$FlowChatReplies$message$parentMessage$content$fragments$content$$UserError,
+    )
+    userError,
+    required _T Function() orElse,
+  }) {
+    switch ($__typename) {
+      case "Emote":
+        return emote(
+          this
+              as Query$FlowChatReplies$message$parentMessage$content$fragments$content$$Emote,
+        );
+
+      case "ActivityFeedCheermote":
+        return activityFeedCheermote(
+          this
+              as Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedCheermote,
+        );
+
+      case "ActivityFeedIntegerToken":
+        return activityFeedIntegerToken(
+          this
+              as Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedIntegerToken,
+        );
+
+      case "ActivityFeedPercentToken":
+        return activityFeedPercentToken(
+          this
+              as Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedPercentToken,
+        );
+
+      case "ActivityFeedTextToken":
+        return activityFeedTextToken(
+          this
+              as Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedTextToken,
+        );
+
+      case "User":
+        return user(
+          this
+              as Query$FlowChatReplies$message$parentMessage$content$fragments$content$$User,
+        );
+
+      case "UserDoesNotExist":
+        return userDoesNotExist(
+          this
+              as Query$FlowChatReplies$message$parentMessage$content$fragments$content$$UserDoesNotExist,
+        );
+
+      case "UserError":
+        return userError(
+          this
+              as Query$FlowChatReplies$message$parentMessage$content$fragments$content$$UserError,
+        );
+
+      default:
+        return orElse();
+    }
+  }
+
+  _T maybeWhen<_T>({
+    _T Function(
+      Query$FlowChatReplies$message$parentMessage$content$fragments$content$$Emote,
+    )?
+    emote,
+    _T Function(
+      Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedCheermote,
+    )?
+    activityFeedCheermote,
+    _T Function(
+      Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedIntegerToken,
+    )?
+    activityFeedIntegerToken,
+    _T Function(
+      Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedPercentToken,
+    )?
+    activityFeedPercentToken,
+    _T Function(
+      Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedTextToken,
+    )?
+    activityFeedTextToken,
+    _T Function(
+      Query$FlowChatReplies$message$parentMessage$content$fragments$content$$User,
+    )?
+    user,
+    _T Function(
+      Query$FlowChatReplies$message$parentMessage$content$fragments$content$$UserDoesNotExist,
+    )?
+    userDoesNotExist,
+    _T Function(
+      Query$FlowChatReplies$message$parentMessage$content$fragments$content$$UserError,
+    )?
+    userError,
+    required _T Function() orElse,
+  }) {
+    switch ($__typename) {
+      case "Emote":
+        if (emote != null) {
+          return emote(
+            this
+                as Query$FlowChatReplies$message$parentMessage$content$fragments$content$$Emote,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "ActivityFeedCheermote":
+        if (activityFeedCheermote != null) {
+          return activityFeedCheermote(
+            this
+                as Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedCheermote,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "ActivityFeedIntegerToken":
+        if (activityFeedIntegerToken != null) {
+          return activityFeedIntegerToken(
+            this
+                as Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedIntegerToken,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "ActivityFeedPercentToken":
+        if (activityFeedPercentToken != null) {
+          return activityFeedPercentToken(
+            this
+                as Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedPercentToken,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "ActivityFeedTextToken":
+        if (activityFeedTextToken != null) {
+          return activityFeedTextToken(
+            this
+                as Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedTextToken,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "User":
+        if (user != null) {
+          return user(
+            this
+                as Query$FlowChatReplies$message$parentMessage$content$fragments$content$$User,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "UserDoesNotExist":
+        if (userDoesNotExist != null) {
+          return userDoesNotExist(
+            this
+                as Query$FlowChatReplies$message$parentMessage$content$fragments$content$$UserDoesNotExist,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "UserError":
+        if (userError != null) {
+          return userError(
+            this
+                as Query$FlowChatReplies$message$parentMessage$content$fragments$content$$UserError,
+          );
+        } else {
+          return orElse();
+        }
+
+      default:
+        return orElse();
+    }
+  }
+}
+
+class Query$FlowChatReplies$message$parentMessage$content$fragments$content$$Emote
+    implements
+        Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$Emote,
+        Query$FlowChatReplies$message$parentMessage$content$fragments$content {
+  Query$FlowChatReplies$message$parentMessage$content$fragments$content$$Emote({
+    this.emoteID,
+    this.$__typename = 'Emote',
+  });
+
+  factory Query$FlowChatReplies$message$parentMessage$content$fragments$content$$Emote.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$emoteID = json.containsKey('emoteID') ? json['emoteID'] : null;
+    final l$$__typename = json['__typename'];
+    return Query$FlowChatReplies$message$parentMessage$content$fragments$content$$Emote(
+      emoteID: (l$emoteID as String?),
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String? emoteID;
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$emoteID = emoteID;
+    _resultData['emoteID'] = l$emoteID;
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$emoteID = emoteID;
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$emoteID, l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Query$FlowChatReplies$message$parentMessage$content$fragments$content$$Emote ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$emoteID = emoteID;
+    final lOther$emoteID = other.emoteID;
+    if (l$emoteID != lOther$emoteID) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedCheermote
+    implements
+        Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote,
+        Query$FlowChatReplies$message$parentMessage$content$fragments$content {
+  Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedCheermote({
+    this.$__typename = 'ActivityFeedCheermote',
+  });
+
+  factory Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedCheermote.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedCheermote(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedCheermote ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedIntegerToken
+    implements
+        Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken,
+        Query$FlowChatReplies$message$parentMessage$content$fragments$content {
+  Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedIntegerToken({
+    this.$__typename = 'ActivityFeedIntegerToken',
+  });
+
+  factory Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedIntegerToken.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedIntegerToken(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedIntegerToken ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedPercentToken
+    implements
+        Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken,
+        Query$FlowChatReplies$message$parentMessage$content$fragments$content {
+  Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedPercentToken({
+    this.$__typename = 'ActivityFeedPercentToken',
+  });
+
+  factory Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedPercentToken.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedPercentToken(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedPercentToken ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedTextToken
+    implements
+        Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken,
+        Query$FlowChatReplies$message$parentMessage$content$fragments$content {
+  Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedTextToken({
+    this.$__typename = 'ActivityFeedTextToken',
+  });
+
+  factory Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedTextToken.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedTextToken(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Query$FlowChatReplies$message$parentMessage$content$fragments$content$$ActivityFeedTextToken ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowChatReplies$message$parentMessage$content$fragments$content$$User
+    implements
+        Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$User,
+        Query$FlowChatReplies$message$parentMessage$content$fragments$content {
+  Query$FlowChatReplies$message$parentMessage$content$fragments$content$$User({
+    this.$__typename = 'User',
+  });
+
+  factory Query$FlowChatReplies$message$parentMessage$content$fragments$content$$User.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Query$FlowChatReplies$message$parentMessage$content$fragments$content$$User(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Query$FlowChatReplies$message$parentMessage$content$fragments$content$$User ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowChatReplies$message$parentMessage$content$fragments$content$$UserDoesNotExist
+    implements
+        Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserDoesNotExist,
+        Query$FlowChatReplies$message$parentMessage$content$fragments$content {
+  Query$FlowChatReplies$message$parentMessage$content$fragments$content$$UserDoesNotExist({
+    this.$__typename = 'UserDoesNotExist',
+  });
+
+  factory Query$FlowChatReplies$message$parentMessage$content$fragments$content$$UserDoesNotExist.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Query$FlowChatReplies$message$parentMessage$content$fragments$content$$UserDoesNotExist(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Query$FlowChatReplies$message$parentMessage$content$fragments$content$$UserDoesNotExist ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowChatReplies$message$parentMessage$content$fragments$content$$UserError
+    implements
+        Fragment$FlowChatReplyMessage$parentMessage$content$fragments$content$$UserError,
+        Query$FlowChatReplies$message$parentMessage$content$fragments$content {
+  Query$FlowChatReplies$message$parentMessage$content$fragments$content$$UserError({
+    this.$__typename = 'UserError',
+  });
+
+  factory Query$FlowChatReplies$message$parentMessage$content$fragments$content$$UserError.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Query$FlowChatReplies$message$parentMessage$content$fragments$content$$UserError(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Query$FlowChatReplies$message$parentMessage$content$fragments$content$$UserError ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
       return false;
     }
     return true;

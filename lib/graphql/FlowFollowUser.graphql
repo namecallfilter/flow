@@ -1,0 +1,6 @@
+mutation FlowFollowUser($targetID: ID!) {
+  followUser(input: {targetID: $targetID, disableNotifications: false}) {
+    follow { followedAt user { id } }
+    error { code }
+  }
+}

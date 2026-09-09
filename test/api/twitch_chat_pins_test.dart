@@ -30,6 +30,7 @@ void main() {
                     {
                       "node": {
                         "id": "pin",
+                        "startsAt": "2026-09-07T22:30:00Z",
                         "endsAt": "2026-09-07T23:00:00Z",
                         "pinnedBy": {
                           if (requests == 1) "id": "99",
@@ -88,6 +89,7 @@ void main() {
     );
     final pin = (await client.fetchPinnedChat("123"))!;
     expect(pin.id, "pin");
+    expect(pin.startsAt?.toUtc(), DateTime.utc(2026, 9, 7, 22, 30));
     expect(pin.endsAt?.toUtc(), DateTime.utc(2026, 9, 7, 23));
     expect(pin.message.userId, "77");
     expect(pin.pinnedBy, (id: "99", login: "pinner", displayName: "Pinner"));
@@ -187,7 +189,10 @@ void main() {
     expect(message.badges, ["moderator/1"]);
     expect(message.text.substring(message.emotes.single.start, message.emotes.single.end), "Kappa");
     expect(message.parentMessageId, "parent");
-    expect(message.parentText, "Original message");
+    expect(message.parentText, "😀 Kappa");
+    expect(message.parentEmotes.single.id, "25");
+    expect(message.parentEmotes.single.start, 3);
+    expect(message.parentEmotes.single.end, 8);
     expect(message.threadRootId, "root");
     socket.event("unpin-message", {"id": "initial-pin"});
     expect(pins.pin?.id, "current");
@@ -250,12 +255,20 @@ void main() {
       socket.event(change["type"]! as String, data);
       initial.complete(_initialPin);
       await tester.pump();
-      expect(pins.pin?.id, data["id"] == "unrelated-cheer" ? "initial-pin" : null);
+      expect(
+        pins.pin?.id,
+        data["id"] == "unrelated-cheer" || change["type"] == "update-message"
+            ? "initial-pin"
+            : null,
+      );
+      if (change["type"] == "update-message") {
+        expect(pins.pin?.endsAt, DateTime.fromMillisecondsSinceEpoch(1000, isUtc: true));
+      }
       pins.dispose();
     }
   });
 
-  testWidgets("updates expiry, supports indefinite pins, and removes expired pins", (tester) async {
+  testWidgets("updates pin timing but waits for Twitch to remove an expired pin", (tester) async {
     final socket = _Socket();
     final pins = TwitchChatPins(
       channelId: "123",
@@ -268,11 +281,14 @@ void main() {
     await tester.pump();
     final ending = DateTime.now().add(const Duration(seconds: 2)).millisecondsSinceEpoch / 1000;
     socket.event("pin-message", _eventPin("current", endsAt: ending));
+    final startsAt = pins.pin?.startsAt;
+    expect(startsAt, DateTime.fromMillisecondsSinceEpoch(1642719340000, isUtc: true));
     expect(pins.pin?.endsAt, isNotNull);
     socket.event("update-message", {"id": "current", "ends_at": null});
     await tester.pump(const Duration(seconds: 3));
     expect(pins.pin?.id, "current");
     expect(pins.pin?.endsAt, isNull);
+    expect(pins.pin?.startsAt, startsAt);
     expect(pins.pin?.pinnedBy?.id, "99");
     socket.event("update-message", {"id": "other", "ends_at": 1});
     expect(pins.pin?.id, "current");
@@ -281,9 +297,11 @@ void main() {
       "ends_at": DateTime.now().add(const Duration(seconds: 2)).millisecondsSinceEpoch / 1000,
     });
     await tester.pump(const Duration(seconds: 2));
+    expect(pins.pin?.id, "current");
+    socket.event("unpin-message", {"id": "current"});
     expect(pins.pin, isNull);
     socket.event("pin-message", _eventPin("expired", endsAt: 1));
-    expect(pins.pin, isNull);
+    expect(pins.pin?.id, "expired");
     socket.event("pin-message", _eventPin("unknown-pinner")..remove("pinned_by"));
     expect(pins.pin?.id, "unknown-pinner");
     expect(pins.pin?.pinnedBy, isNull);
@@ -316,7 +334,7 @@ void main() {
     await tester.pump();
     expect(pins.pin, isNotNull);
     sockets.single.receive({"type": "reconnect"});
-    expect(pins.pin, isNull);
+    expect(pins.pin, same(_initialPin));
     await tester.pump(const Duration(seconds: 1));
     expect(sockets.length, 2);
     sockets.last.welcome();
@@ -417,6 +435,7 @@ Map<String, Object?> _eventPin(String id, {String type = "MOD", num? endsAt}) =>
   "message": {
     "id": "message-$id",
     "type": type,
+    "starts_at": 1642719340,
     "ends_at": endsAt,
     "sent_at": 1642719320,
     "sender": {
@@ -442,7 +461,16 @@ Map<String, Object?> _eventPin(String id, {String type = "MOD", num? endsAt}) =>
   "parent_message": {
     "id": "parent",
     "sender": {"id": "88", "login": "parent", "display_name": "Parent"},
-    "content": {"text": "Original message"},
+    "content": {
+      "text": "😀 Kappa",
+      "fragments": [
+        {"text": "😀 "},
+        {
+          "text": "Kappa",
+          "emoticon": {"emoticonID": "25"},
+        },
+      ],
+    },
   },
   "thread_parent_message": {
     "id": "root",

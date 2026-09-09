@@ -32,7 +32,8 @@ enum PlaybackMode { expanded, mini, pip }
 class PlaybackHost extends NavigatorObserver {
   OverlayEntry? _entry;
   StreamPlayerScreen? _screen;
-  Route<void>? _playerRoute;
+  PageRoute<void>? _playerRoute;
+  LocalHistoryEntry? _inlineHistory;
   MaterialPageRoute<void>? _overlayPageRoute;
   PlaybackMode _mode = PlaybackMode.expanded;
   PlaybackMode _modeBeforePip = PlaybackMode.expanded;
@@ -55,6 +56,26 @@ class PlaybackHost extends NavigatorObserver {
 
   PlaybackMode get mode => _mode;
   bool get _canMinimize => miniPlayerEnabled && !_chatOnly;
+
+  void setInlineBackHandler(VoidCallback? onClose) {
+    final previous = _inlineHistory;
+    _inlineHistory = null;
+    previous?.remove();
+    if (onClose == null || _playerRoute == null) {
+      return;
+    }
+    late final LocalHistoryEntry entry;
+    entry = LocalHistoryEntry(
+      onRemove: () {
+        if (_inlineHistory == entry) {
+          _inlineHistory = null;
+          onClose();
+        }
+      },
+    );
+    _inlineHistory = entry;
+    _playerRoute!.addLocalHistoryEntry(entry);
+  }
 
   void setChatOnly({required bool enabled}) {
     _chatOnly = enabled;
@@ -216,6 +237,7 @@ class PlaybackHost extends NavigatorObserver {
   }
 
   void dismiss() {
+    _inlineHistory?.remove();
     final entry = _entry;
     _entry = null;
     entry?.remove();
@@ -236,6 +258,7 @@ class PlaybackHost extends NavigatorObserver {
   }
 
   void _removePlayerRoute() {
+    _inlineHistory?.remove();
     final route = _playerRoute;
     _playerRoute = null;
     if (route?.isActive == true) {

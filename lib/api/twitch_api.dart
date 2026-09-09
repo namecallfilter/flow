@@ -4,22 +4,30 @@ import "dart:math" as math;
 
 import "package:flow/api/twitch_chat_message.dart";
 import "package:flow/api/twitch_cookie_extractor.dart";
+import "package:flow/graphql/FlowAvailableChannelPoints.graphql.dart";
 import "package:flow/graphql/FlowBlockUser.graphql.dart";
 import "package:flow/graphql/FlowChannelDetails.graphql.dart";
 import "package:flow/graphql/FlowChannelSubscription.graphql.dart";
+import "package:flow/graphql/FlowChatAccess.graphql.dart";
 import "package:flow/graphql/FlowChatAssets.graphql.dart";
 import "package:flow/graphql/FlowChatReplies.graphql.dart";
+import "package:flow/graphql/FlowChatUser.graphql.dart";
 import "package:flow/graphql/FlowChatters.graphql.dart";
+import "package:flow/graphql/FlowClaimChannelPoints.graphql.dart";
 import "package:flow/graphql/FlowCurrentUser.graphql.dart";
+import "package:flow/graphql/FlowFollowUser.graphql.dart";
 import "package:flow/graphql/FlowFollowedLiveUsers.graphql.dart";
 import "package:flow/graphql/FlowFollowedUsers.graphql.dart";
 import "package:flow/graphql/FlowGameStreams.graphql.dart";
 import "package:flow/graphql/FlowPinnedChat.graphql.dart";
 import "package:flow/graphql/FlowPlaybackAccessToken.graphql.dart";
+import "package:flow/graphql/FlowRecentChat.graphql.dart";
 import "package:flow/graphql/FlowSearchCategories.graphql.dart";
 import "package:flow/graphql/FlowSearchChannels.graphql.dart";
 import "package:flow/graphql/FlowTopGames.graphql.dart";
 import "package:flow/graphql/FlowTopStreams.graphql.dart";
+import "package:flow/graphql/FlowUnfollowUser.graphql.dart";
+import "package:flow/graphql/FlowUnlockedChatEmotes.graphql.dart";
 import "package:flow/graphql/FlowUsers.graphql.dart";
 import "package:flow/graphql/FlowVodChat.graphql.dart";
 import "package:flow/graphql/FlowVodSeekMetadata.graphql.dart";
@@ -44,12 +52,34 @@ class TwitchUser {
     required this.login,
     required this.displayName,
     this.profileImageUrl,
+    this.createdAt,
+    this.chatColor,
+    this.badges = const [],
+    this.isSubscribed,
+    this.subscriptionTier,
+    this.subscriptionMonths,
+    this.subscriptionIsPrime,
   });
 
   final String id;
   final String login;
   final String displayName;
   final String? profileImageUrl;
+  final DateTime? createdAt;
+  final String? chatColor;
+  final List<TwitchUserBadge> badges;
+  final bool? isSubscribed;
+  final String? subscriptionTier;
+  final int? subscriptionMonths;
+  final bool? subscriptionIsPrime;
+}
+
+class TwitchUserBadge {
+  const TwitchUserBadge({required this.id, required this.title, required this.imageUrl});
+
+  final String id;
+  final String title;
+  final String imageUrl;
 }
 
 class TwitchFollowedStream {
@@ -266,13 +296,39 @@ class TwitchNativeChatAssets {
     required this.channelId,
     required this.badgeUrls,
     required this.emoteIdsByName,
+    this.broadcaster,
     this.badgeTitles = const {},
+    this.globalEmoteIdsByName = const {},
+    this.channelEmoteIdsByName = const {},
   });
 
   final String channelId;
+  final TwitchUser? broadcaster;
   final Map<String, String> badgeUrls;
   final Map<String, String> badgeTitles;
   final Map<String, String> emoteIdsByName;
+  final Map<String, String> globalEmoteIdsByName;
+  final Map<String, String> channelEmoteIdsByName;
+}
+
+class TwitchChatAccess {
+  const TwitchChatAccess({
+    required this.channelId,
+    required this.channelDisplayName,
+    required this.rules,
+    this.isFollowing = false,
+    this.followedAt,
+    this.isModerator = false,
+    this.isVip = false,
+  });
+
+  final String channelId;
+  final String channelDisplayName;
+  final List<String> rules;
+  final bool isFollowing;
+  final DateTime? followedAt;
+  final bool isModerator;
+  final bool isVip;
 }
 
 class TwitchChatters {
@@ -280,6 +336,10 @@ class TwitchChatters {
 
   final int count;
   final Map<String, List<String>> groups;
+
+  int get listedCount =>
+      groups.values.expand((group) => group).map((login) => login.toLowerCase()).toSet().length;
+  bool get isPartial => listedCount < count;
 }
 
 class TwitchMutedSegment {
@@ -522,11 +582,92 @@ class TwitchApiClient {
     return users;
   }
 
-  Future<TwitchUser?> fetchChatUser({String? userId, String? login}) async {
+  Future<TwitchUser?> fetchChatUser({
+    String? userId,
+    String? login,
+    String? channelId,
+    String? channelLogin,
+  }) async {
     final id = _nonEmptyValue(userId);
     final normalizedLogin = _nonEmptyValue(login)?.toLowerCase();
     if (id == null && normalizedLogin == null) {
       return null;
+    }
+    if (normalizedLogin != null && _nonEmptyValue(channelLogin) != null) {
+      final signedIn = _nonEmptyValue(gqlAccessToken) != null;
+      var incomplete = false;
+      final data = await _query(
+        () async {
+          final response = await (signedIn ? _authenticatedGraphQlClient : _graphQlClient)
+              .query$FlowChatUser(
+                Options$Query$FlowChatUser(
+                  variables: Variables$Query$FlowChatUser(
+                    userID: id,
+                    lookupLogin: id == null ? normalizedLogin : null,
+                    login: normalizedLogin,
+                    channelID: _nonEmptyValue(channelId),
+                    channelLogin: channelLogin!.trim().toLowerCase(),
+                    withRelationship: signedIn && _nonEmptyValue(channelId) != null,
+                  ),
+                  fetchPolicy: graphql.FetchPolicy.noCache,
+                  errorPolicy: graphql.ErrorPolicy.all,
+                ),
+              );
+          incomplete = response.hasException;
+          return response;
+        },
+        "FlowChatUser",
+        retryIntegrityChallenge: signedIn,
+        allowPartialData: true,
+      );
+      final result = data.toJson();
+      final target = _mapValue(result["targetUser"]);
+      if (target == null ||
+          (id != null
+              ? target["id"] != id
+              : target["login"]?.toString().toLowerCase() != normalizedLogin)) {
+        return null;
+      }
+      final relationship = _mapValue(target["relationship"]);
+      final benefit = _mapValue(relationship?["subscriptionBenefit"]);
+      final badges = <String, TwitchUserBadge>{};
+      for (final badge in [
+        ..._mapList(target["displayBadges"]),
+        if (target["login"]?.toString().toLowerCase() == normalizedLogin)
+          ..._mapList(_mapValue(result["channelViewer"])?["earnedBadges"]),
+      ]) {
+        final url = _nonEmptyValue(badge["imageURL"] as String?);
+        if (url != null) {
+          final badgeId = "${_stringValue(badge['setID'])}/${_stringValue(badge['version'])}";
+          badges.putIfAbsent(
+            badgeId,
+            () => TwitchUserBadge(
+              id: badgeId,
+              title: _nonEmptyValue(badge["title"] as String?) ?? _stringValue(badge["setID"]),
+              imageUrl: url,
+            ),
+          );
+        }
+      }
+      return TwitchUser(
+        id: _stringValue(target["id"]),
+        login: _stringValue(target["login"]),
+        displayName: _stringValue(target["displayName"]),
+        profileImageUrl: target["profileImageURL"] as String?,
+        createdAt: _dateTimeValue(target["createdAt"]),
+        chatColor: _nonEmptyValue(target["chatColor"] as String?),
+        badges: badges.values.toList(),
+        isSubscribed: benefit != null
+            ? true
+            : relationship == null || incomplete
+            ? null
+            : false,
+        subscriptionTier: _nonEmptyValue(benefit?["tier"] as String?),
+        subscriptionMonths: int.tryParse(
+          _mapValue(relationship?["cumulativeTenure"])?["months"]?.toString() ?? "",
+        ),
+        subscriptionIsPrime: benefit?["purchasedWithPrime"] as bool?,
+      );
     }
     final data = await _query(
       () => _graphQlClient.query$FlowUsers(
@@ -570,6 +711,142 @@ class TwitchApiClient {
     if (result.blockUser?.targetUser?.id != id) {
       throw TwitchApiException("Twitch did not confirm that the user was blocked.");
     }
+  }
+
+  Future<DateTime> followChannel(String channelId) async {
+    final id = channelId.trim();
+    if (!RegExp(r"^\d+$").hasMatch(id)) {
+      throw TwitchApiException("Choose a valid Twitch channel to follow.");
+    }
+    if (_nonEmptyValue(gqlAccessToken) == null) {
+      throw TwitchApiException("Sign in to Twitch before following a channel.");
+    }
+    final result = await _query(
+      () => _authenticatedGraphQlClient.mutate$FlowFollowUser(
+        Options$Mutation$FlowFollowUser(
+          variables: Variables$Mutation$FlowFollowUser(targetID: id),
+          fetchPolicy: graphql.FetchPolicy.noCache,
+        ),
+      ),
+      "FlowFollowUser",
+      retryIntegrityChallenge: true,
+    );
+    final follow = result.followUser?.follow;
+    final followedAt = _dateTimeValue(follow?.followedAt);
+    if (result.followUser?.error != null || follow?.user?.id != id || followedAt == null) {
+      throw TwitchApiException("Twitch did not confirm that the channel was followed.");
+    }
+    return followedAt;
+  }
+
+  Future<void> unfollowChannel(String channelId) async {
+    final id = channelId.trim();
+    if (!RegExp(r"^\d+$").hasMatch(id)) {
+      throw TwitchApiException("Choose a valid Twitch channel to unfollow.");
+    }
+    if (_nonEmptyValue(gqlAccessToken) == null) {
+      throw TwitchApiException("Sign in to Twitch before unfollowing a channel.");
+    }
+    final result = await _query(
+      () => _authenticatedGraphQlClient.mutate$FlowUnfollowUser(
+        Options$Mutation$FlowUnfollowUser(
+          variables: Variables$Mutation$FlowUnfollowUser(targetID: id),
+          fetchPolicy: graphql.FetchPolicy.noCache,
+        ),
+      ),
+      "FlowUnfollowUser",
+      retryIntegrityChallenge: true,
+    );
+    if (result.unfollowUser?.follow?.user?.id != id) {
+      throw TwitchApiException("Twitch did not confirm that the channel was unfollowed.");
+    }
+  }
+
+  Future<TwitchChatAccess> fetchChatAccess(String login) async {
+    final normalizedLogin = login.trim().toLowerCase();
+    final signedIn = _nonEmptyValue(gqlAccessToken) != null;
+    final data = await _query(
+      () => (signedIn ? _authenticatedGraphQlClient : _graphQlClient).query$FlowChatAccess(
+        Options$Query$FlowChatAccess(
+          variables: Variables$Query$FlowChatAccess(login: normalizedLogin),
+          fetchPolicy: graphql.FetchPolicy.noCache,
+        ),
+      ),
+      "FlowChatAccess",
+      retryIntegrityChallenge: signedIn,
+    );
+    final user = _mapValue(data.toJson()["user"]);
+    final rules = _mapValue(user?["chatSettings"])?["rules"];
+    final self = _mapValue(user?["self"]);
+    if (_nonEmptyValue(user?["id"] as String?) == null ||
+        user?["login"] != normalizedLogin ||
+        rules is! List ||
+        (signedIn && (self == null || self["isModerator"] is! bool || self["isVIP"] is! bool))) {
+      throw TwitchApiException("Could not load channel rules and follower status. Try again.");
+    }
+    final follower = _mapValue(self?["follower"]);
+    return TwitchChatAccess(
+      channelId: user!["id"]! as String,
+      channelDisplayName: _nonEmptyValue(user["displayName"] as String?) ?? normalizedLogin,
+      rules: List.unmodifiable(rules.whereType<String>().where((rule) => rule.trim().isNotEmpty)),
+      isFollowing: follower != null,
+      followedAt: _dateTimeValue(follower?["followedAt"]),
+      isModerator: self?["isModerator"] == true,
+      isVip: self?["isVIP"] == true,
+    );
+  }
+
+  Future<({String channelId, String claimId})?> fetchAvailableChannelPointsClaim(
+    String login,
+  ) async {
+    if (_nonEmptyValue(gqlAccessToken) == null) {
+      return null;
+    }
+    final normalizedLogin = login.trim().toLowerCase();
+    final result = await _query(
+      () => _authenticatedGraphQlClient.query$FlowAvailableChannelPoints(
+        Options$Query$FlowAvailableChannelPoints(
+          variables: Variables$Query$FlowAvailableChannelPoints(login: normalizedLogin),
+          fetchPolicy: graphql.FetchPolicy.noCache,
+        ),
+      ),
+      "FlowAvailableChannelPoints",
+      retryIntegrityChallenge: true,
+    );
+    final user = result.user;
+    final channelId = user?.channel?.id;
+    if (user?.login != normalizedLogin || channelId == null || channelId != user?.id) {
+      throw TwitchApiException("Could not check channel point bonuses.");
+    }
+    final claimId = _nonEmptyValue(user?.channel?.self?.communityPoints?.availableClaim?.id);
+    return claimId == null ? null : (channelId: channelId, claimId: claimId);
+  }
+
+  Future<int> claimChannelPoints(String channelId, String claimId) async {
+    final id = channelId.trim();
+    final claim = claimId.trim();
+    if (!RegExp(r"^\d+$").hasMatch(id) || claim.isEmpty) {
+      throw TwitchApiException("Choose a valid channel point bonus to claim.");
+    }
+    if (_nonEmptyValue(gqlAccessToken) == null) {
+      throw TwitchApiException("Sign in to Twitch before claiming channel points.");
+    }
+    final result = await _query(
+      () => _authenticatedGraphQlClient.mutate$FlowClaimChannelPoints(
+        Options$Mutation$FlowClaimChannelPoints(
+          variables: Variables$Mutation$FlowClaimChannelPoints(channelID: id, claimID: claim),
+          fetchPolicy: graphql.FetchPolicy.noCache,
+        ),
+      ),
+      "FlowClaimChannelPoints",
+      retryIntegrityChallenge: true,
+    );
+    final payload = result.claimCommunityPoints;
+    final amount = payload?.claim?.pointsEarnedTotal;
+    if (payload?.error != null || payload?.claim?.id != claim || amount == null || amount <= 0) {
+      throw TwitchApiException("Twitch did not confirm that channel points were claimed.");
+    }
+    return amount;
   }
 
   Future<Map<String, TwitchChannelInfo>> fetchChannelInfoByBroadcasterIds(
@@ -939,40 +1216,95 @@ class TwitchApiClient {
       throw TwitchApiException("Twitch chat badges are unavailable.");
     }
     final channel = _mapValue(user?["channel"]);
+    final globalEmotes = <String, String>{
+      for (final emote in _mapList(_mapValue(result["emoteSet"])?["emotes"]))
+        if (emote["token"] is String && emote["id"] is String)
+          emote["token"]! as String: emote["id"]! as String,
+    };
+    final channelEmotes = <String, String>{
+      for (final emote in [
+        for (final product in _mapList(user?["subscriptionProducts"]))
+          ..._mapList(product["emotes"]),
+        for (final set in _mapList(channel?["localEmoteSets"])) ..._mapList(set["emotes"]),
+      ])
+        if (emote["token"] is String && emote["id"] is String)
+          emote["token"]! as String: emote["id"]! as String,
+    };
     return TwitchNativeChatAssets(
       channelId: channelId,
+      broadcaster: _userFromGraphQlUser(user!),
       badgeUrls: {
-        for (final badge in [..._mapList(result["badges"]), ..._mapList(user?["broadcastBadges"])])
+        for (final badge in [..._mapList(result["badges"]), ..._mapList(user["broadcastBadges"])])
           if (badge["setID"] is String && badge["version"] is String && badge["imageURL"] is String)
             "${badge["setID"]}/${badge["version"]}": badge["imageURL"]! as String,
       },
       badgeTitles: {
-        for (final badge in [..._mapList(result["badges"]), ..._mapList(user?["broadcastBadges"])])
+        for (final badge in [..._mapList(result["badges"]), ..._mapList(user["broadcastBadges"])])
           if (badge["setID"] is String && badge["version"] is String && badge["title"] is String)
             "${badge["setID"]}/${badge["version"]}": badge["title"]! as String,
       },
-      emoteIdsByName: {
-        for (final emote in [
-          ..._mapList(_mapValue(result["emoteSet"])?["emotes"]),
-          for (final product in _mapList(user?["subscriptionProducts"]))
-            ..._mapList(product["emotes"]),
-          for (final set in _mapList(channel?["localEmoteSets"])) ..._mapList(set["emotes"]),
-        ])
-          if (emote["token"] is String && emote["id"] is String)
-            emote["token"]! as String: emote["id"]! as String,
-      },
+      emoteIdsByName: {...globalEmotes, ...channelEmotes},
+      globalEmoteIdsByName: globalEmotes,
+      channelEmoteIdsByName: channelEmotes,
     );
   }
 
+  Future<Map<String, String>> fetchUnlockedChatEmotes(String channelId) async {
+    if (_nonEmptyValue(gqlAccessToken) == null) {
+      return const {};
+    }
+    final emotes = <String, String>{};
+    final cursors = <String>{};
+    String? cursor;
+    while (true) {
+      final data = await _query(
+        () => _authenticatedGraphQlClient.query$FlowUnlockedChatEmotes(
+          Options$Query$FlowUnlockedChatEmotes(
+            variables: Variables$Query$FlowUnlockedChatEmotes(channelID: channelId, cursor: cursor),
+            fetchPolicy: graphql.FetchPolicy.noCache,
+          ),
+        ),
+        "FlowUnlockedChatEmotes",
+        retryIntegrityChallenge: true,
+      );
+      final channel = _mapValue(data.toJson()["channel"]);
+      final connection = _mapValue(_mapValue(channel?["self"])?["availableEmoteSetsPaginated"]);
+      final edges = connection?["edges"];
+      final hasNextPage = _mapValue(connection?["pageInfo"])?["hasNextPage"];
+      if (channel?["id"] != channelId || edges is! List || hasNextPage is! bool) {
+        throw TwitchApiException("Could not load your unlocked Twitch emotes. Try again.");
+      }
+      for (final edge in _mapList(edges)) {
+        for (final emote in _mapList(_mapValue(edge["node"])?["emotes"])) {
+          final name = _nonEmptyValue(emote["token"] as String?);
+          final id = _nonEmptyValue(emote["id"] as String?);
+          if (name != null && id != null) {
+            emotes[name] = id;
+          }
+        }
+      }
+      if (!hasNextPage) {
+        break;
+      }
+      cursor = edges.isEmpty ? null : _nonEmptyValue(_mapValue(edges.last)?["cursor"] as String?);
+      if (cursor == null || !cursors.add(cursor)) {
+        throw TwitchApiException("Twitch emote pagination did not advance.");
+      }
+    }
+    return emotes;
+  }
+
   Future<TwitchChatters> fetchChatters(String login) async {
+    final signedIn = _nonEmptyValue(gqlAccessToken) != null;
     final data = await _query(
-      () => _graphQlClient.query$FlowChatters(
+      () => (signedIn ? _authenticatedGraphQlClient : _graphQlClient).query$FlowChatters(
         Options$Query$FlowChatters(
           variables: Variables$Query$FlowChatters(login: login.trim().toLowerCase()),
           fetchPolicy: graphql.FetchPolicy.noCache,
         ),
       ),
       "FlowChatters",
+      retryIntegrityChallenge: signedIn,
     );
     final user = _mapValue(data.toJson()["user"]);
     final chatters = _mapValue(_mapValue(user?["channel"])?["chatters"]);
@@ -982,7 +1314,7 @@ class TwitchApiClient {
     return TwitchChatters(
       count: _intValue(chatters["count"]),
       groups: {
-        for (final role in ["broadcasters", "moderators", "vips", "staff", "viewers"])
+        for (final role in ["broadcasters", "moderators", "vips", "staff", "chatbots", "viewers"])
           role: [
             for (final viewer in _mapList(chatters[role]))
               ?_nonEmptyValue(viewer["login"] as String?),
@@ -1020,6 +1352,7 @@ class TwitchApiClient {
     return TwitchPinnedChat(
       id: id,
       message: _chatMessageFromGraphQl(message),
+      startsAt: _dateTimeValue(pin?["startsAt"]),
       endsAt: _dateTimeValue(pin?["endsAt"]),
       pinnedBy: pinnerId == null
           ? null
@@ -1031,6 +1364,32 @@ class TwitchApiClient {
                   _stringValue(pinner?["login"]),
             ),
     );
+  }
+
+  Future<List<TwitchChatMessage>> fetchRecentChat(String channelId) async {
+    if (_nonEmptyValue(gqlAccessToken) == null) {
+      return const [];
+    }
+    final id = channelId.trim();
+    if (!RegExp(r"^\d+$").hasMatch(id)) {
+      throw TwitchApiException("Choose a valid channel to load recent chat.");
+    }
+    final data = await _query(
+      () => _authenticatedGraphQlClient.query$FlowRecentChat(
+        Options$Query$FlowRecentChat(
+          variables: Variables$Query$FlowRecentChat(channelID: id),
+          fetchPolicy: graphql.FetchPolicy.noCache,
+        ),
+      ),
+      "FlowRecentChat",
+      retryIntegrityChallenge: true,
+    );
+    final channel = _mapValue(data.toJson()["channel"]);
+    final messages = channel?["recentChatMessages"];
+    if (channel?["id"] != id || messages is! List) {
+      throw TwitchApiException("Recent chat is unavailable for this channel.");
+    }
+    return [for (final message in _mapList(messages)) _chatMessageFromGraphQl(message)];
   }
 
   Future<List<TwitchChatMessage>> fetchChatReplyThread(String messageId) async {
@@ -1361,6 +1720,7 @@ class TwitchApiClient {
     Future<graphql.QueryResult<T>> Function() request,
     String operationName, {
     bool retryIntegrityChallenge = false,
+    bool allowPartialData = false,
   }) async {
     final revision = _webSessionRevision;
     final attemptedGrant = _integrityGrant;
@@ -1382,7 +1742,8 @@ class TwitchApiClient {
       }
     }
     final exception = result.exception;
-    if (exception != null) {
+    if (exception != null &&
+        !(allowPartialData && exception.linkException == null && result.parsedData != null)) {
       throw TwitchApiException(
         "Twitch GraphQL $operationName failed: ${_graphQlExceptionMessage(exception)}",
         isTransient: _isTransientGraphQlException(exception),
@@ -1606,6 +1967,7 @@ class TwitchApiClient {
     login: _stringValue(user["login"]),
     displayName: _stringValue(user["displayName"]),
     profileImageUrl: user["profileImageURL"] as String?,
+    chatColor: user["chatColor"] as String?,
   );
 
   static TwitchFollowedStream _streamFromGraphQlStream(
@@ -1817,11 +2179,14 @@ class TwitchApiClient {
       emotes: buffer.toString() == text ? emotes : const [],
       timestamp: _dateTimeValue(message["sentAt"]),
       isDeleted: message["deletedAt"] != null,
+      moderation: message["deletedAt"] != null ? TwitchChatModeration.deleted : null,
+      moderatedAt: _dateTimeValue(message["deletedAt"]),
       parentMessageId: parent?["id"] as String?,
       parentUserId: parentSender?["id"] as String?,
       parentLogin: parentSender?["login"] as String?,
       parentDisplayName: parentSender?["displayName"] as String?,
       parentText: _mapValue(parent?["content"])?["text"] as String?,
+      parentEmotes: parent == null ? const [] : _chatMessageFromGraphQl(parent).emotes,
       threadRootId: thread?["id"] as String? ?? threadRootId,
       threadRootLogin: _mapValue(thread?["sender"])?["login"] as String? ?? threadRootLogin,
     );

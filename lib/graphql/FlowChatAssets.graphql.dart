@@ -267,6 +267,27 @@ const documentNodeQueryFlowChatAssets = DocumentNode(
                   selectionSet: null,
                 ),
                 FieldNode(
+                  name: NameNode(value: 'login'),
+                  alias: null,
+                  arguments: [],
+                  directives: [],
+                  selectionSet: null,
+                ),
+                FieldNode(
+                  name: NameNode(value: 'displayName'),
+                  alias: null,
+                  arguments: [],
+                  directives: [],
+                  selectionSet: null,
+                ),
+                FieldNode(
+                  name: NameNode(value: 'chatColor'),
+                  alias: null,
+                  arguments: [],
+                  directives: [],
+                  selectionSet: null,
+                ),
+                FieldNode(
                   name: NameNode(value: 'broadcastBadges'),
                   alias: null,
                   arguments: [],
@@ -737,6 +758,9 @@ class Query$FlowChatAssets$emoteSet$emotes {
 class Query$FlowChatAssets$user {
   Query$FlowChatAssets$user({
     this.id,
+    this.login,
+    this.displayName,
+    this.chatColor,
     this.broadcastBadges,
     this.subscriptionProducts,
     this.channel,
@@ -744,6 +768,13 @@ class Query$FlowChatAssets$user {
 
   factory Query$FlowChatAssets$user.fromJson(Map<String, dynamic> json) {
     final l$id = json.containsKey('id') ? json['id'] : null;
+    final l$login = json.containsKey('login') ? json['login'] : null;
+    final l$displayName = json.containsKey('displayName')
+        ? json['displayName']
+        : null;
+    final l$chatColor = json.containsKey('chatColor')
+        ? json['chatColor']
+        : null;
     final l$broadcastBadges = json.containsKey('broadcastBadges')
         ? json['broadcastBadges']
         : null;
@@ -753,6 +784,9 @@ class Query$FlowChatAssets$user {
     final l$channel = json.containsKey('channel') ? json['channel'] : null;
     return Query$FlowChatAssets$user(
       id: (l$id as String?),
+      login: (l$login as String?),
+      displayName: (l$displayName as String?),
+      chatColor: (l$chatColor as String?),
       broadcastBadges: (l$broadcastBadges as List<dynamic>?)
           ?.map(
             (e) => e == null
@@ -781,6 +815,12 @@ class Query$FlowChatAssets$user {
 
   final String? id;
 
+  final String? login;
+
+  final String? displayName;
+
+  final String? chatColor;
+
   final List<Query$FlowChatAssets$user$broadcastBadges?>? broadcastBadges;
 
   final List<Query$FlowChatAssets$user$subscriptionProducts?>?
@@ -792,6 +832,12 @@ class Query$FlowChatAssets$user {
     final _resultData = <String, dynamic>{};
     final l$id = id;
     _resultData['id'] = l$id;
+    final l$login = login;
+    _resultData['login'] = l$login;
+    final l$displayName = displayName;
+    _resultData['displayName'] = l$displayName;
+    final l$chatColor = chatColor;
+    _resultData['chatColor'] = l$chatColor;
     final l$broadcastBadges = broadcastBadges;
     _resultData['broadcastBadges'] = l$broadcastBadges
         ?.map((e) => e?.toJson())
@@ -808,11 +854,17 @@ class Query$FlowChatAssets$user {
   @override
   int get hashCode {
     final l$id = id;
+    final l$login = login;
+    final l$displayName = displayName;
+    final l$chatColor = chatColor;
     final l$broadcastBadges = broadcastBadges;
     final l$subscriptionProducts = subscriptionProducts;
     final l$channel = channel;
     return Object.hashAll([
       l$id,
+      l$login,
+      l$displayName,
+      l$chatColor,
       l$broadcastBadges == null
           ? null
           : Object.hashAll(l$broadcastBadges.map((v) => v)),
@@ -835,6 +887,21 @@ class Query$FlowChatAssets$user {
     final l$id = id;
     final lOther$id = other.id;
     if (l$id != lOther$id) {
+      return false;
+    }
+    final l$login = login;
+    final lOther$login = other.login;
+    if (l$login != lOther$login) {
+      return false;
+    }
+    final l$displayName = displayName;
+    final lOther$displayName = other.displayName;
+    if (l$displayName != lOther$displayName) {
+      return false;
+    }
+    final l$chatColor = chatColor;
+    final lOther$chatColor = other.chatColor;
+    if (l$chatColor != lOther$chatColor) {
       return false;
     }
     final l$broadcastBadges = broadcastBadges;

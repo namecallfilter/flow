@@ -3,6 +3,30 @@ import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  test(
+    "accepted rules survive preferences recreation separately for each viewer and channel",
+    () async {
+      final store = _MemoryPreferencesStore();
+      final preferences = SharedPreferencesFlowPreferences(store: store);
+      expect(await preferences.readAcceptedChatRules("viewer:channel"), isEmpty);
+      await preferences.saveAcceptedChatRules("viewer:channel", ["Be kind", "No spoilers"]);
+      final restored = SharedPreferencesFlowPreferences(store: store);
+      expect(await restored.readAcceptedChatRules("viewer:channel"), ["Be kind", "No spoilers"]);
+      expect(await restored.readAcceptedChatRules("another:channel"), isEmpty);
+      expect(await restored.readAcceptedChatRules("viewer:another"), isEmpty);
+    },
+  );
+
+  test("recent emotes preserve serialized provider data and keep the latest forty", () async {
+    final store = _MemoryPreferencesStore();
+    final preferences = SharedPreferencesFlowPreferences(store: store);
+    expect(await preferences.readRecentChatEmotes(), isEmpty);
+    final emotes = List.generate(45, (index) => '{"provider":"twitch","id":"$index"}');
+    await preferences.saveRecentChatEmotes(["", ...emotes]);
+    final restored = await SharedPreferencesFlowPreferences(store: store).readRecentChatEmotes();
+    expect(restored, emotes.take(40));
+  });
+
   test("chat appearance and emote providers persist with safe font defaults", () async {
     final store = _MemoryPreferencesStore();
     final preferences = SharedPreferencesFlowPreferences(store: store);
@@ -11,35 +35,47 @@ void main() {
     expect(defaults.showTimestamps, isFalse);
     expect(defaults.showBadges, isTrue);
     expect(defaults.emoteScale, 1);
+    expect(defaults.emoteAutocomplete, isTrue);
+    expect(defaults.sevenTvPaints, isTrue);
+    expect(defaults.animatedPaints, isTrue);
     expect(defaults.badgeScale, 1);
     expect(defaults.messageScale, 1);
     expect(defaults.messageSpacing, 6);
     expect(defaults.showDeletedMessages, isFalse);
     expect(defaults.autoSyncChat, isTrue);
+    expect(defaults.autoClaimChannelPoints, isFalse);
+    expect(defaults.showWatchStreakPopups, isTrue);
     expect(defaults.manualChatDelaySeconds, 0);
     expect(defaults.highlightFirstMessages, isTrue);
     expect(defaults.showSubscriptionNotices, isTrue);
     expect(defaults.showAnnouncements, isTrue);
     expect(defaults.showRaidNotices, isTrue);
+    expect(defaults.showModerationNotices, isTrue);
     await preferences.saveChatPreferences(
       const ChatPreferences(
         fontSize: 19,
         emoteScale: 1.5,
+        emoteAutocomplete: false,
         badgeScale: 0.8,
         messageScale: 1.7,
         messageSpacing: 12,
         showTimestamps: true,
         showDeletedMessages: true,
         autoSyncChat: false,
+        autoClaimChannelPoints: true,
+        showWatchStreakPopups: false,
         manualChatDelaySeconds: 23,
         highlightFirstMessages: false,
         showSubscriptionNotices: false,
         showAnnouncements: false,
         showRaidNotices: false,
+        showModerationNotices: false,
         showBadges: false,
         showEmotes: false,
         twitchBadges: false,
         sevenTvBadges: false,
+        sevenTvPaints: false,
+        animatedPaints: false,
         bttvBadges: false,
         ffzBadges: false,
         twitchEmotes: false,
@@ -51,27 +87,45 @@ void main() {
     final restored = await SharedPreferencesFlowPreferences(store: store).readChatPreferences();
     expect(restored.fontSize, 19);
     expect(restored.emoteScale, 1.5);
+    expect(restored.emoteAutocomplete, isFalse);
     expect(restored.badgeScale, 0.8);
     expect(restored.messageScale, 1.7);
     expect(restored.messageSpacing, 12);
     expect(restored.showTimestamps, isTrue);
     expect(restored.showDeletedMessages, isTrue);
     expect(restored.autoSyncChat, isFalse);
+    expect(restored.autoClaimChannelPoints, isTrue);
+    expect(restored.showWatchStreakPopups, isFalse);
     expect(restored.manualChatDelaySeconds, 23);
     expect(restored.highlightFirstMessages, isFalse);
     expect(restored.showSubscriptionNotices, isFalse);
     expect(restored.showAnnouncements, isFalse);
     expect(restored.showRaidNotices, isFalse);
+    expect(restored.showModerationNotices, isFalse);
     expect(restored.showBadges, isFalse);
     expect(restored.showEmotes, isFalse);
     expect(restored.twitchBadges, isFalse);
     expect(restored.sevenTvBadges, isFalse);
+    expect(restored.sevenTvPaints, isFalse);
+    expect(restored.animatedPaints, isFalse);
     expect(restored.bttvBadges, isFalse);
     expect(restored.ffzBadges, isFalse);
     expect(restored.twitchEmotes, isFalse);
     expect(restored.sevenTvEmotes, isFalse);
     expect(restored.bttvEmotes, isFalse);
     expect(restored.ffzEmotes, isFalse);
+    await preferences.saveChatPreferences(restored.copyWith(fontSize: 20));
+    expect((await preferences.readChatPreferences()).emoteAutocomplete, isFalse);
+    expect((await preferences.readChatPreferences()).sevenTvPaints, isFalse);
+    expect((await preferences.readChatPreferences()).animatedPaints, isFalse);
+    expect((await preferences.readChatPreferences()).autoClaimChannelPoints, isTrue);
+    expect((await preferences.readChatPreferences()).showWatchStreakPopups, isFalse);
+    await preferences.saveChatPreferences(const ChatPreferences());
+    expect((await preferences.readChatPreferences()).emoteAutocomplete, isTrue);
+    expect((await preferences.readChatPreferences()).sevenTvPaints, isTrue);
+    expect((await preferences.readChatPreferences()).animatedPaints, isTrue);
+    expect((await preferences.readChatPreferences()).autoClaimChannelPoints, isFalse);
+    expect((await preferences.readChatPreferences()).showWatchStreakPopups, isTrue);
     store.stringLists["chat_settings"] = ["NaN"];
     expect((await preferences.readChatPreferences()).fontSize, 14);
     store.stringLists["chat_settings"] = ["900"];

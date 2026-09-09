@@ -48,7 +48,16 @@ void main() {
                         "content": {"text": "@alice yes", "fragments": <Object>[]},
                         "parentMessage": {
                           "id": "root",
-                          "content": {"text": "😀 Kappa"},
+                          "content": {
+                            "text": "😀 Kappa",
+                            "fragments": [
+                              {"text": "😀 "},
+                              {
+                                "text": "Kappa",
+                                "content": {"__typename": "Emote", "emoteID": "25"},
+                              },
+                            ],
+                          },
                           "sender": {"id": "1", "login": "alice", "displayName": "Alice"},
                         },
                       },
@@ -76,6 +85,9 @@ void main() {
       expect(reply.parentMessageId, "root");
       expect(reply.parentUserId, "1");
       expect(reply.parentText, "😀 Kappa");
+      expect(reply.parentEmotes.single.id, "25");
+      expect(reply.parentEmotes.single.start, 3);
+      expect(reply.parentEmotes.single.end, 8);
       expect(reply.isDeleted, isTrue);
     },
   );

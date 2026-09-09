@@ -49,6 +49,151 @@ void main() {
     },
   );
 
+  test("chat profile loads channel-specific subscription details and every earned badge", () async {
+    final client = TwitchApiClient(
+      clientId: "client",
+      accessToken: "native-token",
+      gqlAccessToken: "web-token",
+      httpClient: MockClient((request) async {
+        expect(request.headers["authorization"], "OAuth web-token");
+        final payload = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(payload["variables"], {
+          "userID": "123",
+          "lookupLogin": null,
+          "login": "viewer",
+          "channelID": "456",
+          "channelLogin": "channel",
+          "withRelationship": true,
+        });
+        expect(payload["query"], contains("relationship(targetUserID:"));
+        expect(payload["query"], contains("channelViewer(userLogin:"));
+        return _jsonResponse({
+          "data": {
+            "targetUser": {
+              "id": "123",
+              "login": "viewer",
+              "displayName": "Viewer",
+              "chatColor": "#00FF7F",
+              "createdAt": "2018-10-12T18:27:29Z",
+              "profileImageURL": "https://example.com/avatar.png",
+              "displayBadges": [
+                {
+                  "id": "mod",
+                  "setID": "moderator",
+                  "version": "1",
+                  "title": "Moderator",
+                  "imageURL": "https://example.com/mod.png",
+                },
+              ],
+              "relationship": {
+                "cumulativeTenure": {"months": 14},
+                "subscriptionBenefit": {"id": "sub", "tier": "1000", "purchasedWithPrime": true},
+              },
+            },
+            "channelViewer": {
+              "id": "123:456",
+              "earnedBadges": [
+                {
+                  "id": "mod",
+                  "setID": "moderator",
+                  "version": "1",
+                  "title": "Moderator",
+                  "imageURL": "https://example.com/mod.png",
+                },
+                for (var index = 0; index < 24; index++)
+                  {
+                    "id": "$index",
+                    "setID": "earned$index",
+                    "version": "1",
+                    "title": "Badge $index",
+                    "imageURL": "https://example.com/$index.png",
+                  },
+              ],
+            },
+          },
+        });
+      }),
+    );
+    final profile = (await client.fetchChatUser(
+      userId: "123",
+      login: " Viewer ",
+      channelId: "456",
+      channelLogin: " Channel ",
+    ))!;
+    expect(profile.createdAt?.toUtc(), DateTime.utc(2018, 10, 12, 18, 27, 29));
+    expect(profile.chatColor, "#00FF7F");
+    expect(profile.badges, hasLength(25));
+    expect(profile.badges.first.id, "moderator/1");
+    expect(profile.badges.last.title, "Badge 23");
+    expect(profile.isSubscribed, isTrue);
+    expect(profile.subscriptionTier, "1000");
+    expect(profile.subscriptionMonths, 14);
+    expect(profile.subscriptionIsPrime, isTrue);
+  });
+
+  test(
+    "chat profile retains public metadata when subscription relationship is unavailable",
+    () async {
+      var grants = 0;
+      var requests = 0;
+      final client = TwitchApiClient(
+        clientId: "client",
+        accessToken: "native-token",
+        gqlAccessToken: "web-token",
+        integrityContextLoader: (_) async {
+          grants++;
+          return null;
+        },
+        httpClient: MockClient((request) async {
+          requests++;
+          return _jsonResponse({
+            "errors": [
+              {
+                "message": "failed integrity check",
+                "path": ["targetUser", "relationship"],
+              },
+            ],
+            "data": {
+              "targetUser": {
+                "id": "123",
+                "login": "viewer",
+                "displayName": "Viewer",
+                "chatColor": "#00FF7F",
+                "createdAt": "2018-10-12T18:27:29Z",
+                "relationship": null,
+              },
+              "channelViewer": {
+                "id": "123:456",
+                "earnedBadges": [
+                  {
+                    "id": "sub",
+                    "setID": "subscriber",
+                    "version": "12",
+                    "title": "Subscriber",
+                    "imageURL": "https://example.com/sub.png",
+                  },
+                ],
+              },
+            },
+          });
+        }),
+      );
+      final profile = (await client.fetchChatUser(
+        login: "viewer",
+        channelId: "456",
+        channelLogin: "channel",
+      ))!;
+      expect(grants, 1);
+      expect(requests, 1);
+      expect(profile.createdAt?.year, 2018);
+      expect(profile.chatColor, "#00FF7F");
+      expect(profile.badges.single.id, "subscriber/12");
+      expect(profile.isSubscribed, isNull);
+      expect(profile.subscriptionTier, isNull);
+      expect(profile.subscriptionMonths, isNull);
+    },
+  );
+
   test(
     "blocks the selected user through the signed-in web account and confirms the target",
     () async {

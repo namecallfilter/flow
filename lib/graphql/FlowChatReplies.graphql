@@ -38,7 +38,16 @@ fragment FlowChatReplyMessage on Message {
   }
   parentMessage {
     id
-    content { text }
+    content {
+      text
+      fragments {
+        text
+        content {
+          __typename
+          ... on Emote { emoteID: id }
+        }
+      }
+    }
     sender { id login displayName }
   }
   threadParentMessage {

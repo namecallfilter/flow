@@ -4,6 +4,7 @@ query FlowChatters($login: String!) {
       chatters {
         count
         broadcasters { login }
+        chatbots { login }
         moderators { login }
         vips { login }
         staff { login }

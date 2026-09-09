@@ -1,0 +1,14 @@
+query FlowUnlockedChatEmotes($channelID: ID!, $cursor: Cursor) {
+  channel(id: $channelID) {
+    id
+    self {
+      availableEmoteSetsPaginated(pageLimit: 100, after: $cursor) {
+        edges {
+          cursor
+          node { id emotes { id token } }
+        }
+        pageInfo { hasNextPage }
+      }
+    }
+  }
+}

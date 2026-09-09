@@ -171,6 +171,13 @@ const documentNodeQueryFlowPinnedChat = DocumentNode(
                                     selectionSet: null,
                                   ),
                                   FieldNode(
+                                    name: NameNode(value: 'startsAt'),
+                                    alias: null,
+                                    arguments: [],
+                                    directives: [],
+                                    selectionSet: null,
+                                  ),
+                                  FieldNode(
                                     name: NameNode(value: 'endsAt'),
                                     alias: null,
                                     arguments: [],
@@ -422,6 +429,85 @@ const documentNodeQueryFlowPinnedChat = DocumentNode(
                                                       arguments: [],
                                                       directives: [],
                                                       selectionSet: null,
+                                                    ),
+                                                    FieldNode(
+                                                      name: NameNode(
+                                                        value: 'fragments',
+                                                      ),
+                                                      alias: null,
+                                                      arguments: [],
+                                                      directives: [],
+                                                      selectionSet: SelectionSetNode(
+                                                        selections: [
+                                                          FieldNode(
+                                                            name: NameNode(
+                                                              value: 'text',
+                                                            ),
+                                                            alias: null,
+                                                            arguments: [],
+                                                            directives: [],
+                                                            selectionSet: null,
+                                                          ),
+                                                          FieldNode(
+                                                            name: NameNode(
+                                                              value: 'content',
+                                                            ),
+                                                            alias: null,
+                                                            arguments: [],
+                                                            directives: [],
+                                                            selectionSet: SelectionSetNode(
+                                                              selections: [
+                                                                FieldNode(
+                                                                  name: NameNode(
+                                                                    value:
+                                                                        '__typename',
+                                                                  ),
+                                                                  alias: null,
+                                                                  arguments: [],
+                                                                  directives:
+                                                                      [],
+                                                                  selectionSet:
+                                                                      null,
+                                                                ),
+                                                                InlineFragmentNode(
+                                                                  typeCondition: TypeConditionNode(
+                                                                    on: NamedTypeNode(
+                                                                      name: NameNode(
+                                                                        value:
+                                                                            'Emote',
+                                                                      ),
+                                                                      isNonNull:
+                                                                          false,
+                                                                    ),
+                                                                  ),
+                                                                  directives:
+                                                                      [],
+                                                                  selectionSet: SelectionSetNode(
+                                                                    selections: [
+                                                                      FieldNode(
+                                                                        name: NameNode(
+                                                                          value:
+                                                                              'id',
+                                                                        ),
+                                                                        alias: NameNode(
+                                                                          value:
+                                                                              'emoteID',
+                                                                        ),
+                                                                        arguments:
+                                                                            [],
+                                                                        directives:
+                                                                            [],
+                                                                        selectionSet:
+                                                                            null,
+                                                                      ),
+                                                                    ],
+                                                                  ),
+                                                                ),
+                                                              ],
+                                                            ),
+                                                          ),
+                                                        ],
+                                                      ),
                                                     ),
                                                   ],
                                                 ),
@@ -835,6 +921,7 @@ class Query$FlowPinnedChat$channel$pinnedChatMessages$edges {
 class Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node {
   Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node({
     this.id,
+    this.startsAt,
     this.endsAt,
     this.pinnedBy,
     this.pinnedMessage,
@@ -844,6 +931,7 @@ class Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node {
     Map<String, dynamic> json,
   ) {
     final l$id = json.containsKey('id') ? json['id'] : null;
+    final l$startsAt = json.containsKey('startsAt') ? json['startsAt'] : null;
     final l$endsAt = json.containsKey('endsAt') ? json['endsAt'] : null;
     final l$pinnedBy = json.containsKey('pinnedBy') ? json['pinnedBy'] : null;
     final l$pinnedMessage = json.containsKey('pinnedMessage')
@@ -851,6 +939,7 @@ class Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node {
         : null;
     return Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node(
       id: (l$id as String?),
+      startsAt: (l$startsAt as String?),
       endsAt: (l$endsAt as String?),
       pinnedBy: l$pinnedBy == null
           ? null
@@ -867,6 +956,8 @@ class Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node {
 
   final String? id;
 
+  final String? startsAt;
+
   final String? endsAt;
 
   final Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedBy?
@@ -879,6 +970,8 @@ class Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node {
     final _resultData = <String, dynamic>{};
     final l$id = id;
     _resultData['id'] = l$id;
+    final l$startsAt = startsAt;
+    _resultData['startsAt'] = l$startsAt;
     final l$endsAt = endsAt;
     _resultData['endsAt'] = l$endsAt;
     final l$pinnedBy = pinnedBy;
@@ -891,10 +984,17 @@ class Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node {
   @override
   int get hashCode {
     final l$id = id;
+    final l$startsAt = startsAt;
     final l$endsAt = endsAt;
     final l$pinnedBy = pinnedBy;
     final l$pinnedMessage = pinnedMessage;
-    return Object.hashAll([l$id, l$endsAt, l$pinnedBy, l$pinnedMessage]);
+    return Object.hashAll([
+      l$id,
+      l$startsAt,
+      l$endsAt,
+      l$pinnedBy,
+      l$pinnedMessage,
+    ]);
   }
 
   @override
@@ -909,6 +1009,11 @@ class Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node {
     final l$id = id;
     final lOther$id = other.id;
     if (l$id != lOther$id) {
+      return false;
+    }
+    final l$startsAt = startsAt;
+    final lOther$startsAt = other.startsAt;
+    if (l$startsAt != lOther$startsAt) {
       return false;
     }
     final l$endsAt = endsAt;
@@ -2304,30 +2409,54 @@ class Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$p
 class Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content {
   Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content({
     this.text,
+    this.fragments,
   });
 
   factory Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content.fromJson(
     Map<String, dynamic> json,
   ) {
     final l$text = json.containsKey('text') ? json['text'] : null;
+    final l$fragments = json.containsKey('fragments')
+        ? json['fragments']
+        : null;
     return Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content(
       text: (l$text as String?),
+      fragments: (l$fragments as List<dynamic>?)
+          ?.map(
+            (e) => e == null
+                ? null
+                : Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments.fromJson(
+                    (e as Map<String, dynamic>),
+                  ),
+          )
+          .toList(),
     );
   }
 
   final String? text;
 
+  final List<
+    Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments?
+  >?
+  fragments;
+
   Map<String, dynamic> toJson() {
     final _resultData = <String, dynamic>{};
     final l$text = text;
     _resultData['text'] = l$text;
+    final l$fragments = fragments;
+    _resultData['fragments'] = l$fragments?.map((e) => e?.toJson()).toList();
     return _resultData;
   }
 
   @override
   int get hashCode {
     final l$text = text;
-    return Object.hashAll([l$text]);
+    final l$fragments = fragments;
+    return Object.hashAll([
+      l$text,
+      l$fragments == null ? null : Object.hashAll(l$fragments.map((v) => v)),
+    ]);
   }
 
   @override
@@ -2343,6 +2472,806 @@ class Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$p
     final l$text = text;
     final lOther$text = other.text;
     if (l$text != lOther$text) {
+      return false;
+    }
+    final l$fragments = fragments;
+    final lOther$fragments = other.fragments;
+    if (l$fragments != null && lOther$fragments != null) {
+      if (l$fragments.length != lOther$fragments.length) {
+        return false;
+      }
+      for (int i = 0; i < l$fragments.length; i++) {
+        final l$fragments$entry = l$fragments[i];
+        final lOther$fragments$entry = lOther$fragments[i];
+        if (l$fragments$entry != lOther$fragments$entry) {
+          return false;
+        }
+      }
+    } else if (l$fragments != lOther$fragments) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments {
+  Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments({
+    this.text,
+    this.content,
+  });
+
+  factory Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$text = json.containsKey('text') ? json['text'] : null;
+    final l$content = json.containsKey('content') ? json['content'] : null;
+    return Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments(
+      text: (l$text as String?),
+      content: l$content == null
+          ? null
+          : Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content.fromJson(
+              (l$content as Map<String, dynamic>),
+            ),
+    );
+  }
+
+  final String? text;
+
+  final Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content?
+  content;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$text = text;
+    _resultData['text'] = l$text;
+    final l$content = content;
+    _resultData['content'] = l$content?.toJson();
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$text = text;
+    final l$content = content;
+    return Object.hashAll([l$text, l$content]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$text = text;
+    final lOther$text = other.text;
+    if (l$text != lOther$text) {
+      return false;
+    }
+    final l$content = content;
+    final lOther$content = other.content;
+    if (l$content != lOther$content) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content {
+  Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content({
+    required this.$__typename,
+  });
+
+  factory Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    switch (json["__typename"] as String) {
+      case "Emote":
+        return Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$Emote.fromJson(
+          json,
+        );
+
+      case "ActivityFeedCheermote":
+        return Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote.fromJson(
+          json,
+        );
+
+      case "ActivityFeedIntegerToken":
+        return Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken.fromJson(
+          json,
+        );
+
+      case "ActivityFeedPercentToken":
+        return Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken.fromJson(
+          json,
+        );
+
+      case "ActivityFeedTextToken":
+        return Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken.fromJson(
+          json,
+        );
+
+      case "User":
+        return Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$User.fromJson(
+          json,
+        );
+
+      case "UserDoesNotExist":
+        return Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$UserDoesNotExist.fromJson(
+          json,
+        );
+
+      case "UserError":
+        return Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$UserError.fromJson(
+          json,
+        );
+
+      default:
+        final l$$__typename = json['__typename'];
+        return Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content(
+          $__typename: (l$$__typename as String),
+        );
+    }
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+extension UtilityExtension$Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content
+    on
+        Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content {
+  _T when<_T>({
+    required _T Function(
+      Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$Emote,
+    )
+    emote,
+    required _T Function(
+      Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote,
+    )
+    activityFeedCheermote,
+    required _T Function(
+      Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken,
+    )
+    activityFeedIntegerToken,
+    required _T Function(
+      Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken,
+    )
+    activityFeedPercentToken,
+    required _T Function(
+      Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken,
+    )
+    activityFeedTextToken,
+    required _T Function(
+      Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$User,
+    )
+    user,
+    required _T Function(
+      Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$UserDoesNotExist,
+    )
+    userDoesNotExist,
+    required _T Function(
+      Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$UserError,
+    )
+    userError,
+    required _T Function() orElse,
+  }) {
+    switch ($__typename) {
+      case "Emote":
+        return emote(
+          this
+              as Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$Emote,
+        );
+
+      case "ActivityFeedCheermote":
+        return activityFeedCheermote(
+          this
+              as Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote,
+        );
+
+      case "ActivityFeedIntegerToken":
+        return activityFeedIntegerToken(
+          this
+              as Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken,
+        );
+
+      case "ActivityFeedPercentToken":
+        return activityFeedPercentToken(
+          this
+              as Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken,
+        );
+
+      case "ActivityFeedTextToken":
+        return activityFeedTextToken(
+          this
+              as Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken,
+        );
+
+      case "User":
+        return user(
+          this
+              as Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$User,
+        );
+
+      case "UserDoesNotExist":
+        return userDoesNotExist(
+          this
+              as Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$UserDoesNotExist,
+        );
+
+      case "UserError":
+        return userError(
+          this
+              as Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$UserError,
+        );
+
+      default:
+        return orElse();
+    }
+  }
+
+  _T maybeWhen<_T>({
+    _T Function(
+      Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$Emote,
+    )?
+    emote,
+    _T Function(
+      Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote,
+    )?
+    activityFeedCheermote,
+    _T Function(
+      Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken,
+    )?
+    activityFeedIntegerToken,
+    _T Function(
+      Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken,
+    )?
+    activityFeedPercentToken,
+    _T Function(
+      Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken,
+    )?
+    activityFeedTextToken,
+    _T Function(
+      Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$User,
+    )?
+    user,
+    _T Function(
+      Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$UserDoesNotExist,
+    )?
+    userDoesNotExist,
+    _T Function(
+      Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$UserError,
+    )?
+    userError,
+    required _T Function() orElse,
+  }) {
+    switch ($__typename) {
+      case "Emote":
+        if (emote != null) {
+          return emote(
+            this
+                as Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$Emote,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "ActivityFeedCheermote":
+        if (activityFeedCheermote != null) {
+          return activityFeedCheermote(
+            this
+                as Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "ActivityFeedIntegerToken":
+        if (activityFeedIntegerToken != null) {
+          return activityFeedIntegerToken(
+            this
+                as Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "ActivityFeedPercentToken":
+        if (activityFeedPercentToken != null) {
+          return activityFeedPercentToken(
+            this
+                as Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "ActivityFeedTextToken":
+        if (activityFeedTextToken != null) {
+          return activityFeedTextToken(
+            this
+                as Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "User":
+        if (user != null) {
+          return user(
+            this
+                as Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$User,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "UserDoesNotExist":
+        if (userDoesNotExist != null) {
+          return userDoesNotExist(
+            this
+                as Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$UserDoesNotExist,
+          );
+        } else {
+          return orElse();
+        }
+
+      case "UserError":
+        if (userError != null) {
+          return userError(
+            this
+                as Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$UserError,
+          );
+        } else {
+          return orElse();
+        }
+
+      default:
+        return orElse();
+    }
+  }
+}
+
+class Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$Emote
+    implements
+        Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content {
+  Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$Emote({
+    this.emoteID,
+    this.$__typename = 'Emote',
+  });
+
+  factory Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$Emote.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$emoteID = json.containsKey('emoteID') ? json['emoteID'] : null;
+    final l$$__typename = json['__typename'];
+    return Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$Emote(
+      emoteID: (l$emoteID as String?),
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String? emoteID;
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$emoteID = emoteID;
+    _resultData['emoteID'] = l$emoteID;
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$emoteID = emoteID;
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$emoteID, l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$Emote ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$emoteID = emoteID;
+    final lOther$emoteID = other.emoteID;
+    if (l$emoteID != lOther$emoteID) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote
+    implements
+        Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content {
+  Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote({
+    this.$__typename = 'ActivityFeedCheermote',
+  });
+
+  factory Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedCheermote ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken
+    implements
+        Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content {
+  Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken({
+    this.$__typename = 'ActivityFeedIntegerToken',
+  });
+
+  factory Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedIntegerToken ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken
+    implements
+        Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content {
+  Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken({
+    this.$__typename = 'ActivityFeedPercentToken',
+  });
+
+  factory Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedPercentToken ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken
+    implements
+        Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content {
+  Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken({
+    this.$__typename = 'ActivityFeedTextToken',
+  });
+
+  factory Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$ActivityFeedTextToken ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$User
+    implements
+        Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content {
+  Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$User({
+    this.$__typename = 'User',
+  });
+
+  factory Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$User.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$User(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$User ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$UserDoesNotExist
+    implements
+        Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content {
+  Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$UserDoesNotExist({
+    this.$__typename = 'UserDoesNotExist',
+  });
+
+  factory Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$UserDoesNotExist.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$UserDoesNotExist(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$UserDoesNotExist ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$UserError
+    implements
+        Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content {
+  Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$UserError({
+    this.$__typename = 'UserError',
+  });
+
+  factory Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$UserError.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$$__typename = json['__typename'];
+    return Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$UserError(
+      $__typename: (l$$__typename as String),
+    );
+  }
+
+  final String $__typename;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$$__typename = $__typename;
+    _resultData['__typename'] = l$$__typename;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$$__typename = $__typename;
+    return Object.hashAll([l$$__typename]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other
+            is! Query$FlowPinnedChat$channel$pinnedChatMessages$edges$node$pinnedMessage$parentMessage$content$fragments$content$$UserError ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$$__typename = $__typename;
+    final lOther$$__typename = other.$__typename;
+    if (l$$__typename != lOther$$__typename) {
       return false;
     }
     return true;

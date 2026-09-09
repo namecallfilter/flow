@@ -9,6 +9,7 @@ import "package:flow/features/player/media3_player_controller.dart";
 import "package:flow/features/player/player_navigation.dart";
 import "package:flow/features/player/player_screen.dart";
 import "package:flow/features/player/twitch_chat_panel.dart";
+import "package:flow/features/player/twitch_emote_picker.dart";
 import "package:flow/features/settings/settings_screen.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
@@ -16,6 +17,152 @@ import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  for (final chatOnly in [false, true]) {
+    testWidgets("hosted rules acceptance survives a keyboard cycle (chat only: $chatOnly)", (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1;
+      tester.view.padding = const FakeViewPadding(top: 24);
+      tester.view.viewPadding = const FakeViewPadding(top: 24);
+      addTearDown(tester.view.reset);
+      final host = PlaybackHost();
+      final chat = _ReadyChat(rules: ["Be kind", "No spoilers"]);
+      for (var index = 0; index < 80; index++) {
+        chat.receive("Existing message $index");
+      }
+      final player = _PlaybackProbe()..chat = chat;
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorObservers: [host],
+          home: const Scaffold(body: Text("Browse Flow")),
+        ),
+      );
+      await openStreamPlayer(
+        tester.element(find.text("Browse Flow")),
+        builder: (_) => player.screen("creator"),
+      );
+      await tester.pumpAndSettle();
+      if (chatOnly) {
+        await tester.tap(find.byKey(const ValueKey("chat_menu")));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey("chat_only_toggle")));
+        await tester.pumpAndSettle();
+      }
+      final panel = tester.element(find.byType(TwitchChatPanel));
+      final disposals = player.disposals;
+      final input = find.byKey(const ValueKey("chat_message_input"));
+      final barriers = find.byType(ModalBarrier).evaluate().length;
+      expect(tester.widget<TextField>(input).readOnly, isTrue);
+      await tester.tap(input);
+      await tester.pumpAndSettle();
+      final rules = find.text("Chat Rules");
+      final route = ModalRoute.of(tester.element(rules))!;
+      expect(route.reverseTransitionDuration, greaterThan(Duration.zero));
+      _expectPaintsAbove(tester, rules, find.byType(TwitchChatPanel));
+      await tester.tap(find.text("Okay, Got It!"));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(route.animation!.status, AnimationStatus.reverse);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+      await tester.pump(const Duration(milliseconds: 50));
+      _expectPaintsAbove(tester, rules, find.byType(TwitchChatPanel));
+      await tester.pumpAndSettle();
+      expect(rules, findsNothing);
+      expect(route.overlayEntries.any((entry) => entry.mounted), isFalse);
+      expect(find.byType(ModalBarrier).evaluate(), hasLength(barriers));
+      expect(tester.widget<TextField>(input).readOnly, isFalse);
+      expect(tester.widget<TextField>(input).focusNode!.hasFocus, isTrue);
+      expect(tester.testTextInput.isVisible, isTrue);
+      expect(input.hitTestable(), findsOneWidget);
+      expect(tester.getBottomLeft(input).dy, lessThanOrEqualTo(500));
+      await tester.enterText(input, "Draft after accepting");
+
+      tester.testTextInput.hide();
+      tester.widget<TextField>(input).focusNode!.unfocus();
+      tester.view.viewInsets = FakeViewPadding.zero;
+      await tester.pumpAndSettle();
+      expect(rules, findsNothing);
+      expect(find.byType(ModalBarrier).evaluate(), hasLength(barriers));
+      expect(tester.widget<TextField>(input).controller!.text, "Draft after accepting");
+      chat.receive("Arrived after keyboard closed");
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining("Arrived after keyboard closed", findRichText: true),
+        findsOneWidget,
+      );
+      final messages = find.byKey(const ValueKey("chat_messages"));
+      final scroll = tester.widget<ListView>(messages).controller!;
+      await tester.drag(messages, const Offset(0, 220));
+      await tester.pumpAndSettle();
+      expect(scroll.position.pixels, greaterThan(scroll.position.minScrollExtent));
+      chat.receive("Arrived while reading older messages");
+      await tester.pumpAndSettle();
+      expect(find.text("1 new message"), findsOneWidget);
+      await tester.tap(find.text("1 new message"));
+      await tester.pumpAndSettle();
+      expect(scroll.position.pixels, scroll.position.minScrollExtent);
+      expect(
+        find.textContaining("Arrived while reading older messages", findRichText: true),
+        findsOneWidget,
+      );
+      expect(tester.element(find.byType(TwitchChatPanel)), same(panel));
+      expect(host.mode, PlaybackMode.expanded);
+      expect(player.loads, 1);
+      expect(player.disposals, disposals);
+      host.dismiss();
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  for (final miniEnabled in [true, false]) {
+    testWidgets(
+      "Back closes the inline picker before leaving hosted playback (mini: $miniEnabled)",
+      (tester) async {
+        tester.view.physicalSize = const Size(400, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final host = PlaybackHost()..setMiniPlayerEnabled(enabled: miniEnabled);
+        final player = _PlaybackProbe()..chat = _ReadyChat();
+        await tester.pumpWidget(
+          MaterialApp(
+            navigatorObservers: [host],
+            home: const Scaffold(body: Text("Browse Flow")),
+          ),
+        );
+        await openStreamPlayer(
+          tester.element(find.text("Browse Flow")),
+          builder: (_) => player.screen("creator"),
+        );
+        await tester.pumpAndSettle();
+        final surface = tester.element(find.byType(_PlayerSurface));
+        await tester.tap(find.byKey(const ValueKey("chat_emote_toggle")));
+        await tester.pumpAndSettle();
+        expect(find.byType(TwitchEmotePicker), findsOneWidget);
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+        expect(find.byType(TwitchEmotePicker), findsNothing);
+        expect(host.mode, PlaybackMode.expanded);
+        expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+        expect(player.loads, 1);
+        expect(player.disposals, 0);
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+        if (miniEnabled) {
+          expect(host.mode, PlaybackMode.mini);
+          expect(tester.element(find.byType(_PlayerSurface)), same(surface));
+        } else {
+          expect(find.byType(_PlayerSurface), findsNothing);
+          expect(player.disposals, 1);
+        }
+        host.dismiss();
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   for (final aboveSettings in [false, true]) {
     testWidgets("nested chat sheets stay above their parent (settings: $aboveSettings)", (
       tester,
@@ -326,11 +473,11 @@ void main() {
           final store = tester.widget<TwitchChatPanel>(find.byType(TwitchChatPanel)).settingsStore;
           final input = find.byKey(const ValueKey("chat_message_input"));
           final draft = videoId == null ? tester.widget<TextField>(input).controller! : null;
-          draft?.text = "Unsent draft";
           final pauses = player.pauses;
           final disposals = player.disposals;
           await tester.tap(find.byKey(const ValueKey("chat_menu")));
           await tester.pumpAndSettle();
+          draft?.text = "Unsent draft";
           await tester.tap(find.text("Settings"));
           await tester.pumpAndSettle();
           expect(find.byType(SettingsScreen), findsOneWidget);
@@ -362,7 +509,10 @@ void main() {
             expect(tester.widget<TextField>(input).controller, same(draft));
             expect(draft.text, "Unsent draft");
           }
-          expect(find.byKey(const ValueKey("chat_menu")).hitTestable(), findsOneWidget);
+          expect(
+            find.byKey(ValueKey(videoId == null ? "chat_send" : "chat_menu")).hitTestable(),
+            findsOneWidget,
+          );
           expect(player.loads, 1);
           expect(player.surfaces, 1);
           expect(player.pauses, pauses);
@@ -1350,6 +1500,7 @@ class _PlaybackProbe implements TwitchPlayerController {
   final selectedQualities = <String>[];
   final loadedIds = <String>[];
   Future<Uri>? pendingUri;
+  TwitchChatController? chat;
   bool startsBuffering = false;
   int loads = 0;
   int surfaces = 0;
@@ -1373,11 +1524,13 @@ class _PlaybackProbe implements TwitchPlayerController {
       thumbnailColors: const [Colors.black, Colors.grey],
     ),
     videoId: videoId,
-    chatControllerFactory: (channel) => TwitchChatController(
-      channel: channel,
-      clientLoader: () async => TwitchApiClient(clientId: "client", accessToken: "token"),
-      autoConnect: false,
-    ),
+    chatControllerFactory: (channel) =>
+        chat ??
+        TwitchChatController(
+          channel: channel,
+          clientLoader: () async => TwitchApiClient(clientId: "client", accessToken: "token"),
+          autoConnect: false,
+        ),
     replayControllerFactory: (id) => TwitchVodChatController(
       videoId: id,
       clientLoader: () async => throw StateError("Replay is offline in widget tests"),
@@ -1430,6 +1583,43 @@ class _PlaybackProbe implements TwitchPlayerController {
   Future<void> seekTo(Duration position) async {}
   @override
   Future<void> togglePlayback() async {}
+}
+
+class _ReadyChat extends TwitchChatController {
+  _ReadyChat({this.rules = const []})
+    : super(
+        channel: "creator",
+        clientLoader: () async => throw StateError("No network in widget test"),
+        autoConnect: false,
+      );
+
+  final List<String> rules;
+  final _items = <TwitchChatMessage>[];
+
+  void receive(String text) {
+    _items.add(
+      TwitchChatMessage(id: "${_items.length}", login: "viewer", displayName: "Viewer", text: text),
+    );
+    notifyListeners();
+  }
+
+  @override
+  List<TwitchChatMessage> get messages => _items;
+  @override
+  List<TwitchChatMessage> get recentHistory => _items;
+  @override
+  int get receivedMessageCount => _items.length;
+  @override
+  TwitchChatStatus get status => TwitchChatStatus.connected;
+  @override
+  bool get isSignedIn => true;
+  @override
+  bool get canSend => true;
+  @override
+  String get currentUserId => "123";
+  @override
+  TwitchChatAccess get chatAccess =>
+      TwitchChatAccess(channelId: "1", channelDisplayName: "Creator", rules: rules);
 }
 
 class _PlayerSurface extends StatefulWidget {

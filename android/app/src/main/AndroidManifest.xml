@@ -3,13 +3,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
     <application
-        android:label="flow"
+        android:label="${appLabel}"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:enableOnBackInvokedCallback="true">
         <activity
-            android:name=".MainActivity"
+            android:name="com.namecallfilter.flow.MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
             android:taskAffinity=""
@@ -32,7 +32,7 @@
             </intent-filter>
         </activity>
         <service
-            android:name=".AudioPlaybackService"
+            android:name="com.namecallfilter.flow.AudioPlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback"
             android:stopWithTask="true" />

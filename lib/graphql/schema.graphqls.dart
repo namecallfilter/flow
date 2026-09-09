@@ -534,6 +534,53 @@ class Input$GameOptions {
   }
 }
 
+class Input$UnfollowUserInput {
+  factory Input$UnfollowUserInput({required String targetID}) =>
+      Input$UnfollowUserInput._({r'targetID': targetID});
+
+  Input$UnfollowUserInput._(this._$data);
+
+  factory Input$UnfollowUserInput.fromJson(Map<String, dynamic> data) {
+    final result$data = <String, dynamic>{};
+    final l$targetID = data['targetID'];
+    result$data['targetID'] = (l$targetID as String);
+    return Input$UnfollowUserInput._(result$data);
+  }
+
+  Map<String, dynamic> _$data;
+
+  String get targetID => (_$data['targetID'] as String);
+
+  Map<String, dynamic> toJson() {
+    final result$data = <String, dynamic>{};
+    final l$targetID = targetID;
+    result$data['targetID'] = l$targetID;
+    return result$data;
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other is! Input$UnfollowUserInput || runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$targetID = targetID;
+    final lOther$targetID = other.targetID;
+    if (l$targetID != lOther$targetID) {
+      return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode {
+    final l$targetID = targetID;
+    return Object.hashAll([l$targetID]);
+  }
+}
+
 class Input$AdProperty_TrackingPixels_Consent_Input {
   factory Input$AdProperty_TrackingPixels_Consent_Input({
     bool? allowAmazon,
@@ -2805,6 +2852,135 @@ class Input$Query_Video_Options_Input {
   }
 }
 
+class Input$ClaimCommunityPointsInput {
+  factory Input$ClaimCommunityPointsInput({
+    required String channelID,
+    required String claimID,
+  }) => Input$ClaimCommunityPointsInput._({
+    r'channelID': channelID,
+    r'claimID': claimID,
+  });
+
+  Input$ClaimCommunityPointsInput._(this._$data);
+
+  factory Input$ClaimCommunityPointsInput.fromJson(Map<String, dynamic> data) {
+    final result$data = <String, dynamic>{};
+    final l$channelID = data['channelID'];
+    result$data['channelID'] = (l$channelID as String);
+    final l$claimID = data['claimID'];
+    result$data['claimID'] = (l$claimID as String);
+    return Input$ClaimCommunityPointsInput._(result$data);
+  }
+
+  Map<String, dynamic> _$data;
+
+  String get channelID => (_$data['channelID'] as String);
+
+  String get claimID => (_$data['claimID'] as String);
+
+  Map<String, dynamic> toJson() {
+    final result$data = <String, dynamic>{};
+    final l$channelID = channelID;
+    result$data['channelID'] = l$channelID;
+    final l$claimID = claimID;
+    result$data['claimID'] = l$claimID;
+    return result$data;
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other is! Input$ClaimCommunityPointsInput ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$channelID = channelID;
+    final lOther$channelID = other.channelID;
+    if (l$channelID != lOther$channelID) {
+      return false;
+    }
+    final l$claimID = claimID;
+    final lOther$claimID = other.claimID;
+    if (l$claimID != lOther$claimID) {
+      return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode {
+    final l$channelID = channelID;
+    final l$claimID = claimID;
+    return Object.hashAll([l$channelID, l$claimID]);
+  }
+}
+
+class Input$FollowUserInput {
+  factory Input$FollowUserInput({
+    required String targetID,
+    required bool disableNotifications,
+  }) => Input$FollowUserInput._({
+    r'targetID': targetID,
+    r'disableNotifications': disableNotifications,
+  });
+
+  Input$FollowUserInput._(this._$data);
+
+  factory Input$FollowUserInput.fromJson(Map<String, dynamic> data) {
+    final result$data = <String, dynamic>{};
+    final l$targetID = data['targetID'];
+    result$data['targetID'] = (l$targetID as String);
+    final l$disableNotifications = data['disableNotifications'];
+    result$data['disableNotifications'] = (l$disableNotifications as bool);
+    return Input$FollowUserInput._(result$data);
+  }
+
+  Map<String, dynamic> _$data;
+
+  String get targetID => (_$data['targetID'] as String);
+
+  bool get disableNotifications => (_$data['disableNotifications'] as bool);
+
+  Map<String, dynamic> toJson() {
+    final result$data = <String, dynamic>{};
+    final l$targetID = targetID;
+    result$data['targetID'] = l$targetID;
+    final l$disableNotifications = disableNotifications;
+    result$data['disableNotifications'] = l$disableNotifications;
+    return result$data;
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other is! Input$FollowUserInput || runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$targetID = targetID;
+    final lOther$targetID = other.targetID;
+    if (l$targetID != lOther$targetID) {
+      return false;
+    }
+    final l$disableNotifications = disableNotifications;
+    final lOther$disableNotifications = other.disableNotifications;
+    if (l$disableNotifications != lOther$disableNotifications) {
+      return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode {
+    final l$targetID = targetID;
+    final l$disableNotifications = disableNotifications;
+    return Object.hashAll([l$targetID, l$disableNotifications]);
+  }
+}
+
 enum Enum$StreamSort {
   RECENT,
   RELEVANCE,
@@ -3260,6 +3436,36 @@ fromJson$Enum$Self_SubscriptionTenure_TenureMethod_Enum(String value) {
       return Enum$Self_SubscriptionTenure_TenureMethod_Enum.CUMULATIVE;
     default:
       return Enum$Self_SubscriptionTenure_TenureMethod_Enum.$unknown;
+  }
+}
+
+enum Enum$SubscriptionTenureMethod {
+  CUMULATIVE,
+  $unknown;
+
+  factory Enum$SubscriptionTenureMethod.fromJson(String value) =>
+      fromJson$Enum$SubscriptionTenureMethod(value);
+
+  String toJson() => toJson$Enum$SubscriptionTenureMethod(this);
+}
+
+String toJson$Enum$SubscriptionTenureMethod(Enum$SubscriptionTenureMethod e) {
+  switch (e) {
+    case Enum$SubscriptionTenureMethod.CUMULATIVE:
+      return r'CUMULATIVE';
+    case Enum$SubscriptionTenureMethod.$unknown:
+      return r'$unknown';
+  }
+}
+
+Enum$SubscriptionTenureMethod fromJson$Enum$SubscriptionTenureMethod(
+  String value,
+) {
+  switch (value) {
+    case r'CUMULATIVE':
+      return Enum$SubscriptionTenureMethod.CUMULATIVE;
+    default:
+      return Enum$SubscriptionTenureMethod.$unknown;
   }
 }
 

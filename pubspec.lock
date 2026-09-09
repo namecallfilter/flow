@@ -440,6 +440,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.1.2"
+  icann_tlds:
+    dependency: "direct main"
+    description:
+      name: icann_tlds
+      sha256: "88522e8ee7e757163184fa985d50f05b72dc03f25bcdb9ceb143f5d946b7d80f"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.1.2"
   io:
     dependency: transitive
     description:
@@ -720,6 +728,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.5.0"
+  punycoder:
+    dependency: "direct main"
+    description:
+      name: punycoder
+      sha256: "982734df864d9588eb13e28ac1c5a46b57e22117b3696032ac58739966cec190"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.3.0"
   recase:
     dependency: transitive
     description:

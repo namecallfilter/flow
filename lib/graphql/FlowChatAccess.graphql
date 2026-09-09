@@ -1,0 +1,13 @@
+query FlowChatAccess($login: String!) {
+  user(login: $login) {
+    id
+    login
+    displayName
+    chatSettings { rules }
+    self {
+      follower { followedAt }
+      isModerator
+      isVIP
+    }
+  }
+}

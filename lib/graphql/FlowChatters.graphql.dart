@@ -163,6 +163,23 @@ const documentNodeQueryFlowChatters = DocumentNode(
                               ),
                             ),
                             FieldNode(
+                              name: NameNode(value: 'chatbots'),
+                              alias: null,
+                              arguments: [],
+                              directives: [],
+                              selectionSet: SelectionSetNode(
+                                selections: [
+                                  FieldNode(
+                                    name: NameNode(value: 'login'),
+                                    alias: null,
+                                    arguments: [],
+                                    directives: [],
+                                    selectionSet: null,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            FieldNode(
                               name: NameNode(value: 'moderators'),
                               alias: null,
                               arguments: [],
@@ -472,6 +489,7 @@ class Query$FlowChatters$user$channel$chatters {
   Query$FlowChatters$user$channel$chatters({
     this.count,
     this.broadcasters,
+    this.chatbots,
     this.moderators,
     this.vips,
     this.staff,
@@ -485,6 +503,7 @@ class Query$FlowChatters$user$channel$chatters {
     final l$broadcasters = json.containsKey('broadcasters')
         ? json['broadcasters']
         : null;
+    final l$chatbots = json.containsKey('chatbots') ? json['chatbots'] : null;
     final l$moderators = json.containsKey('moderators')
         ? json['moderators']
         : null;
@@ -498,6 +517,15 @@ class Query$FlowChatters$user$channel$chatters {
             (e) => e == null
                 ? null
                 : Query$FlowChatters$user$channel$chatters$broadcasters.fromJson(
+                    (e as Map<String, dynamic>),
+                  ),
+          )
+          .toList(),
+      chatbots: (l$chatbots as List<dynamic>?)
+          ?.map(
+            (e) => e == null
+                ? null
+                : Query$FlowChatters$user$channel$chatters$chatbots.fromJson(
                     (e as Map<String, dynamic>),
                   ),
           )
@@ -546,6 +574,8 @@ class Query$FlowChatters$user$channel$chatters {
   final List<Query$FlowChatters$user$channel$chatters$broadcasters?>?
   broadcasters;
 
+  final List<Query$FlowChatters$user$channel$chatters$chatbots?>? chatbots;
+
   final List<Query$FlowChatters$user$channel$chatters$moderators?>? moderators;
 
   final List<Query$FlowChatters$user$channel$chatters$vips?>? vips;
@@ -562,6 +592,8 @@ class Query$FlowChatters$user$channel$chatters {
     _resultData['broadcasters'] = l$broadcasters
         ?.map((e) => e?.toJson())
         .toList();
+    final l$chatbots = chatbots;
+    _resultData['chatbots'] = l$chatbots?.map((e) => e?.toJson()).toList();
     final l$moderators = moderators;
     _resultData['moderators'] = l$moderators?.map((e) => e?.toJson()).toList();
     final l$vips = vips;
@@ -577,6 +609,7 @@ class Query$FlowChatters$user$channel$chatters {
   int get hashCode {
     final l$count = count;
     final l$broadcasters = broadcasters;
+    final l$chatbots = chatbots;
     final l$moderators = moderators;
     final l$vips = vips;
     final l$staff = staff;
@@ -586,6 +619,7 @@ class Query$FlowChatters$user$channel$chatters {
       l$broadcasters == null
           ? null
           : Object.hashAll(l$broadcasters.map((v) => v)),
+      l$chatbots == null ? null : Object.hashAll(l$chatbots.map((v) => v)),
       l$moderators == null ? null : Object.hashAll(l$moderators.map((v) => v)),
       l$vips == null ? null : Object.hashAll(l$vips.map((v) => v)),
       l$staff == null ? null : Object.hashAll(l$staff.map((v) => v)),
@@ -621,6 +655,22 @@ class Query$FlowChatters$user$channel$chatters {
         }
       }
     } else if (l$broadcasters != lOther$broadcasters) {
+      return false;
+    }
+    final l$chatbots = chatbots;
+    final lOther$chatbots = other.chatbots;
+    if (l$chatbots != null && lOther$chatbots != null) {
+      if (l$chatbots.length != lOther$chatbots.length) {
+        return false;
+      }
+      for (int i = 0; i < l$chatbots.length; i++) {
+        final l$chatbots$entry = l$chatbots[i];
+        final lOther$chatbots$entry = lOther$chatbots[i];
+        if (l$chatbots$entry != lOther$chatbots$entry) {
+          return false;
+        }
+      }
+    } else if (l$chatbots != lOther$chatbots) {
       return false;
     }
     final l$moderators = moderators;
@@ -724,6 +774,51 @@ class Query$FlowChatters$user$channel$chatters$broadcasters {
       return true;
     }
     if (other is! Query$FlowChatters$user$channel$chatters$broadcasters ||
+        runtimeType != other.runtimeType) {
+      return false;
+    }
+    final l$login = login;
+    final lOther$login = other.login;
+    if (l$login != lOther$login) {
+      return false;
+    }
+    return true;
+  }
+}
+
+class Query$FlowChatters$user$channel$chatters$chatbots {
+  Query$FlowChatters$user$channel$chatters$chatbots({this.login});
+
+  factory Query$FlowChatters$user$channel$chatters$chatbots.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    final l$login = json.containsKey('login') ? json['login'] : null;
+    return Query$FlowChatters$user$channel$chatters$chatbots(
+      login: (l$login as String?),
+    );
+  }
+
+  final String? login;
+
+  Map<String, dynamic> toJson() {
+    final _resultData = <String, dynamic>{};
+    final l$login = login;
+    _resultData['login'] = l$login;
+    return _resultData;
+  }
+
+  @override
+  int get hashCode {
+    final l$login = login;
+    return Object.hashAll([l$login]);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) {
+      return true;
+    }
+    if (other is! Query$FlowChatters$user$channel$chatters$chatbots ||
         runtimeType != other.runtimeType) {
       return false;
     }

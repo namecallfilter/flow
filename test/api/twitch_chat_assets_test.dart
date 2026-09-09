@@ -1,14 +1,17 @@
 import "dart:async";
 import "dart:convert";
+import "dart:ui" as ui;
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_chat_assets.dart";
 import "package:flow/api/twitch_chat_message.dart";
+import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  _AssetTestBinding();
   test("loads provider globals and channel aliases, native badges and emote names", () async {
     final requests = <Uri>[];
     final assets = _assets(
@@ -23,6 +26,8 @@ void main() {
     expect(requests.length, 8);
     expect(assets.isLoading, isFalse);
     expect(assets.errors, isEmpty);
+    expect(assets.broadcaster?.login, "creator");
+    expect(assets.broadcaster?.chatColor, "#000000");
     expect(assets.badgeUrls, {"subscriber/1": "https://example.com/badge.png"});
     expect(assets.badgesById["subscriber/1"]!.title, "Subscriber");
     expect(assets.badgesById["subscriber/1"]!.provider, ChatEmoteProvider.twitch);
@@ -31,6 +36,7 @@ void main() {
     expect(assets.emotesByName["Alias"]!.id, "seven-alias");
     expect(assets.emotesByName["Alias"]!.zeroWidth, isTrue);
     expect(assets.emotesByName["Alias"]!.author, "Emote Artist");
+    expect(assets.emotesByName["Alias"]!.originalName, "OriginalAlias");
     expect(assets.emotesByName["Alias"]!.url, "https://cdn.7tv.app/emote/seven-alias/2x.webp");
     expect(assets.emotesByName["BTTVShared"]!.provider, ChatEmoteProvider.bttv);
     expect(assets.emotesByName["FFZChannel"]!.url, "https://cdn.frankerfacez.com/emote/3/2");
@@ -43,6 +49,150 @@ void main() {
     expect(assets.userBadgesByLogin["viewer"]!.any((badge) => badge.url.endsWith(".svg")), isTrue);
     expect(() => assets.emotesByName.clear(), throwsUnsupportedError);
     expect(() => assets.badgesById.clear(), throwsUnsupportedError);
+    expect(assets.emotesFor(ChatEmoteProvider.twitch, ChatEmoteScope.global).single.name, "Kappa");
+    expect(assets.emotesFor(ChatEmoteProvider.twitch, ChatEmoteScope.channel).single.name, "Same");
+    expect(
+      assets.emotesFor(ChatEmoteProvider.sevenTv, ChatEmoteScope.global).single.id,
+      "seven-global",
+    );
+    expect(
+      assets
+          .emotesFor(ChatEmoteProvider.sevenTv, ChatEmoteScope.channel)
+          .map((emote) => emote.name),
+      ["Alias", "Same"],
+    );
+    expect(assets.emotesFor(ChatEmoteProvider.twitch, ChatEmoteScope.unlocked), isEmpty);
+    expect(
+      assets.emotesByName["Kappa"]!.urlForBrightness(Brightness.light),
+      endsWith("/light/2.0"),
+    );
+    expect(
+      assets.emotesByName["Alias"]!.urlForBrightness(Brightness.light),
+      assets.emotesByName["Alias"]!.url,
+    );
+  });
+
+  test("unlocked emotes load lazily, use viewer results, and can retry errors", () async {
+    var calls = 0;
+    final client = _Client(
+      onUnlocked: (id) async {
+        expect(id, "123");
+        if (++calls == 1) {
+          throw TwitchApiException("try again");
+        }
+        return {"MySubEmote": "mine"};
+      },
+    );
+    final assets = _assets(
+      client: client,
+      httpClient: MockClient((request) async => _response(request.url)),
+    );
+    addTearDown(assets.dispose);
+    await assets.refresh();
+    expect(calls, 0);
+    await assets.loadUnlockedEmotes();
+    expect(assets.unlockedError, isNotNull);
+    expect(assets.isLoadingUnlocked, isFalse);
+    await assets.loadUnlockedEmotes();
+    expect(assets.unlockedError, isNull);
+    expect(
+      assets.emotesFor(ChatEmoteProvider.twitch, ChatEmoteScope.unlocked).single.name,
+      "MySubEmote",
+    );
+    expect(assets.emotesByName["MySubEmote"]!.id, "mine");
+    expect(
+      assets
+          .emotesFor(ChatEmoteProvider.twitch, ChatEmoteScope.unlocked)
+          .any((emote) => emote.name == "Same"),
+      isFalse,
+    );
+  });
+
+  test("unlocked emote labels use global names by ID and retain private set membership", () async {
+    final assets = _assets(
+      channelLogin: "canonical_emotes",
+      client: _Client(
+        onLoad: () async => const TwitchNativeChatAssets(
+          channelId: "123",
+          badgeUrls: {},
+          emoteIdsByName: {},
+          globalEmoteIdsByName: {"O_O": "1", ">O": "2", "<3": "3", "Kappa": "25"},
+        ),
+        onUnlocked: (_) async => {
+          r"[oO](_|\.)[oO]": "1",
+          r"\&gt;O": "2",
+          r"\&lt;3": "3",
+          "MySubEmote": "mine",
+        },
+      ),
+      httpClient: MockClient((request) async => _response(request.url)),
+    );
+    addTearDown(assets.dispose);
+    await assets.loadUnlockedEmotes();
+    expect(assets.unlockedError, isNull);
+    expect(
+      {
+        for (final emote in assets.emotesFor(ChatEmoteProvider.twitch, ChatEmoteScope.unlocked))
+          emote.name: emote.id,
+      },
+      {"O_O": "1", ">O": "2", "<3": "3", "MySubEmote": "mine"},
+    );
+  });
+
+  testWidgets("precaches only sent images and reuses decoded images with the current theme", (
+    tester,
+  ) async {
+    final cache = PaintingBinding.instance.imageCache as _RecordingImageCache;
+    await tester.runAsync(() async {
+      final recorder = ui.PictureRecorder();
+      ui.Canvas(recorder).drawColor(Colors.white, ui.BlendMode.src);
+      final picture = recorder.endRecording();
+      cache.pixel = await picture.toImage(1, 1);
+      picture.dispose();
+    });
+    addTearDown(() {
+      cache.clear();
+      cache.pixel?.dispose();
+      cache.pixel = null;
+      cache.requested.clear();
+    });
+    final assets = _assets(httpClient: MockClient((request) async => _response(request.url)));
+    addTearDown(assets.dispose);
+    await assets.refresh();
+    late BuildContext context;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (value) {
+            context = value;
+            return const SizedBox();
+          },
+        ),
+      ),
+    );
+    const messages = [
+      TwitchChatMessage(
+        id: "one",
+        login: "other",
+        displayName: "Other",
+        text: "Same Alias ordinary words",
+        badges: ["subscriber/1"],
+        emotes: [TwitchChatEmote(id: "unlisted", start: 0, end: 4)],
+      ),
+    ];
+    assets.precacheMessages(context, messages);
+    await tester.pump();
+    expect(cache.requested, {
+      "https://static-cdn.jtvnw.net/emoticons/v2/unlisted/default/light/2.0",
+      "https://cdn.7tv.app/emote/seven-alias/2x.webp",
+      "https://example.com/badge.png",
+      "https://cdn.frankerfacez.com/badge/3/2",
+    });
+    cache.requested.clear();
+    assets.precacheMessages(context, messages);
+    await tester.pump();
+    expect(cache.requested, isEmpty);
+    expect(tester.takeException(), isNull);
   });
 
   test(
@@ -94,6 +244,8 @@ void main() {
     expect(apiCalls, 1);
     expect(httpCalls, 8);
     expect(second.emotesByName["Alias"], isNotNull);
+    expect(second.broadcaster, same(first.broadcaster));
+    expect(second.broadcaster?.chatColor, "#000000");
   });
 
   test("late provider response from an older refresh cannot overwrite refreshed assets", () async {
@@ -149,7 +301,9 @@ void main() {
     expect(assets.badgeUrls, isEmpty);
   });
 
-  testWidgets("7TV badges batch sender IDs and cache both badge and empty results", (tester) async {
+  testWidgets("7TV styles batch sender IDs and cache badges, full paints, and empty results", (
+    tester,
+  ) async {
     final batches = <int>[];
     final requests = <http.Request>[];
     final assets = _assets(
@@ -158,7 +312,8 @@ void main() {
         final queries = jsonDecode(request.body) as List<Object?>;
         batches.add(queries.length);
         return _json([
-          for (var index = 0; index < queries.length; index++) _sevenBadgeResult(index == 0),
+          for (var index = 0; index < queries.length; index++)
+            _sevenBadgeResult(index == 0, paint: index < 2 ? _sevenPaintDefinition() : null),
         ]);
       }),
     );
@@ -181,12 +336,61 @@ void main() {
     expect(batches, [30]);
     expect(assets.userBadgesByLogin["user0"]!.single.provider, ChatEmoteProvider.sevenTv);
     expect(assets.userBadgesByLogin["user1"], isNull);
+    final paint = assets.userPaintsByLogin["user0"]!;
+    expect(paint.id, "paint-id");
+    expect(paint.name, "Full paint");
+    expect(paint.layers.map((layer) => layer.type), [
+      ChatPaintLayerType.color,
+      ChatPaintLayerType.linearGradient,
+      ChatPaintLayerType.radialGradient,
+      ChatPaintLayerType.radialGradient,
+      ChatPaintLayerType.image,
+    ]);
+    expect(paint.layers.first.color, const Color(0x800A141E));
+    expect(paint.layers.first.opacity, 0.4);
+    final linear = paint.layers[1];
+    expect(linear.angle, 135);
+    expect(linear.repeating, isTrue);
+    expect(linear.stops.map((stop) => stop.at), [-0.25, 0.5, 1.25]);
+    expect(linear.stops[1].color, const Color(0x4000FF00));
+    expect(paint.layers[2].shape, ChatPaintRadialShape.circle);
+    expect(paint.layers[3].shape, ChatPaintRadialShape.ellipse);
+    expect(paint.layers[3].repeating, isTrue);
+    final images = paint.layers.last.images;
+    expect(images.map((image) => image.frameCount), [1, 48]);
+    expect(images.map((image) => image.scale), [1, 2]);
+    expect(images.last.mime, "image/webp");
+    expect(images.last.width, 256);
+    expect(images.last.height, 64);
+    expect(images.last.size, 23456);
+    expect(paint.shadows, [
+      const Shadow(color: Color(0xA0010203), offset: Offset(-2, 3.5), blurRadius: 4.5),
+      const Shadow(color: Color(0xFF040506), offset: Offset(1, -1)),
+    ]);
+    expect(assets.userPaintsByLogin["user1"]!.id, paint.id);
+    expect(assets.userPaintsByLogin["user2"], isNull);
+    expect(() => assets.userPaintsByLogin.clear(), throwsUnsupportedError);
+    expect(paint.layers.clear, throwsUnsupportedError);
+    expect(linear.stops.clear, throwsUnsupportedError);
+    expect(images.clear, throwsUnsupportedError);
+    expect(paint.shadows.clear, throwsUnsupportedError);
     await tester.pump(const Duration(seconds: 2));
     await tester.pump();
     expect(batches, [30, 2]);
     assets.observeMessages(messages);
     await tester.pump(const Duration(seconds: 3));
     expect(batches, [30, 2]);
+    final otherChannel = _assets(httpClient: MockClient((_) async => throw StateError("Cached")));
+    otherChannel.observeMessages(messages);
+    await tester.pump(const Duration(seconds: 3));
+    expect(otherChannel.userPaintsByLogin["user0"], same(paint));
+    expect(
+      otherChannel.userBadgesByLogin["user0"]!.single,
+      same(assets.userBadgesByLogin["user0"]!.single),
+    );
+    expect(otherChannel.userPaintsByLogin["user2"], isNull);
+    expect(otherChannel.errors, isEmpty);
+    otherChannel.dispose();
     assets.dispose();
   });
 
@@ -206,9 +410,120 @@ void main() {
     ]);
     await tester.pump(const Duration(milliseconds: 400));
     assets.dispose();
-    response.complete(_json([_sevenBadgeResult(true)]));
+    response.complete(_json([_sevenBadgeResult(true, paint: _sevenPaintDefinition())]));
     await tester.pump(const Duration(seconds: 20));
     expect(assets.userBadgesByLogin, isEmpty);
+    expect(assets.userPaintsByLogin, isEmpty);
+  });
+
+  testWidgets("refreshing 7TV styles removes inactive paints without removing active badges", (
+    tester,
+  ) async {
+    var hasPaint = true;
+    var styleCalls = 0;
+    final assets = _assets(
+      httpClient: MockClient((request) async {
+        if (request.method != "POST") {
+          return _response(request.url);
+        }
+        styleCalls++;
+        return _json([_sevenBadgeResult(true, paint: hasPaint ? _sevenPaintDefinition() : null)]);
+      }),
+    );
+    addTearDown(assets.dispose);
+    assets.observeMessages(const [
+      TwitchChatMessage(
+        id: "1",
+        login: "refresh",
+        displayName: "Refresh",
+        text: "hi",
+        userId: "99000300",
+      ),
+    ]);
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    expect(assets.userPaintsByLogin["refresh"]!.id, "paint-id");
+    hasPaint = false;
+    await assets.refresh();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    expect(styleCalls, 2);
+    expect(assets.userPaintsByLogin["refresh"], isNull);
+    expect(assets.userBadgesByLogin["refresh"]!.single.id, "7tv/badge-id");
+    expect(assets.errors, isEmpty);
+  });
+
+  testWidgets("malformed or unsupported paint layers leave badges usable", (tester) async {
+    final assets = _assets(
+      httpClient: MockClient(
+        (_) async => _json([
+          _sevenBadgeResult(
+            true,
+            paint: {
+              "id": "invalid-paint",
+              "name": "Invalid paint",
+              "data": {
+                "layers": [
+                  {
+                    "id": "unknown",
+                    "ty": {"__typename": "UnknownPaintLayer"},
+                  },
+                  {
+                    "id": "invalid-color",
+                    "ty": {
+                      "__typename": "PaintLayerTypeSingleColor",
+                      "color": {"r": 255, "g": 0, "b": 0, "a": 999},
+                    },
+                  },
+                  {
+                    "id": "unsafe-image",
+                    "ty": {
+                      "__typename": "PaintLayerTypeImage",
+                      "images": [
+                        {"url": "file:///paint.webp", "mime": "image/webp"},
+                      ],
+                    },
+                  },
+                  {
+                    "id": "invalid-gradient",
+                    "ty": {
+                      "__typename": "PaintLayerTypeLinearGradient",
+                      "stops": [
+                        {
+                          "at": "invalid",
+                          "color": {"r": 1, "g": 2, "b": 3, "a": 255},
+                        },
+                      ],
+                    },
+                  },
+                ],
+                "shadows": [
+                  {
+                    "color": {"r": 1, "g": 2, "b": 3, "a": 255},
+                    "blur": -1,
+                  },
+                ],
+              },
+            },
+          ),
+        ]),
+      ),
+    );
+    addTearDown(assets.dispose);
+    assets.observeMessages(const [
+      TwitchChatMessage(
+        id: "1",
+        login: "invalid",
+        displayName: "Invalid",
+        text: "hi",
+        userId: "99000400",
+      ),
+    ]);
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    expect(assets.userPaintsByLogin, isEmpty);
+    expect(assets.userBadgesByLogin["invalid"]!.single.id, "7tv/badge-id");
+    expect(assets.errors, isEmpty);
   });
 
   testWidgets("7TV failures retry with a delay and clear the error after recovery", (tester) async {
@@ -216,7 +531,9 @@ void main() {
     final assets = _assets(
       httpClient: MockClient((_) async {
         calls++;
-        return calls == 1 ? http.Response("unavailable", 503) : _json([_sevenBadgeResult(false)]);
+        return calls == 1
+            ? http.Response("unavailable", 503)
+            : _json([_sevenBadgeResult(false, paint: _sevenPaintDefinition())]);
       }),
     );
     assets.observeMessages(const [
@@ -231,13 +548,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pump();
     expect(calls, 1);
-    expect(assets.errors, ["7TV badges could not be loaded."]);
+    expect(assets.errors, ["7TV badges and paints could not be loaded."]);
     await tester.pump(const Duration(seconds: 29));
     expect(calls, 1);
     await tester.pump(const Duration(seconds: 1));
     await tester.pump();
     expect(calls, 2);
     expect(assets.errors, isEmpty);
+    expect(assets.userPaintsByLogin["retry"]!.id, "paint-id");
     assets.dispose();
   });
 
@@ -288,6 +606,9 @@ void main() {
             },
             "user": {
               "id": "123",
+              "login": "creator",
+              "displayName": "Creator",
+              "chatColor": "#000000",
               "broadcastBadges": [
                 {
                   "setID": "subscriber",
@@ -319,6 +640,10 @@ void main() {
     );
     final data = await client.fetchChatAssets("creator");
     expect(data.channelId, "123");
+    expect(data.broadcaster?.id, "123");
+    expect(data.broadcaster?.login, "creator");
+    expect(data.broadcaster?.displayName, "Creator");
+    expect(data.broadcaster?.chatColor, "#000000");
     expect(data.badgeUrls["subscriber/1"], "https://example.com/channel.png");
     expect(data.badgeTitles["subscriber/1"], "One-month subscriber");
     expect(data.emoteIdsByName, {"Kappa": "25", "SubEmote": "sub", "LocalEmote": "local"});
@@ -332,17 +657,29 @@ void main() {
 
 const _native = TwitchNativeChatAssets(
   channelId: "123",
+  broadcaster: TwitchUser(
+    id: "123",
+    login: "creator",
+    displayName: "Creator",
+    chatColor: "#000000",
+  ),
   badgeUrls: {"subscriber/1": "https://example.com/badge.png", "unsafe/1": "file:///secret"},
   badgeTitles: {"subscriber/1": "Subscriber"},
   emoteIdsByName: {"Kappa": "25", "Same": "native-same"},
+  globalEmoteIdsByName: {"Kappa": "25"},
+  channelEmoteIdsByName: {"Same": "native-same"},
 );
 
 class _Client extends TwitchApiClient {
-  _Client({this.onLoad}) : super(clientId: "test", accessToken: "");
+  _Client({this.onLoad, this.onUnlocked}) : super(clientId: "test", accessToken: "");
   final Future<TwitchNativeChatAssets> Function()? onLoad;
+  final Future<Map<String, String>> Function(String channelId)? onUnlocked;
   @override
   Future<TwitchNativeChatAssets> fetchChatAssets(String login) async =>
       onLoad == null ? _native : onLoad!();
+  @override
+  Future<Map<String, String>> fetchUnlockedChatEmotes(String channelId) async =>
+      onUnlocked == null ? const {} : onUnlocked!(channelId);
 }
 
 TwitchChatAssets _assets({
@@ -438,6 +775,7 @@ Map<String, Object?> _seven(String name, String id, {int flags = 0}) => {
   "name": name,
   "flags": flags,
   "data": {
+    "name": name == "Alias" ? "OriginalAlias" : name,
     "owner": {"username": "emote_artist", "display_name": "Emote Artist"},
     "host": {
       "url": "//cdn.7tv.app/emote/$id",
@@ -456,11 +794,12 @@ Map<String, Object?> _ffz(String name, int id) => {
 http.Response _json(Object? data) =>
     http.Response(jsonEncode(data), 200, headers: {"content-type": "application/json"});
 
-Map<String, Object?> _sevenBadgeResult(bool hasBadge) => {
+Map<String, Object?> _sevenBadgeResult(bool hasBadge, {Object? paint}) => {
   "data": {
     "users": {
       "userByConnection": {
         "style": {
+          "activePaint": paint,
           "activeBadge": hasBadge
               ? {
                   "id": "badge-id",
@@ -480,9 +819,137 @@ Map<String, Object?> _sevenBadgeResult(bool hasBadge) => {
   },
 };
 
+Map<String, Object?> _sevenPaintDefinition() => {
+  "id": "paint-id",
+  "name": "Full paint",
+  "data": {
+    "layers": [
+      {
+        "id": "base",
+        "opacity": 0.4,
+        "ty": {
+          "__typename": "PaintLayerTypeSingleColor",
+          "color": {"r": 10, "g": 20, "b": 30, "a": 128},
+        },
+      },
+      {
+        "id": "linear",
+        "opacity": 1,
+        "ty": {
+          "__typename": "PaintLayerTypeLinearGradient",
+          "angle": 135,
+          "repeating": true,
+          "stops": [
+            {
+              "at": -0.25,
+              "color": {"r": 255, "g": 0, "b": 0, "a": 255},
+            },
+            {
+              "at": 0.5,
+              "color": {"r": 0, "g": 255, "b": 0, "a": 64},
+            },
+            {
+              "at": 1.25,
+              "color": {"r": 0, "g": 0, "b": 255, "a": 255},
+            },
+          ],
+        },
+      },
+      for (final shape in ["CIRCLE", "ELLIPSE"])
+        {
+          "id": shape.toLowerCase(),
+          "opacity": 0.75,
+          "ty": {
+            "__typename": "PaintLayerTypeRadialGradient",
+            "shape": shape,
+            "repeating": shape == "ELLIPSE",
+            "stops": [
+              {
+                "at": 0,
+                "color": {"r": 255, "g": 255, "b": 255, "a": 255},
+              },
+              {
+                "at": 1,
+                "color": {"r": 0, "g": 0, "b": 0, "a": 0},
+              },
+            ],
+          },
+        },
+      {
+        "id": "image",
+        "opacity": 0.6,
+        "ty": {
+          "__typename": "PaintLayerTypeImage",
+          "images": [
+            {
+              "url": "https://cdn.7tv.app/paint/test/1x_static.webp",
+              "mime": "image/webp",
+              "scale": 1,
+              "width": 128,
+              "height": 32,
+              "frameCount": 1,
+              "size": 1234,
+            },
+            {
+              "url": "https://cdn.7tv.app/paint/test/2x.webp",
+              "mime": "image/webp",
+              "scale": 2,
+              "width": 256,
+              "height": 64,
+              "frameCount": 48,
+              "size": 23456,
+            },
+          ],
+        },
+      },
+    ],
+    "shadows": [
+      {
+        "color": {"r": 1, "g": 2, "b": 3, "a": 160},
+        "offsetX": -2,
+        "offsetY": 3.5,
+        "blur": 4.5,
+      },
+      {
+        "color": {"r": 4, "g": 5, "b": 6, "a": 255},
+        "offsetX": 1,
+        "offsetY": -1,
+        "blur": 0,
+      },
+    ],
+  },
+};
+
 Future<void> _waitFor(bool Function() condition) async {
   for (var attempt = 0; attempt < 100 && !condition(); attempt++) {
     await Future<void>.delayed(const Duration(milliseconds: 5));
   }
   expect(condition(), isTrue);
+}
+
+class _AssetTestBinding extends AutomatedTestWidgetsFlutterBinding {
+  @override
+  ImageCache createImageCache() => _RecordingImageCache();
+}
+
+class _RecordingImageCache extends ImageCache {
+  ui.Image? pixel;
+  final Set<String> requested = {};
+
+  @override
+  ImageStreamCompleter? putIfAbsent(
+    Object key,
+    ImageStreamCompleter Function() loader, {
+    ImageErrorListener? onError,
+  }) {
+    if (key is NetworkImage && pixel != null) {
+      requested.add(key.url);
+      return super.putIfAbsent(
+        key,
+        () => OneFrameImageStreamCompleter(Future.value(ImageInfo(image: pixel!.clone()))),
+        onError: onError,
+      );
+    }
+    return super.putIfAbsent(key, loader, onError: onError);
+  }
 }

@@ -1,16 +1,23 @@
 import "dart:async";
+import "dart:math" show Random;
+import "dart:ui" show BoxHeightStyle;
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_chat.dart";
 import "package:flow/api/twitch_chat_assets.dart";
 import "package:flow/api/twitch_vod_chat.dart";
 import "package:flow/app/app_settings_store.dart";
+import "package:flow/features/player/chat_username.dart";
+import "package:flow/features/player/twitch_emote_picker.dart";
 import "package:flow/shared/chat_links.dart";
+import "package:flow/shared/chat_name_color.dart";
 import "package:flow/shared/external_url_opener.dart";
 import "package:flow/shared/preferences/preferences.dart";
+import "package:flow/shared/widgets/scroll_reactive_chrome.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/gestures.dart";
 import "package:flutter/material.dart";
+import "package:flutter/rendering.dart";
 import "package:flutter/services.dart";
 import "package:flutter_svg/flutter_svg.dart";
 import "package:mobx/mobx.dart" show ReactionDisposer, reaction;
@@ -33,6 +40,7 @@ class TwitchChatPanel extends StatefulWidget {
     this.settingsStore,
     this.onOpenSettings,
     this.onReportUser,
+    this.onInlineBackHandlerChanged,
     this.topPadding = 0,
     this.latencyMs,
     super.key,
@@ -45,6 +53,7 @@ class TwitchChatPanel extends StatefulWidget {
   final AppSettingsStore? settingsStore;
   final AsyncCallback? onOpenSettings;
   final Future<void> Function(String login)? onReportUser;
+  final ValueChanged<VoidCallback?>? onInlineBackHandlerChanged;
   final bool chatOnly;
   final bool isLive;
   final double topPadding;
@@ -68,6 +77,9 @@ class TwitchChatPanel extends StatefulWidget {
     properties.add(DiagnosticsProperty<AppSettingsStore?>("settingsStore", settingsStore));
     properties.add(ObjectFlagProperty<AsyncCallback?>.has("onOpenSettings", onOpenSettings));
     properties.add(ObjectFlagProperty<Object?>.has("onReportUser", onReportUser));
+    properties.add(
+      ObjectFlagProperty<Object?>.has("onInlineBackHandlerChanged", onInlineBackHandlerChanged),
+    );
     properties.add(DoubleProperty("topPadding", topPadding));
     properties.add(IntProperty("latencyMs", latencyMs));
     properties.add(FlagProperty("chatOnly", value: chatOnly, ifTrue: "chat only"));
@@ -80,8 +92,17 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
   final _draft = TextEditingController();
   final _draftFocus = FocusNode();
   final _scroll = ScrollController();
+  final _pinLayoutKey = GlobalKey();
+  final _pinBodyKey = GlobalKey();
+  final _pinReplyKey = GlobalKey();
+  final _composerKey = GlobalKey();
+  final _pinnerTap = TapGestureRecognizer();
   final _sheets = <Route<Object?>>{};
   final _blockedLogins = <String>{};
+  final _knownChatUsers = <String, TwitchChatMessage>{};
+  ({Listenable source, String? login, String? userId})? _chattersKey;
+  Future<TwitchChatters>? _chattersRequest;
+  Map<String, TwitchChatMessage> _rosterUsers = {};
   AppSettingsStore? _settingsStore;
   AppSettingsStore? _fallbackSettingsStore;
   ReactionDisposer? _settingsReaction;
@@ -92,7 +113,25 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
   TwitchChatMessage? _replyTo;
   String? _dismissedPinId;
   String? _minimizedPinId;
+  String? _autoCollapsePinId;
+  Timer? _pinCollapseTimer;
+  Timer? _pinProgressTimer;
+  double _pinHeight = 0;
+  double _composerHeight = 0;
+  bool _layoutUpdateQueued = false;
+  bool _showEmotes = false;
+  bool _autocompleteEmotesLoaded = false;
+  bool _composerGateOpen = false;
+  String? _rulesKey;
+  List<String> _acceptedRules = const [];
+  Future<void>? _rulesLoad;
+  static const _syncMessageId = "system-chat-sync";
+  final _messageReleaseTimes = <String, DateTime>{};
+  ({bool automatic, int manualMs, bool enabled})? _delayConfiguration;
+  int? _syncedLatencyMs;
+  DateTime? _syncDeadline;
   Timer? _delayTimer;
+  Timer? _followerHintTimer;
   List<TwitchChatMessage>? _pausedMessages;
   List<TwitchChatMessage> _presentedMessages = [];
 
@@ -101,6 +140,8 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     super.initState();
     widget._source.addListener(_chatChanged);
     widget.assets?.addListener(_chatChanged);
+    _draft.addListener(_draftChanged);
+    _draftFocus.addListener(_composerFocusChanged);
     _scroll.addListener(_scrolled);
     _scrollToLatest();
   }
@@ -118,6 +159,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
       _bindSettings();
     }
     if (oldWidget._source != widget._source) {
+      oldWidget.controller?.setAutoClaimChannelPoints(enabled: false);
       _closeSheets();
       oldWidget._source.removeListener(_chatChanged);
       widget._source.addListener(_chatChanged);
@@ -126,25 +168,48 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
       _following = true;
       _pausedMessages = null;
       _replyTo = null;
+      _knownChatUsers.clear();
       _dismissedPinId = null;
       _minimizedPinId = null;
+      _autoCollapsePinId = null;
+      _pinCollapseTimer?.cancel();
+      _pinHeight = 0;
+      _showEmotes = false;
+      widget.onInlineBackHandlerChanged?.call(null);
+      _rulesKey = null;
+      _acceptedRules = const [];
+      _rulesLoad = null;
+      _messageReleaseTimes.clear();
+      _delayConfiguration = null;
+      _syncedLatencyMs = null;
+      _syncDeadline = null;
+      _delayTimer?.cancel();
       _scrollToLatest();
     }
     if (oldWidget.assets != widget.assets) {
       oldWidget.assets?.removeListener(_chatChanged);
       widget.assets?.addListener(_chatChanged);
+      _autocompleteEmotesLoaded = false;
     }
+    widget.controller?.setAutoClaimChannelPoints(
+      enabled: widget.isLive && _settings.autoClaimChannelPoints,
+    );
   }
 
   @override
   void dispose() {
+    widget.onInlineBackHandlerChanged?.call(null);
     _settingsReaction?.call();
     widget._source.removeListener(_chatChanged);
     widget.assets?.removeListener(_chatChanged);
     _draft.dispose();
     _draftFocus.dispose();
+    _pinnerTap.dispose();
     _delayTimer?.cancel();
+    _followerHintTimer?.cancel();
+    _pinCollapseTimer?.cancel();
     _scroll.dispose();
+    _pinProgressTimer?.cancel();
     _closeSheets();
     super.dispose();
   }
@@ -161,9 +226,9 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
   }
 
   Future<T?> _showSheet<T>({required WidgetBuilder builder}) async {
-    Route<Object?>? route;
+    ModalRoute<Object?>? route;
     try {
-      return await showModalBottomSheet<T>(
+      final result = await showModalBottomSheet<T>(
         context: context,
         isScrollControlled: true,
         builder: (context) {
@@ -174,6 +239,8 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
           return builder(context);
         },
       );
+      await route?.completed;
+      return result;
     } finally {
       _sheets.remove(route);
     }
@@ -192,9 +259,17 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     _settingsReaction?.call();
     _settingsStore = store;
     _settings = store.chatPreferences;
+    widget.controller?.setAutoClaimChannelPoints(
+      enabled: widget.isLive && _settings.autoClaimChannelPoints,
+    );
     _settingsReaction = reaction<ChatPreferences>(
       (_) => store.chatPreferences,
-      (settings) => setState(() => _settings = settings),
+      (settings) {
+        setState(() => _settings = settings);
+        widget.controller?.setAutoClaimChannelPoints(
+          enabled: widget.isLive && settings.autoClaimChannelPoints,
+        );
+      },
     );
     if (!store.isLoaded) {
       unawaited(_loadSettings(store));
@@ -228,25 +303,66 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
   }
 
   List<TwitchChatMessage> _messagesForDisplay() {
-    final delay = widget.controller == null
-        ? Duration.zero
-        : Duration(
-            milliseconds: _settings.autoSyncChat
-                ? widget.latencyMs ?? 0
-                : (_settings.manualChatDelaySeconds * 1000).round(),
-          );
-    final source = widget.controller == null
-        ? widget.replayController!.messages
-        : delay == Duration.zero
-        ? widget.controller!.messages
-        : widget.controller!.recentHistory;
     final now = DateTime.now();
+    final configuration = (
+      automatic: _settings.autoSyncChat,
+      manualMs: _settings.autoSyncChat ? 0 : (_settings.manualChatDelaySeconds * 1000).round(),
+      enabled: widget.controller != null && !widget.chatOnly && widget.isLive,
+    );
+    if (_delayConfiguration != configuration) {
+      if (_delayConfiguration?.automatic != configuration.automatic ||
+          _delayConfiguration?.enabled != configuration.enabled) {
+        _syncedLatencyMs = null;
+      }
+      _delayConfiguration = configuration;
+      _messageReleaseTimes.removeWhere((_, releaseAt) => releaseAt.isAfter(now));
+      _syncDeadline = null;
+    }
+    final latency = widget.latencyMs;
+    if (latency != null) {
+      _syncedLatencyMs = latency;
+    }
+    final delay = Duration(
+      milliseconds: !configuration.enabled
+          ? 0
+          : configuration.automatic
+          ? _syncedLatencyMs ?? 0
+          : configuration.manualMs,
+    );
+    if (delay <= Duration.zero) {
+      _messageReleaseTimes.removeWhere((_, releaseAt) => releaseAt.isAfter(now));
+    }
+    final source = widget.controller?.recentHistory ?? widget.replayController!.messages;
+    final retainedIds = source.map((message) => message.id).toSet();
+    _messageReleaseTimes.removeWhere((id, _) => !retainedIds.contains(id));
     Duration? nextUpdate;
+    DateTime? previousRelease;
     final ready = source.where((message) {
-      if (message.isOwn || message.timestamp == null || delay == Duration.zero) {
+      final immediate =
+          message.isOwn ||
+          message.isHistorical ||
+          message.isPrivate ||
+          message.noticeType == "system";
+      final bypass = immediate || message.timestamp == null || delay <= Duration.zero;
+      if (message.isOwn && !message.isHistorical && message.timestamp != null) {
+        _messageReleaseTimes[message.id] = message.timestamp!;
+      }
+      final releaseAt = _messageReleaseTimes.putIfAbsent(message.id, () {
+        final timestamp = message.timestamp == null || message.timestamp!.isAfter(now)
+            ? now
+            : message.timestamp!;
+        final target = bypass ? timestamp : timestamp.add(delay);
+        return !immediate && previousRelease != null && previousRelease!.isAfter(target)
+            ? previousRelease!
+            : target;
+      });
+      if (!immediate && (previousRelease == null || releaseAt.isAfter(previousRelease!))) {
+        previousRelease = releaseAt;
+      }
+      if (bypass) {
         return true;
       }
-      final remaining = message.timestamp!.add(delay).difference(now);
+      final remaining = releaseAt.difference(now);
       if (remaining <= Duration.zero) {
         return true;
       }
@@ -255,12 +371,35 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
       }
       return false;
     }).toList();
+    if (_syncDeadline == null &&
+        nextUpdate != null &&
+        widget.controller?.status == TwitchChatStatus.connected) {
+      _syncDeadline = now.add(nextUpdate!);
+    }
+    final syncing = _syncDeadline?.isAfter(now) == true && delay > Duration.zero;
+    if (syncing) {
+      final remaining = _syncDeadline!.difference(now);
+      final tick = remaining < const Duration(seconds: 1) ? remaining : const Duration(seconds: 1);
+      if (nextUpdate == null || tick < nextUpdate!) {
+        nextUpdate = tick;
+      }
+    }
+    ready.removeWhere((message) => message.id == _syncMessageId && !syncing);
+    final sourceOrder = {for (final (index, message) in source.indexed) message.id: index};
+    ready.sort((a, b) {
+      final releaseOrder = _messageReleaseTimes[a.id]!.compareTo(_messageReleaseTimes[b.id]!);
+      return releaseOrder != 0 ? releaseOrder : sourceOrder[a.id]!.compareTo(sourceOrder[b.id]!);
+    });
     final messages = ready.length > 300 ? ready.sublist(ready.length - 300) : ready;
     _delayTimer?.cancel();
     if (nextUpdate != null) {
       _delayTimer = Timer(nextUpdate!, _chatChanged);
     }
-    final paused = _pausedMessages;
+    final paused = _pausedMessages?.where(
+      (message) =>
+          (!message.isPrivate && !message.id.startsWith("pending:")) ||
+          retainedIds.contains(message.id),
+    );
     final byId = {
       for (final message in widget.controller?.recentHistory ?? source) message.id: message,
     };
@@ -268,14 +407,24 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
         (paused == null ? messages : paused.map((message) => byId[message.id] ?? message)).where((
           message,
         ) {
+          if (message.id == _syncMessageId && !syncing) {
+            return false;
+          }
           if (_blockedLogins.contains(message.login.toLowerCase())) {
             return false;
           }
           if (!_showMessage(message, _settings)) {
             return false;
           }
+          if (message.isPrivate && message.noticeType == "watch-streak") {
+            return false;
+          }
+          if (message.isPrivate) {
+            return true;
+          }
           return switch (message.noticeType) {
-            "moderation" => true,
+            "moderation" => _settings.showModerationNotices,
+            "system" => true,
             "announcement" => _settings.showAnnouncements,
             "raid" => _settings.showRaidNotices,
             null => true,
@@ -287,7 +436,10 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
 
   void _scrollToLatest() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _following && _scroll.hasClients) {
+      if (mounted &&
+          _following &&
+          _scroll.hasClients &&
+          _scroll.position.pixels != _scroll.position.minScrollExtent) {
         _scroll.jumpTo(_scroll.position.minScrollExtent);
       }
     });
@@ -299,20 +451,23 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     if (controller == null || _sending || !controller.canSend || text.trim().isEmpty) {
       return;
     }
-    setState(() => _sending = true);
+    if (!await _ensureCanCompose() || !mounted || controller != widget.controller) {
+      return;
+    }
+    final draft = _draft.value;
     final replyTo = _replyTo;
+    setState(() {
+      _sending = true;
+      _draft.clear();
+      _replyTo = null;
+      _following = true;
+      _pausedMessages = null;
+    });
     try {
       final sent = await controller.send(text, replyTo: replyTo);
-      if (mounted && controller == widget.controller && sent) {
-        if (_draft.text == text) {
-          _draft.clear();
-          if (_replyTo == replyTo) {
-            _replyTo = null;
-          }
-        }
-        _following = true;
-        _pausedMessages = null;
-        _scrollToLatest();
+      if (mounted && controller == widget.controller && !sent && _draft.text.isEmpty) {
+        _draft.value = draft;
+        _replyTo = replyTo;
       }
     } finally {
       if (mounted && controller == widget.controller) {
@@ -353,7 +508,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
               ListTile(
                 key: const ValueKey("chat_only_toggle"),
                 leading: Icon(
-                  widget.chatOnly ? Icons.play_arrow_rounded : Icons.chat_bubble_outline_rounded,
+                  widget.chatOnly ? Icons.monitor : Icons.chat,
                 ),
                 title: Text(widget.chatOnly ? "Show video" : "Chat only"),
                 onTap: () => Navigator.pop(context, _ChatAction.video),
@@ -415,79 +570,182 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     }
   }
 
+  void _checkChattersScope() {
+    final key = (
+      source: widget._source,
+      login: widget.controller?.channel ?? widget.assets?.channelLogin,
+      userId: widget.controller?.currentUserId,
+    );
+    if (_chattersKey != key) {
+      _chattersKey = key;
+      _chattersRequest = null;
+      _rosterUsers = {};
+    }
+  }
+
+  Future<TwitchChatters> _loadChatters({bool refresh = false}) {
+    _checkChattersScope();
+    if (!refresh && _chattersRequest != null) {
+      return _chattersRequest!;
+    }
+    final key = _chattersKey!;
+    final loader = widget.controller?.clientLoader ?? widget.replayController!.clientLoader;
+    final request = _chattersRequest = loader().then((client) => client.fetchChatters(key.login!));
+    unawaited(
+      request.then<void>(
+        (result) {
+          if (!mounted) {
+            return;
+          }
+          _checkChattersScope();
+          if (_chattersKey == key && _chattersRequest == request) {
+            setState(() {
+              _rosterUsers = {
+                for (final login in result.groups.values.expand((names) => names))
+                  login.toLowerCase(): TwitchChatMessage(
+                    id: "",
+                    login: login,
+                    displayName: login,
+                    text: "",
+                  ),
+              };
+            });
+          }
+        },
+        onError: (Object error, StackTrace stack) {
+          if (_chattersRequest == request) {
+            _chattersRequest = null;
+          }
+        },
+      ),
+    );
+    return request;
+  }
+
   Future<void> _showChatters() async {
-    final login = widget.assets?.channelLogin ?? widget.controller?.channel;
-    if (login == null) {
+    _checkChattersScope();
+    if (_chattersKey!.login == null) {
       return;
     }
-    final loader = widget.controller?.clientLoader ?? widget.replayController!.clientLoader;
-    Future<TwitchChatters> load() async => (await loader()).fetchChatters(login);
-    Future<TwitchChatters>? chatters;
+    var chatters = _loadChatters();
+    var query = "";
     await _showSheet<void>(
-      builder: (context) => SafeArea(
-        top: false,
-        child: SizedBox(
-          height: MediaQuery.sizeOf(context).height * 0.65,
-          child: StatefulBuilder(
-            builder: (context, setSheetState) => FutureBuilder<TwitchChatters>(
-              future: chatters ??= load(),
-              builder: (context, snapshot) {
-                final result = snapshot.data;
-                if (snapshot.hasError) {
-                  return Center(
+      builder: (context) => Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
+        child: SafeArea(
+          top: false,
+          child: SizedBox(
+            height: (MediaQuery.sizeOf(context).height * 0.65).clamp(
+              0.0,
+              MediaQuery.sizeOf(context).height - MediaQuery.viewInsetsOf(context).bottom,
+            ),
+            child: StatefulBuilder(
+              builder: (context, setSheetState) => FutureBuilder<TwitchChatters>(
+                future: chatters,
+                builder: (context, snapshot) {
+                  final result = snapshot.data;
+                  if (snapshot.hasError) {
+                    return Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text("Could not load chatters"),
+                          TextButton(
+                            onPressed: () => setSheetState(() {
+                              chatters = _loadChatters(refresh: true);
+                            }),
+                            child: const Text("Retry"),
+                          ),
+                        ],
+                      ),
+                    );
+                  }
+                  if (result == null) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  final groups = {
+                    for (final group in result.groups.entries)
+                      group.key: group.value
+                          .where((login) => login.toLowerCase().contains(query))
+                          .toList(),
+                  };
+                  return Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
                     child: Column(
-                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text("Could not load chatters"),
-                        TextButton(
-                          onPressed: () => setSheetState(() => chatters = null),
-                          child: const Text("Retry"),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                "Chatters · ${result.count}",
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: "Refresh chatters",
+                              onPressed: () => setSheetState(() {
+                                chatters = _loadChatters(refresh: true);
+                              }),
+                              icon: const Icon(Icons.refresh),
+                            ),
+                          ],
+                        ),
+                        if (result.isPartial)
+                          Text(
+                            "Showing ${result.listedCount} names returned by Twitch",
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        TextField(
+                          key: const ValueKey("chatters_search"),
+                          decoration: const InputDecoration(
+                            hintText: "Search chatters",
+                            prefixIcon: Icon(Icons.search),
+                          ),
+                          onChanged: (value) =>
+                              setSheetState(() => query = value.trim().toLowerCase()),
+                        ),
+                        const SizedBox(height: 12),
+                        Expanded(
+                          child: groups.values.every((names) => names.isEmpty)
+                              ? const Center(child: Text("No chatters found"))
+                              : CustomScrollView(
+                                  slivers: [
+                                    for (final group in groups.entries)
+                                      if (group.value.isNotEmpty) ...[
+                                        SliverToBoxAdapter(
+                                          child: Padding(
+                                            padding: const EdgeInsets.only(top: 8, bottom: 8),
+                                            child: Text(
+                                              switch (group.key) {
+                                                "broadcasters" => "Broadcasters",
+                                                "moderators" => "Moderators",
+                                                "vips" => "VIPs",
+                                                "staff" => "Staff",
+                                                "chatbots" => "Chatbots",
+                                                "viewers" => "Viewers",
+                                                _ => group.key,
+                                              },
+                                              style: Theme.of(context).textTheme.labelLarge,
+                                            ),
+                                          ),
+                                        ),
+                                        SliverList.builder(
+                                          itemCount: group.value.length,
+                                          itemBuilder: (context, index) => Padding(
+                                            padding: const EdgeInsets.symmetric(vertical: 6),
+                                            child: Text(group.value[index]),
+                                          ),
+                                        ),
+                                      ],
+                                  ],
+                                ),
                         ),
                       ],
                     ),
                   );
-                }
-                if (result == null) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                return ListView(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                  children: [
-                    Text(
-                      "Chatters · ${result.count}",
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    if (result.groups.values.fold(0, (count, names) => count + names.length) <
-                        result.count)
-                      Text(
-                        "Showing ${result.groups.values.fold(0, (count, names) => count + names.length)} names returned by Twitch",
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    const SizedBox(height: 16),
-                    for (final group in result.groups.entries)
-                      if (group.value.isNotEmpty) ...[
-                        Text(
-                          switch (group.key) {
-                            "broadcasters" => "Broadcasters",
-                            "moderators" => "Moderators",
-                            "vips" => "VIPs",
-                            "staff" => "Staff",
-                            "viewers" => "Viewers",
-                            _ => group.key,
-                          },
-                          style: Theme.of(context).textTheme.labelLarge,
-                        ),
-                        const SizedBox(height: 8),
-                        for (final login in group.value)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 6),
-                            child: Text(login),
-                          ),
-                        const SizedBox(height: 16),
-                      ],
-                  ],
-                );
-              },
+                },
+              ),
             ),
           ),
         ),
@@ -499,22 +757,479 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     await widget.onOpenSettings?.call();
   }
 
+  FlowPreferences get _preferences => widget.preferences ?? _settingsStore!.preferences;
+
+  String? get _currentRulesKey {
+    final controller = widget.controller;
+    final channelId = controller?.chatAccess?.channelId;
+    final userId = controller?.currentUserId;
+    return channelId == null || userId == null ? null : "$userId:$channelId";
+  }
+
+  bool get _rulesAccepted {
+    final rules = widget.controller?.chatAccess?.rules;
+    return rules != null &&
+        (rules.isEmpty || (_rulesKey == _currentRulesKey && _acceptedRules.isNotEmpty));
+  }
+
+  bool get _canCompose => widget.controller?.canSend == true && _rulesAccepted;
+
+  Future<void> _loadRulesAcceptance() {
+    final key = _currentRulesKey;
+    if (key == null || key == _rulesKey) {
+      return _rulesLoad ?? Future.value();
+    }
+    _rulesKey = key;
+    _acceptedRules = const [];
+    return _rulesLoad = _preferences
+        .readAcceptedChatRules(key)
+        .then((rules) {
+          if (mounted && _rulesKey == key) {
+            setState(() => _acceptedRules = rules);
+          }
+        })
+        .catchError((Object error) {
+          debugPrint("Could not read accepted chat rules: $error");
+        });
+  }
+
+  Future<bool> _ensureCanCompose() async {
+    final controller = widget.controller;
+    if (controller == null ||
+        !controller.isSignedIn ||
+        controller.status != TwitchChatStatus.connected) {
+      return false;
+    }
+    if (_canCompose) {
+      return true;
+    }
+    if (_composerGateOpen) {
+      return false;
+    }
+    _composerGateOpen = true;
+    _draftFocus.unfocus();
+    try {
+      if (controller.chatAccess == null) {
+        await controller.refreshChatAccess();
+      }
+      if (!mounted || controller != widget.controller) {
+        return false;
+      }
+      if (controller.chatAccess == null) {
+        await _showSheet<void>(
+          builder: (context) => SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: AnimatedBuilder(
+                animation: controller,
+                builder: (context, _) => Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text("Chat access", style: Theme.of(context).textTheme.titleLarge),
+                    const SizedBox(height: 12),
+                    Text(controller.chatAccessError ?? "Checking chat rules and follower status…"),
+                    const SizedBox(height: 12),
+                    FilledButton(
+                      onPressed: controller.isCheckingChatAccess
+                          ? null
+                          : () async {
+                              await controller.refreshChatAccess();
+                              if (context.mounted && controller.chatAccess != null) {
+                                Navigator.pop(context);
+                              }
+                            },
+                      child: const Text("Retry"),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+      if (!mounted || controller != widget.controller || controller.chatAccess == null) {
+        return false;
+      }
+      if (!controller.followerChatEligible) {
+        await _showFollowerGate(controller);
+      }
+      if (!mounted || controller != widget.controller || !controller.canSend) {
+        return false;
+      }
+      await _loadRulesAcceptance();
+      if (!mounted ||
+          controller != widget.controller ||
+          !controller.canSend ||
+          controller.chatAccess == null) {
+        return false;
+      }
+      if (!_rulesAccepted) {
+        final access = controller.chatAccess!;
+        final rulesKey = _currentRulesKey;
+        final accepted = await _showSheet<bool>(
+          builder: (context) => SafeArea(
+            top: false,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.72),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text("Chat Rules", style: Theme.of(context).textTheme.titleLarge),
+                        ),
+                        IconButton(
+                          tooltip: "Close rules",
+                          onPressed: () => Navigator.pop(context, false),
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            for (final (index, rule) in access.rules.indexed)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Text("${index + 1}. $rule"),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    FilledButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text("Okay, Got It!"),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+        if (accepted != true ||
+            !mounted ||
+            controller != widget.controller ||
+            rulesKey != _currentRulesKey ||
+            !listEquals(access.rules, controller.chatAccess?.rules)) {
+          return false;
+        }
+        setState(() => _acceptedRules = List.of(access.rules));
+        if (rulesKey case final key?) {
+          unawaited(
+            _preferences.saveAcceptedChatRules(key, access.rules).catchError((Object error) {
+              debugPrint("Could not save accepted chat rules: $error");
+            }),
+          );
+        }
+      }
+      return _canCompose;
+    } finally {
+      _composerGateOpen = false;
+    }
+  }
+
+  Future<void> _showFollowerGate(TwitchChatController controller) {
+    final seconds = Stream<void>.periodic(const Duration(seconds: 1));
+
+    return _showSheet<void>(
+      builder: (context) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: StreamBuilder<void>(
+            stream: seconds,
+            builder: (context, _) => AnimatedBuilder(
+              animation: controller,
+              builder: (context, _) {
+                final access = controller.chatAccess;
+                final channel = access?.channelDisplayName ?? controller.channel;
+                final wait = controller.followingWaitRemaining;
+                final following = access?.isFollowing == true;
+                final minimum = Duration(
+                  minutes: controller.followersOnlyMinutes,
+                );
+                if (following && controller.followerChatEligible) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (context.mounted && ModalRoute.of(context)?.isCurrent == true) {
+                      Navigator.pop(context);
+                    }
+                  });
+                }
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text("Followers-Only Chat", style: Theme.of(context).textTheme.titleLarge),
+                    const SizedBox(height: 12),
+                    Text(
+                      following
+                          ? "You need to be a follower for ${_chatDuration(minimum)} to chat, and you have ${_chatDuration(wait)} left."
+                          : minimum > Duration.zero
+                          ? "You need to be a follower of $channel for ${_chatDuration(minimum)} to chat."
+                          : "You need to be a follower of $channel to chat.",
+                    ),
+                    if (controller.chatAccessError case final error?) ...[
+                      const SizedBox(height: 8),
+                      Text(error),
+                    ],
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      onPressed: controller.isFollowingChannel || controller.isCheckingChatAccess
+                          ? null
+                          : () async {
+                              if (following) {
+                                await controller.unfollowChannel();
+                              } else {
+                                await controller.followChannel();
+                              }
+                              if (context.mounted && controller.followerChatEligible) {
+                                Navigator.pop(context);
+                              }
+                            },
+                      icon: Icon(
+                        following ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+                      ),
+                      label: Text(
+                        controller.isFollowingChannel
+                            ? following
+                                  ? "Unfollowing…"
+                                  : "Following…"
+                            : following
+                            ? "Unfollow"
+                            : "Follow",
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _focusComposer() async {
+    _draftFocus.unfocus();
+    if (await _ensureCanCompose() && mounted) {
+      _setShowEmotes(false);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _draftFocus.requestFocus();
+        }
+      });
+    }
+  }
+
+  Future<void> _toggleEmotes() async {
+    if (_showEmotes) {
+      await _focusComposer();
+      return;
+    }
+    if (await _ensureCanCompose() && mounted) {
+      _draftFocus.unfocus();
+      _setShowEmotes(true);
+      _scrollToLatest();
+    }
+  }
+
+  void _setShowEmotes(bool show) {
+    setState(() => _showEmotes = show);
+    widget.onInlineBackHandlerChanged?.call(show ? () => _setShowEmotes(false) : null);
+  }
+
+  void _composerFocusChanged() {
+    if (_draftFocus.hasFocus && widget.assets?.unlockedError != null) {
+      _autocompleteEmotesLoaded = false;
+    }
+    _draftChanged();
+  }
+
+  void _draftChanged() {
+    setState(() {});
+    final value = _draft.value;
+    if (_draftFocus.hasFocus &&
+        _canCompose &&
+        value.selection.isValid &&
+        value.selection.isCollapsed &&
+        RegExp(
+          r"(?:^|\s)@[^\s:@]*$",
+        ).hasMatch(value.text.substring(0, value.selection.extentOffset))) {
+      unawaited(_loadChatters());
+    }
+    if (_draftFocus.hasFocus &&
+        _canCompose &&
+        _settings.emoteAutocomplete &&
+        !_autocompleteEmotesLoaded &&
+        widget.assets != null) {
+      _autocompleteEmotesLoaded = true;
+      unawaited(widget.assets!.loadUnlockedEmotes());
+    }
+  }
+
+  ({TextSelection selection, List<ChatAssetEmote> emotes, List<TwitchChatMessage> users})?
+  get _chatCompletion {
+    final value = _draft.value;
+    if (!_draftFocus.hasFocus ||
+        !_canCompose ||
+        _showEmotes ||
+        !value.selection.isValid ||
+        !value.selection.isCollapsed) {
+      return null;
+    }
+    final cursor = value.selection.extentOffset;
+    final match = RegExp(
+      r"(?:^|\s)(@([^\s:@]*)|:?([^\s:@]{2,}))$",
+    ).firstMatch(value.text.substring(0, cursor));
+    if (match == null) {
+      return null;
+    }
+    final mention = match.group(2) != null;
+    if (!mention && !_settings.emoteAutocomplete) {
+      return null;
+    }
+    final query = (match.group(2) ?? match.group(3))!.toLowerCase();
+    int rank(String name) => name == query
+        ? 0
+        : name.startsWith(query)
+        ? 1
+        : 2;
+    int compareNames(String a, String b) {
+      final first = a.toLowerCase();
+      final second = b.toLowerCase();
+      final priority = rank(first).compareTo(rank(second));
+      if (priority != 0) {
+        return priority;
+      }
+      final alphabetical = first.compareTo(second);
+      return alphabetical == 0 ? a.compareTo(b) : alphabetical;
+    }
+
+    final users = mention
+        ? (_completionUsers
+              .where(
+                (user) =>
+                    user.login.toLowerCase().contains(query) ||
+                    user.displayName.toLowerCase().contains(query),
+              )
+              .toList()
+            ..sort((a, b) => compareNames(a.login, b.login)))
+        : <TwitchChatMessage>[];
+    final emotes =
+        mention
+              ? <ChatAssetEmote>[]
+              : (widget.assets?.emotesByName.values ?? <ChatAssetEmote>[]).where((emote) {
+                  final enabled = switch (emote.provider) {
+                    ChatEmoteProvider.twitch => _settings.twitchEmotes,
+                    ChatEmoteProvider.sevenTv => _settings.sevenTvEmotes,
+                    ChatEmoteProvider.bttv => _settings.bttvEmotes,
+                    ChatEmoteProvider.ffz => _settings.ffzEmotes,
+                  };
+                  return enabled && emote.name.toLowerCase().contains(query);
+                }).toList()
+          ..sort((a, b) => compareNames(a.name, b.name));
+    if (emotes.isEmpty && users.isEmpty) {
+      return null;
+    }
+    final suffix = RegExp(r"^\S*").stringMatch(value.text.substring(cursor))!;
+    final end = cursor + suffix.length;
+    return (
+      selection: TextSelection(
+        baseOffset: cursor - match.group(1)!.length,
+        extentOffset: end < value.text.length && value.text[end] == " " ? end + 1 : end,
+      ),
+      emotes: emotes.take(20).toList(),
+      users: users.take(20).toList(),
+    );
+  }
+
+  void _insertCompletion(String token, {TextSelection? replacement}) {
+    if (!_canCompose) {
+      return;
+    }
+    final value = _draft.value;
+    final selection = replacement ?? value.selection;
+    final start = selection.isValid ? selection.start : value.text.length;
+    final end = selection.isValid ? selection.end : value.text.length;
+    final prefix = start > 0 && !RegExp(r"\s").hasMatch(value.text[start - 1]) ? " " : "";
+    final text = "$prefix$token ";
+    final updated = value.text.replaceRange(start, end, text);
+    if (updated.length > 500) {
+      return;
+    }
+    setState(
+      () => _draft.value = TextEditingValue(
+        text: updated,
+        selection: TextSelection.collapsed(offset: start + text.length),
+      ),
+    );
+  }
+
   List<TwitchChatMessage> get _history =>
       widget.controller?.recentHistory ?? widget.replayController!.messages;
 
-  Map<String, TwitchChatMessage> get _knownUsers => {
-    for (final message in _history) message.login.toLowerCase(): message,
-  };
+  Map<String, TwitchChatMessage> get _knownUsers {
+    final broadcaster = widget.assets?.broadcaster;
+    if (broadcaster != null) {
+      _rememberUsers([
+        TwitchChatMessage(
+          id: "broadcaster:${broadcaster.id}",
+          login: broadcaster.login,
+          displayName: broadcaster.displayName,
+          userId: broadcaster.id,
+          color: broadcaster.chatColor,
+          text: "",
+          isOwn: broadcaster.id == widget.controller?.currentUserId,
+        ),
+      ], historical: true);
+    }
+    _rememberUsers(_history);
+    return _knownChatUsers;
+  }
+
+  Iterable<TwitchChatMessage> get _completionUsers sync* {
+    _checkChattersScope();
+    final known = _knownUsers;
+    yield* known.values;
+    yield* _rosterUsers.entries
+        .where((entry) => !known.containsKey(entry.key))
+        .map((entry) => entry.value);
+  }
+
+  void _rememberUsers(Iterable<TwitchChatMessage> messages, {bool historical = false}) {
+    for (final message in messages) {
+      final login = message.login.toLowerCase();
+      if (login.isEmpty) {
+        continue;
+      }
+      final known = _knownChatUsers[login];
+      if (known == null ||
+          (message.color?.isNotEmpty == true && (!historical || known.color == null))) {
+        _knownChatUsers[login] = message;
+      }
+    }
+    while (_knownChatUsers.length > 5000) {
+      _knownChatUsers.remove(_knownChatUsers.keys.first);
+    }
+  }
 
   void _reply(TwitchChatMessage message) {
     setState(() {
       _replyTo = message.text.isEmpty ? null : message;
-      _draft.text = "@${message.login} ${_draft.text}";
-      _draft.selection = TextSelection.collapsed(offset: _draft.text.length);
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        _draftFocus.requestFocus();
+        unawaited(_focusComposer());
       }
     });
   }
@@ -555,7 +1270,10 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
               ListTile(
                 leading: const Icon(Icons.reply_rounded),
                 title: const Text("Reply to message"),
-                enabled: widget.controller != null && message.login.isNotEmpty,
+                enabled:
+                    widget.controller != null &&
+                    message.login.isNotEmpty &&
+                    !message.id.startsWith("pending:"),
                 onTap: () => Navigator.pop(context, _ChatMessageAction.reply),
               ),
             ],
@@ -591,11 +1309,12 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
         composing: TextRange.empty,
       );
     });
-    _draftFocus.requestFocus();
+    unawaited(_focusComposer());
   }
 
   Future<void> _showThread(TwitchChatMessage message, {bool pinned = false}) async {
     FocusManager.instance.primaryFocus?.unfocus();
+    final source = widget._source;
     final loader = widget.controller?.clientLoader ?? widget.replayController!.clientLoader;
     await _showSheet<void>(
       builder: (context) => _ChatThreadSheet(
@@ -603,9 +1322,16 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
         title: pinned ? "Pinned message" : "Reply thread",
         source: widget._source,
         messages: () => _history,
-        loadHistory: () async => (await loader()).fetchChatReplyThread(
-          message.threadRootId ?? message.parentMessageId ?? message.id,
-        ),
+        knownUsers: () => _knownUsers,
+        loadHistory: () async {
+          final history = await (await loader()).fetchChatReplyThread(
+            message.threadRootId ?? message.parentMessageId ?? message.id,
+          );
+          if (mounted && widget._source == source) {
+            setState(() => _rememberUsers(history, historical: true));
+          }
+          return history;
+        },
         settings: () => _settings,
         assets: widget.assets,
         onUserTap: (message) => unawaited(_showUser(message)),
@@ -620,10 +1346,31 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     FocusManager.instance.primaryFocus?.unfocus();
     final controller = widget.controller;
     final loader = controller?.clientLoader ?? widget.replayController!.clientLoader;
-    Future<TwitchUser?> loadUser() async => (await loader()).fetchChatUser(
-      userId: message.userId,
-      login: message.login,
-    );
+    final source = widget._source;
+    Future<TwitchUser?> loadUser() async {
+      final user = await (await loader()).fetchChatUser(
+        userId: message.userId,
+        login: message.login,
+        channelId: controller?.chatAccess?.channelId ?? widget.assets?.channelId,
+        channelLogin: controller?.channel ?? widget.assets?.channelLogin,
+      );
+      if (mounted && widget._source == source && user != null) {
+        setState(
+          () => _rememberUsers([
+            TwitchChatMessage(
+              id: "profile-${user.id}",
+              userId: user.id,
+              login: user.login,
+              displayName: user.displayName,
+              color: user.chatColor,
+              text: "",
+            ),
+          ], historical: true),
+        );
+      }
+      return user;
+    }
+
     final profile = loadUser().onError((Object error, StackTrace stackTrace) => null);
     await _showSheet<void>(
       builder: (context) => _ChatUserSheet(
@@ -631,6 +1378,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
         profile: profile,
         source: widget._source,
         messages: () => controller?.recentHistory ?? widget.replayController!.messages,
+        knownUsers: () => _knownUsers,
         settings: () => _settings,
         assets: widget.assets,
         onEmoteTap: (emote) => unawaited(_showEmote(emote)),
@@ -639,7 +1387,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
         onThreadTap: (message) => unawaited(_showThread(message)),
         onMessageHold: (message) => unawaited(_showMessageActions(message)),
         onMore: () => unawaited(_userActions(message, profile)),
-        onReply: controller == null
+        onReply: controller == null || message.id.startsWith("pending:")
             ? null
             : () {
                 _closeSheets();
@@ -745,9 +1493,10 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
 
   Future<void> _showEmote(ChatAssetEmote emote) => _showAsset(
     name: emote.name,
-    url: emote.url,
+    url: emote.urlForBrightness(Theme.of(context).brightness),
     provider: emote.provider,
     author: emote.author,
+    originalName: emote.originalName,
   );
 
   Future<void> _showBadge(ChatAssetBadge badge) => _showAsset(
@@ -764,6 +1513,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     required ChatEmoteProvider provider,
     bool isBadge = false,
     String? author,
+    String? originalName,
     String? background,
   }) async {
     final origin = switch (provider) {
@@ -815,6 +1565,8 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
                 textAlign: TextAlign.center,
               ),
               Text("$origin ${isBadge ? 'badge' : 'emote'}"),
+              if (originalName != null && originalName != name)
+                Text("Original name: $originalName"),
               if (author != null && author.isNotEmpty) Text("By $author"),
               const SizedBox(height: 12),
               ListTile(
@@ -853,6 +1605,8 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     final pinner = pin.pinnedBy;
     final expanded = _minimizedPinId != pin.id;
     final fontSize = _settings.fontSize * _settings.messageScale;
+    final startsAt = pin.startsAt;
+    final endsAt = pin.endsAt;
     final role = pinner == null
         ? null
         : pinner.id == widget.controller?.roomState["room-id"] ||
@@ -860,119 +1614,297 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
         ? "broadcaster/1"
         : "moderator/1";
     final badgeUrl = widget.assets?.badgeUrls[role];
-    return Material(
-      key: const ValueKey("chat_pinned_message"),
-      color: theme.scaffoldBackgroundColor,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: colors.outlineVariant),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+    final pinnerPaint = _settings.sevenTvPaints
+        ? widget.assets?.userPaintsByLogin[pinner?.login.toLowerCase()]
+        : null;
+    _pinnerTap.onTap = pinner == null
+        ? null
+        : () => unawaited(
+            _showUser(
+              knownUsers[pinner.login.toLowerCase()] ??
+                  TwitchChatMessage(
+                    id: "pinner-${pinner.id}",
+                    userId: pinner.id,
+                    login: pinner.login,
+                    displayName: pinner.displayName,
+                    text: "",
+                  ),
+            ),
+          );
+    return NotificationListener<SizeChangedLayoutNotification>(
+      onNotification: (_) {
+        _updateChatLayout();
+        return false;
+      },
+      child: SizeChangedLayoutNotifier(
+        child: Material(
+          key: const ValueKey("chat_pinned_message"),
+          color: theme.scaffoldBackgroundColor,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: colors.outlineVariant),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(8, 0, 8, expanded ? 12 : 9),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.push_pin_rounded, size: 18, color: colors.onSurfaceVariant),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text.rich(
-                    TextSpan(
-                      children: [
-                        TextSpan(text: pinner == null ? "Pinned message" : "Pinned by "),
-                        if (_settings.twitchBadges && badgeUrl != null)
-                          WidgetSpan(
-                            alignment: PlaceholderAlignment.middle,
-                            child: Padding(
-                              padding: const EdgeInsets.only(right: 4),
-                              child: GestureDetector(
-                                onTap: () => unawaited(
-                                  _showBadge(
-                                    widget.assets?.badgesById[role] ??
-                                        ChatAssetBadge(
-                                          id: role!,
-                                          title: role == "broadcaster/1"
-                                              ? "Broadcaster"
-                                              : "Moderator",
-                                          url: badgeUrl,
-                                          provider: ChatEmoteProvider.twitch,
-                                        ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Icon(Icons.push_pin_rounded, size: 18, color: colors.onSurfaceVariant),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text.rich(
+                        TextSpan(
+                          children: [
+                            TextSpan(text: pinner == null ? "Pinned message" : "Pinned by "),
+                            if (_settings.twitchBadges && badgeUrl != null)
+                              WidgetSpan(
+                                alignment: PlaceholderAlignment.middle,
+                                child: Padding(
+                                  padding: const EdgeInsets.only(right: 4),
+                                  child: GestureDetector(
+                                    onTap: () => unawaited(
+                                      _showBadge(
+                                        widget.assets?.badgesById[role] ??
+                                            ChatAssetBadge(
+                                              id: role!,
+                                              title: role == "broadcaster/1"
+                                                  ? "Broadcaster"
+                                                  : "Moderator",
+                                              url: badgeUrl,
+                                              provider: ChatEmoteProvider.twitch,
+                                            ),
+                                      ),
+                                    ),
+                                    child: Image.network(
+                                      badgeUrl,
+                                      width: fontSize * _settings.badgeScale,
+                                      height: fontSize * _settings.badgeScale,
+                                      semanticLabel: role == "broadcaster/1"
+                                          ? "Broadcaster"
+                                          : "Moderator",
+                                      errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                                    ),
                                   ),
                                 ),
-                                child: Image.network(
-                                  badgeUrl,
-                                  width: fontSize * _settings.badgeScale,
-                                  height: fontSize * _settings.badgeScale,
-                                  semanticLabel: role == "broadcaster/1"
-                                      ? "Broadcaster"
-                                      : "Moderator",
-                                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
-                                ),
                               ),
-                            ),
-                          ),
-                        if (pinner != null) TextSpan(text: pinner.displayName),
-                      ],
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.labelLarge?.copyWith(
-                      color: colors.onSurfaceVariant,
-                      fontSize: fontSize - 2,
-                    ),
-                  ),
-                ),
-                IconButton(
-                  tooltip: expanded ? "Minimize pinned message" : "Expand pinned message",
-                  visualDensity: VisualDensity.compact,
-                  onPressed: () => setState(() => _minimizedPinId = expanded ? pin.id : null),
-                  icon: Icon(
-                    expanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
-                    size: 20,
-                  ),
-                ),
-                IconButton(
-                  tooltip: "Close pinned message",
-                  visualDensity: VisualDensity.compact,
-                  onPressed: () => setState(() => _dismissedPinId = pin.id),
-                  icon: const Icon(Icons.close_rounded, size: 20),
-                ),
-              ],
-            ),
-            Padding(
-              padding: const EdgeInsets.only(left: 26, right: 4),
-              child: GestureDetector(
-                onTap: () => unawaited(_showThread(pin.message, pinned: true)),
-                onLongPress: expanded ? null : () => unawaited(_showMessageActions(pin.message)),
-                child: expanded
-                    ? _ChatMessageRow(
-                        key: ValueKey("pinned-${pin.id}"),
-                        message: pin.message,
-                        settings: _settings,
-                        assets: widget.assets,
-                        knownUsers: knownUsers,
-                        pinned: true,
-                        showReplyContext: false,
-                        onUserTap: (message) => unawaited(_showUser(message)),
-                        onEmoteTap: (emote) => unawaited(_showEmote(emote)),
-                        onBadgeTap: (badge) => unawaited(_showBadge(badge)),
-                        onMessageHold: (message) => unawaited(_showMessageActions(message)),
-                      )
-                    : Text(
-                        pin.message.text,
+                            if (pinner != null)
+                              if (pinnerPaint != null)
+                                WidgetSpan(
+                                  alignment: PlaceholderAlignment.baseline,
+                                  baseline: TextBaseline.alphabetic,
+                                  child: GestureDetector(
+                                    onTap: _pinnerTap.onTap,
+                                    child: ChatUsername(
+                                      name: pinner.displayName,
+                                      style: theme.textTheme.labelLarge!.copyWith(
+                                        color: colors.onSurfaceVariant,
+                                        fontSize: fontSize - 2,
+                                      ),
+                                      paint: pinnerPaint,
+                                      animated: _settings.animatedPaints,
+                                    ),
+                                  ),
+                                )
+                              else
+                                TextSpan(text: pinner.displayName, recognizer: _pinnerTap),
+                          ],
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodyMedium?.copyWith(fontSize: fontSize),
+                        style: theme.textTheme.labelLarge?.copyWith(
+                          color: colors.onSurfaceVariant,
+                          fontSize: fontSize - 2,
+                        ),
                       ),
-              ),
+                    ),
+                    IconButton(
+                      tooltip: expanded ? "Minimize pinned message" : "Expand pinned message",
+                      style: IconButton.styleFrom(
+                        minimumSize: const Size(32, 28),
+                        fixedSize: const Size(32, 28),
+                        padding: EdgeInsets.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      onPressed: () {
+                        _pinCollapseTimer?.cancel();
+                        _autoCollapsePinId = pin.id;
+                        setState(() => _minimizedPinId = expanded ? pin.id : null);
+                      },
+                      icon: Icon(
+                        expanded
+                            ? Icons.keyboard_arrow_up_rounded
+                            : Icons.keyboard_arrow_down_rounded,
+                        size: 20,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: "Close pinned message",
+                      style: IconButton.styleFrom(
+                        minimumSize: const Size(32, 28),
+                        fixedSize: const Size(32, 28),
+                        padding: EdgeInsets.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      onPressed: () {
+                        _pinCollapseTimer?.cancel();
+                        setState(() => _dismissedPinId = pin.id);
+                      },
+                      icon: const Icon(Icons.close_rounded, size: 20),
+                    ),
+                  ],
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(left: 26, top: 1, right: 4),
+                  child: GestureDetector(
+                    onTap: () => unawaited(_showThread(pin.message, pinned: true)),
+                    onLongPress: expanded
+                        ? null
+                        : () => unawaited(_showMessageActions(pin.message)),
+                    child: expanded
+                        ? _ChatMessageRow(
+                            key: ValueKey("pinned-${pin.id}"),
+                            message: pin.message,
+                            settings: _settings,
+                            assets: widget.assets,
+                            knownUsers: knownUsers,
+                            pinned: true,
+                            bodyKey: _pinBodyKey,
+                            replyContextKey: _pinReplyKey,
+                            onThreadTap: (message) => unawaited(_showThread(message, pinned: true)),
+                            onUserTap: (message) => unawaited(_showUser(message)),
+                            onEmoteTap: (emote) => unawaited(_showEmote(emote)),
+                            onBadgeTap: (badge) => unawaited(_showBadge(badge)),
+                            onMessageHold: (message) => unawaited(_showMessageActions(message)),
+                          )
+                        : Text(
+                            pin.message.text.substring(_replyBodyStart(pin.message)),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodyMedium?.copyWith(fontSize: fontSize),
+                          ),
+                  ),
+                ),
+                if (startsAt != null && endsAt != null && endsAt.isAfter(startsAt))
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: LinearProgressIndicator(
+                      key: const ValueKey("chat_pin_timer"),
+                      value:
+                          (endsAt.difference(DateTime.now()).inMilliseconds /
+                                  endsAt.difference(startsAt).inMilliseconds)
+                              .clamp(0.0, 1.0),
+                      minHeight: 2,
+                      borderRadius: BorderRadius.circular(2),
+                      semanticsLabel: "Pinned message time remaining",
+                    ),
+                  ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
+  }
+
+  void _schedulePinCollapse(String id, bool exceedsTwoLines) {
+    if (_autoCollapsePinId == id) {
+      if (!exceedsTwoLines && _pinCollapseTimer?.isActive == true) {
+        _pinCollapseTimer!.cancel();
+        _autoCollapsePinId = null;
+      }
+      return;
+    }
+    _pinCollapseTimer?.cancel();
+    if (!exceedsTwoLines) {
+      return;
+    }
+    _autoCollapsePinId = id;
+    _pinCollapseTimer = Timer(const Duration(seconds: 5), () {
+      if (mounted && widget.controller?.pinnedChat?.id == id && _dismissedPinId != id) {
+        setState(() => _minimizedPinId = id);
+      }
+    });
+  }
+
+  void _updateChatLayout() {
+    if (_layoutUpdateQueued) {
+      return;
+    }
+    _layoutUpdateQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _layoutUpdateQueued = false;
+      if (!mounted) {
+        return;
+      }
+      final box = _pinLayoutKey.currentContext?.findRenderObject() as RenderBox?;
+      final height = box?.size.height ?? 0;
+      if ((height - _pinHeight).abs() > 0.5) {
+        setState(() => _pinHeight = height);
+      }
+      final composerHeight = _composerKey.currentContext?.size?.height ?? 0;
+      if ((composerHeight - _composerHeight).abs() > 0.5) {
+        setState(() => _composerHeight = composerHeight);
+      }
+      final pin = widget.controller?.pinnedChat;
+      if (pin?.startsAt != null &&
+          pin?.endsAt?.isAfter(DateTime.now()) == true &&
+          _dismissedPinId != pin!.id &&
+          _pinProgressTimer?.isActive != true) {
+        _pinProgressTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+          final currentPin = widget.controller?.pinnedChat;
+          if (currentPin?.endsAt?.isAfter(DateTime.now()) != true ||
+              _dismissedPinId == currentPin?.id) {
+            timer.cancel();
+          }
+          setState(() {});
+        });
+      }
+      final paragraph = _pinBodyKey.currentContext?.findRenderObject();
+      if (pin != null && paragraph is RenderParagraph) {
+        final paragraphs = [
+          paragraph,
+          if (_pinReplyKey.currentContext?.findRenderObject() case final RenderParagraph reply)
+            reply,
+        ];
+        final lines = paragraphs
+            .map(
+              (paragraph) => paragraph
+                  .getBoxesForSelection(
+                    TextSelection(
+                      baseOffset: 0,
+                      extentOffset: paragraph.text
+                          .toPlainText(includeSemanticsLabels: false)
+                          .length,
+                    ),
+                    boxHeightStyle: BoxHeightStyle.max,
+                  )
+                  .map((box) => box.top)
+                  .toSet()
+                  .length,
+            )
+            .fold(0, (total, count) => total + count);
+        _schedulePinCollapse(pin.id, lines > 2);
+      }
+      widget.assets?.precacheMessages(context, [
+        ..._presentedMessages,
+        ?widget.controller?.pinnedMessage,
+      ]);
+      unawaited(_loadRulesAcceptance());
+      final remaining = _syncDeadline?.difference(DateTime.now());
+      if (widget.controller?.status == TwitchChatStatus.connected &&
+          remaining != null &&
+          remaining > Duration.zero) {
+        widget.controller!.upsertSystemMessage(
+          _syncMessageId,
+          "Chat will sync in ${(remaining.inMicroseconds / Duration.microsecondsPerSecond).ceil()}s...",
+        );
+      }
+    });
   }
 
   @override
@@ -980,15 +1912,30 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     final controller = widget.controller;
     final replay = widget.replayController;
     final messages = _messagesForDisplay();
+    _updateChatLayout();
     final knownUsers = _knownUsers;
-    final moderationNotices = _moderationNoticeIds(_history);
+    final moderationNotices = _moderationNoticeIds(messages);
     final unread = (controller?.receivedMessageCount ?? 0) - _receivedWhenPaused;
     final pinned = controller?.pinnedChat;
+    final watchNotice = controller?.recentHistory.reversed
+        .where((message) => message.isPrivate && message.noticeType == "watch-streak")
+        .firstOrNull;
     final status = controller?.status ?? replay!.status;
     final error = controller?.error ?? replay?.error;
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final connected = status == TwitchChatStatus.connected;
+    final followerWait = controller?.followingWaitRemaining ?? Duration.zero;
+    final waitingToChat =
+        connected &&
+        controller?.isSignedIn == true &&
+        controller?.chatAccess?.isFollowing == true &&
+        controller?.followerChatEligible == false &&
+        followerWait > Duration.zero;
+    _followerHintTimer?.cancel();
+    if (waitingToChat) {
+      _followerHintTimer = Timer(const Duration(seconds: 1), _chatChanged);
+    }
     final connectionMessage = switch (status) {
       TwitchChatStatus.connecting =>
         replay == null ? "Connecting to chat…" : "Loading chat replay…",
@@ -997,32 +1944,43 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
       _ => null,
     };
     final hint = !connected
-        ? connectionMessage ?? "Chat disconnected"
+        ? status == TwitchChatStatus.connecting
+              ? connectionMessage!
+              : "Chat disconnected"
         : controller?.isSignedIn != true
         ? "Sign in from Following to chat"
-        : controller?.canSend != true
-        ? "Sign in again to enable chat"
-        : "Send a message";
+        : controller!.chatAccess == null
+        ? controller.chatAccessError == null
+              ? "Checking chat access…"
+              : "Tap to retry chat"
+        : waitingToChat
+        ? "You can chat in ${_chatDuration(followerWait)}"
+        : _replyTo == null
+        ? "Send a message"
+        : "@${_replyTo!.login}";
     final hasDraft = _draft.text.trim().isNotEmpty;
-    return ColoredBox(
-      color: theme.scaffoldBackgroundColor,
-      child: Column(
-        children: [
-          Expanded(
-            child: Padding(
-              padding: EdgeInsets.only(top: widget.topPadding),
+    final completion = _chatCompletion;
+    final messageIndices = {
+      for (var index = 0; index < messages.length; index++)
+        ValueKey(messages[index].id): messages.length - index - 1,
+    };
+    return PopScope<Object?>(
+      canPop: !_showEmotes,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _showEmotes) {
+          _setShowEmotes(false);
+        }
+      },
+      child: ColoredBox(
+        color: theme.scaffoldBackgroundColor,
+        child: Column(
+          children: [
+            Expanded(
+              flex: _showEmotes ? 55 : 1,
               child: LayoutBuilder(
-                builder: (context, constraints) => Column(
+                builder: (context, constraints) => Stack(
                   children: [
-                    if (pinned != null && pinned.id != _dismissedPinId)
-                      ConstrainedBox(
-                        constraints: BoxConstraints(maxHeight: constraints.maxHeight * 0.6),
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
-                          child: _pinnedChat(pinned, knownUsers),
-                        ),
-                      ),
-                    Expanded(
+                    Positioned.fill(
                       child: Stack(
                         children: [
                           if (messages.isEmpty && replay != null)
@@ -1048,11 +2006,18 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
                             key: const ValueKey("chat_messages"),
                             controller: _scroll,
                             reverse: true,
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            padding: EdgeInsets.fromLTRB(
+                              0,
+                              widget.topPadding + _pinHeight + 8,
+                              0,
+                              _composerHeight + 4,
+                            ),
                             itemCount: messages.length,
+                            findChildIndexCallback: (key) => messageIndices[key],
                             itemBuilder: (context, index) => _ChatMessageRow(
                               key: ValueKey(messages[messages.length - index - 1].id),
                               message: messages[messages.length - index - 1],
+                              horizontalPadding: 12,
                               settings: _settings,
                               assets: widget.assets,
                               knownUsers: knownUsers,
@@ -1068,7 +2033,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
                           ),
                           if (!_following)
                             Positioned(
-                              bottom: 8,
+                              bottom: _composerHeight + 8,
                               left: 0,
                               right: 0,
                               child: Center(
@@ -1092,104 +2057,474 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
                         ],
                       ),
                     ),
+                    if (pinned != null && pinned.id != _dismissedPinId)
+                      Positioned(
+                        top: widget.topPadding,
+                        left: 8,
+                        right: 8,
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxHeight:
+                                (constraints.maxHeight - widget.topPadding).clamp(
+                                  0,
+                                  double.infinity,
+                                ) *
+                                0.6,
+                          ),
+                          child: Padding(
+                            key: _pinLayoutKey,
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: _pinnedChat(pinned, knownUsers),
+                          ),
+                        ),
+                      ),
+                    Positioned(
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      child: Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          const Positioned.fill(
+                            top: -4,
+                            child: RotatedBox(quarterTurns: 2, child: TopHeaderMaterial()),
+                          ),
+                          Column(
+                            key: _composerKey,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (completion != null)
+                                ConstrainedBox(
+                                  key: ValueKey(
+                                    completion.users.isEmpty
+                                        ? "chat_emote_autocomplete"
+                                        : "chat_username_autocomplete",
+                                  ),
+                                  constraints: BoxConstraints(
+                                    maxHeight: (constraints.maxHeight * 0.4).clamp(0.0, 240.0),
+                                  ),
+                                  child: Material(
+                                    type: MaterialType.transparency,
+                                    child: ListView.builder(
+                                      shrinkWrap: true,
+                                      padding: EdgeInsets.zero,
+                                      itemExtent: completion.users.isEmpty ? 48 : 32,
+                                      itemCount: completion.users.isEmpty
+                                          ? completion.emotes.length
+                                          : completion.users.length,
+                                      itemBuilder: (context, index) {
+                                        if (completion.users.isNotEmpty) {
+                                          final user = completion.users[index];
+                                          final name = user.displayName.isEmpty
+                                              ? user.login
+                                              : user.displayName;
+                                          final style = theme.textTheme.bodyMedium!.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                            color: _chatNameColor(user, theme.brightness),
+                                          );
+                                          final paint = _settings.sevenTvPaints
+                                              ? widget.assets?.userPaintsByLogin[user.login
+                                                    .toLowerCase()]
+                                              : null;
+                                          return ListTile(
+                                            minTileHeight: 32,
+                                            dense: true,
+                                            contentPadding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                            ),
+                                            title: paint == null
+                                                ? Text(
+                                                    name,
+                                                    style: style,
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                  )
+                                                : ChatUsername(
+                                                    name: name,
+                                                    style: style,
+                                                    paint: paint,
+                                                    animated: _settings.animatedPaints,
+                                                  ),
+                                            onTap: () {
+                                              _insertCompletion(
+                                                "@${user.login}",
+                                                replacement: completion.selection,
+                                              );
+                                              _draftFocus.requestFocus();
+                                            },
+                                          );
+                                        }
+                                        final emote = completion.emotes[index];
+                                        return Tooltip(
+                                          message: emote.name,
+                                          child: ListTile(
+                                            contentPadding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                            ),
+                                            leading: Image.network(
+                                              emote.urlForBrightness(theme.brightness),
+                                              width: 80,
+                                              height: 40,
+                                              fit: BoxFit.contain,
+                                              errorBuilder: (_, _, _) => const Icon(
+                                                Icons.sentiment_satisfied_alt_rounded,
+                                                size: 40,
+                                              ),
+                                            ),
+                                            title: Text(
+                                              emote.name,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            onTap: () {
+                                              _insertCompletion(
+                                                emote.name,
+                                                replacement: completion.selection,
+                                              );
+                                              _draftFocus.requestFocus();
+                                            },
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ),
+                              if (replay != null &&
+                                  messages.isNotEmpty &&
+                                  connectionMessage != null)
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+                                  child: Semantics(
+                                    liveRegion: true,
+                                    child: Text(
+                                      connectionMessage,
+                                      style: theme.textTheme.bodySmall?.copyWith(
+                                        color: colors.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              if (error != null)
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+                                  child: Semantics(
+                                    liveRegion: true,
+                                    child: Text(
+                                      error,
+                                      style: theme.textTheme.bodySmall?.copyWith(
+                                        color: colors.error,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              if (_replyTo case final message?)
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 12, right: 4),
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.reply_rounded, size: 18),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: _ChatMessageRow(
+                                          key: const ValueKey("chat_composer_reply_preview"),
+                                          message: message,
+                                          settings: _settings,
+                                          assets: widget.assets,
+                                          previewPrefix: "Replying to ${message.displayName}: ",
+                                          previewLines: 1,
+                                        ),
+                                      ),
+                                      IconButton(
+                                        tooltip: "Cancel reply",
+                                        visualDensity: VisualDensity.compact,
+                                        onPressed: () => setState(() => _replyTo = null),
+                                        icon: const Icon(Icons.close_rounded, size: 18),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              if (controller != null &&
+                                  widget.isLive &&
+                                  controller.isSignedIn &&
+                                  _settings.showWatchStreakPopups)
+                                _WatchStreakCallout(
+                                  key: ValueKey((controller, controller.currentUserId)),
+                                  notice: watchNotice,
+                                  onLayoutChanged: _updateChatLayout,
+                                ),
+                              SafeArea(
+                                top: false,
+                                bottom: !_showEmotes,
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(12, 4, 8, 8),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: controller == null
+                                            ? Text(
+                                                "Chat replay",
+                                                style: theme.textTheme.bodySmall?.copyWith(
+                                                  color: colors.onSurfaceVariant,
+                                                ),
+                                              )
+                                            : TextField(
+                                                key: const ValueKey("chat_message_input"),
+                                                controller: _draft,
+                                                focusNode: _draftFocus,
+                                                enabled: connected && controller.isSignedIn,
+                                                readOnly: !_canCompose || _showEmotes,
+                                                showCursor: _canCompose && !_showEmotes,
+                                                enableInteractiveSelection: _canCompose,
+                                                textInputAction: TextInputAction.send,
+                                                textCapitalization: TextCapitalization.sentences,
+                                                maxLength: 500,
+                                                decoration: InputDecoration(
+                                                  hintText: hint,
+                                                  counterText: "",
+                                                  suffixIcon: widget.assets == null
+                                                      ? null
+                                                      : IconButton(
+                                                          key: const ValueKey("chat_emote_toggle"),
+                                                          tooltip: _showEmotes
+                                                              ? "Show keyboard"
+                                                              : "Show emotes",
+                                                          onPressed:
+                                                              connected && controller.isSignedIn
+                                                              ? () => unawaited(_toggleEmotes())
+                                                              : null,
+                                                          icon: Icon(
+                                                            _showEmotes
+                                                                ? Icons.keyboard_rounded
+                                                                : Icons
+                                                                      .sentiment_satisfied_alt_rounded,
+                                                          ),
+                                                        ),
+                                                ),
+                                                onTap: () {
+                                                  if (!_canCompose || _showEmotes) {
+                                                    unawaited(_focusComposer());
+                                                  }
+                                                },
+                                                onSubmitted: (_) => unawaited(_send()),
+                                              ),
+                                      ),
+                                      if (hasDraft && controller != null)
+                                        IconButton(
+                                          key: const ValueKey("chat_send"),
+                                          tooltip: "Send message",
+                                          onPressed: controller.canSend && !_sending
+                                              ? () => unawaited(_send())
+                                              : null,
+                                          color: colors.primary,
+                                          icon: const Icon(Icons.send_rounded),
+                                        )
+                                      else
+                                        IconButton(
+                                          key: const ValueKey("chat_menu"),
+                                          tooltip: "Chat options",
+                                          onPressed: () => unawaited(_openMenu()),
+                                          icon: const Icon(Icons.more_vert_rounded),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
             ),
-          ),
-          if (replay != null && messages.isNotEmpty && connectionMessage != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-              child: Semantics(
-                liveRegion: true,
-                child: Text(
-                  connectionMessage,
-                  style: theme.textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+            if (_showEmotes && controller != null && widget.assets != null)
+              Expanded(
+                flex: 45,
+                child: TwitchEmotePicker(
+                  assets: widget.assets!,
+                  preferences: _preferences,
+                  onSelected: (emote) => _insertCompletion(emote.name),
                 ),
               ),
-            ),
-          if (error != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-              child: Semantics(
-                liveRegion: true,
-                child: Text(error, style: theme.textTheme.bodySmall?.copyWith(color: colors.error)),
-              ),
-            ),
-          if (_replyTo case final message?)
-            Padding(
-              padding: const EdgeInsets.only(left: 12, right: 4),
-              child: Row(
-                children: [
-                  const Icon(Icons.reply_rounded, size: 18),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      "Replying to ${message.displayName}: ${message.text}",
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall,
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: "Cancel reply",
-                    visualDensity: VisualDensity.compact,
-                    onPressed: () => setState(() => _replyTo = null),
-                    icon: const Icon(Icons.close_rounded, size: 18),
-                  ),
-                ],
-              ),
-            ),
-          SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 4, 8, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: controller == null
-                        ? Text(
-                            "Chat replay",
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: colors.onSurfaceVariant,
-                            ),
-                          )
-                        : TextField(
-                            key: const ValueKey("chat_message_input"),
-                            controller: _draft,
-                            focusNode: _draftFocus,
-                            enabled: controller.canSend,
-                            textInputAction: TextInputAction.send,
-                            textCapitalization: TextCapitalization.sentences,
-                            maxLength: 500,
-                            decoration: InputDecoration(hintText: hint, counterText: ""),
-                            onChanged: (_) => setState(() {}),
-                            onSubmitted: (_) => unawaited(_send()),
-                          ),
-                  ),
-                  if (hasDraft && controller != null)
-                    IconButton(
-                      key: const ValueKey("chat_send"),
-                      tooltip: "Send message",
-                      onPressed: controller.canSend && !_sending ? () => unawaited(_send()) : null,
-                      color: colors.primary,
-                      icon: const Icon(Icons.send_rounded),
-                    )
-                  else
-                    IconButton(
-                      key: const ValueKey("chat_menu"),
-                      tooltip: "Chat options",
-                      onPressed: () => unawaited(_openMenu()),
-                      icon: const Icon(Icons.more_vert_rounded),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
+}
+
+class _WatchStreakCallout extends StatefulWidget {
+  const _WatchStreakCallout({required this.notice, required this.onLayoutChanged, super.key});
+
+  final TwitchChatMessage? notice;
+  final VoidCallback onLayoutChanged;
+
+  @override
+  State<_WatchStreakCallout> createState() => _WatchStreakCalloutState();
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(DiagnosticsProperty<TwitchChatMessage?>("notice", notice));
+    properties.add(ObjectFlagProperty<VoidCallback>.has("onLayoutChanged", onLayoutChanged));
+  }
+}
+
+class _WatchStreakCalloutState extends State<_WatchStreakCallout>
+    with SingleTickerProviderStateMixin {
+  static const _lifetime = Duration(seconds: 30);
+  final _dismissedIds = <String>{};
+  late final _dismissal = AnimationController(vsync: this, duration: _lifetime)
+    ..addStatusListener((status) {
+      if (status == AnimationStatus.completed) {
+        _dismiss();
+      }
+    });
+  bool _visible = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _updateNotice();
+  }
+
+  @override
+  void didUpdateWidget(_WatchStreakCallout oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.notice?.id != widget.notice?.id) {
+      _updateNotice();
+    }
+  }
+
+  void _updateNotice() {
+    _dismissal.stop();
+    final notice = widget.notice;
+    final timestamp = notice?.timestamp;
+    final remaining = timestamp?.add(_lifetime).difference(DateTime.now());
+    _visible =
+        notice != null &&
+        !_dismissedIds.contains(notice.id) &&
+        remaining != null &&
+        remaining > Duration.zero;
+    if (_visible) {
+      unawaited(
+        _dismissal.forward(
+          from: 1 - (remaining!.inMicroseconds / _lifetime.inMicroseconds).clamp(0.0, 1.0),
+        ),
+      );
+    }
+  }
+
+  void _dismiss() {
+    _dismissal.stop();
+    if (widget.notice case final notice?) {
+      _dismissedIds.add(notice.id);
+    }
+    setState(() => _visible = false);
+    widget.onLayoutChanged();
+  }
+
+  @override
+  void dispose() {
+    _dismissal.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => !_visible
+      ? const SizedBox.shrink()
+      : Padding(
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+          child: Material(
+            key: const ValueKey("chat_watch_streak_callout"),
+            color: Theme.of(context).colorScheme.primaryContainer,
+            borderRadius: BorderRadius.circular(12),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(left: 12),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.local_fire_department_rounded,
+                        color: Theme.of(context).colorScheme.onPrimaryContainer,
+                        size: 22,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Semantics(
+                          liveRegion: true,
+                          child: Text(
+                            widget.notice!.noticeText ?? widget.notice!.text,
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context).colorScheme.onPrimaryContainer,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: "Dismiss watch streak",
+                        onPressed: _dismiss,
+                        icon: Icon(
+                          Icons.close_rounded,
+                          color: Theme.of(context).colorScheme.onPrimaryContainer,
+                          size: 18,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                ExcludeSemantics(
+                  child: AnimatedBuilder(
+                    animation: _dismissal,
+                    builder: (context, _) => LinearProgressIndicator(
+                      key: const ValueKey("chat_watch_streak_dismissal"),
+                      value: 1 - _dismissal.value,
+                      minHeight: 2,
+                      color: Theme.of(context).colorScheme.onPrimaryContainer,
+                      backgroundColor: Theme.of(context).colorScheme.onPrimaryContainer.withValues(
+                        alpha: 0.2,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+}
+
+Widget _chatBadge(
+  ChatAssetBadge badge, {
+  required double size,
+  ValueChanged<ChatAssetBadge>? onTap,
+}) {
+  final color = int.tryParse(badge.color?.replaceFirst("#", "") ?? "", radix: 16);
+  return GestureDetector(
+    onTap: onTap == null ? null : () => onTap(badge),
+    child: ColoredBox(
+      color: color == null ? Colors.transparent : Color(0xFF000000 | color),
+      child: Uri.parse(badge.url).path.endsWith(".svg")
+          ? SvgPicture.network(
+              badge.url,
+              width: size,
+              height: size,
+              semanticsLabel: badge.title,
+              errorBuilder: (_, _, _) => const SizedBox.shrink(),
+            )
+          : Image.network(
+              badge.url,
+              width: size,
+              height: size,
+              semanticLabel: badge.title,
+              errorBuilder: (_, _, _) => const SizedBox.shrink(),
+            ),
+    ),
+  );
 }
 
 class _ChatUserSheet extends StatefulWidget {
@@ -1198,6 +2533,7 @@ class _ChatUserSheet extends StatefulWidget {
     required this.profile,
     required this.source,
     required this.messages,
+    required this.knownUsers,
     required this.settings,
     required this.assets,
     required this.onMore,
@@ -1213,6 +2549,7 @@ class _ChatUserSheet extends StatefulWidget {
   final Future<TwitchUser?> profile;
   final Listenable source;
   final List<TwitchChatMessage> Function() messages;
+  final ValueGetter<Map<String, TwitchChatMessage>> knownUsers;
   final ChatPreferences Function() settings;
   final TwitchChatAssets? assets;
   final VoidCallback onMore;
@@ -1233,6 +2570,7 @@ class _ChatUserSheet extends StatefulWidget {
     properties.add(DiagnosticsProperty<Future<TwitchUser?>>("profile", profile));
     properties.add(DiagnosticsProperty<Listenable>("source", source));
     properties.add(ObjectFlagProperty<Object>.has("messages", messages));
+    properties.add(ObjectFlagProperty<Object>.has("knownUsers", knownUsers));
     properties.add(ObjectFlagProperty<Object>.has("settings", settings));
     properties.add(DiagnosticsProperty<TwitchChatAssets?>("assets", assets));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onMore", onMore));
@@ -1264,7 +2602,7 @@ class _ChatUserSheetState extends State<_ChatUserSheet> {
   void _updated() {
     for (final message in widget.messages()) {
       if (message.login.toLowerCase() == widget.message.login.toLowerCase()) {
-        _history[message.id] = message;
+        _history[message.id] = _retainModeration(_history[message.id], message);
       }
     }
     if (widget.message.text.isNotEmpty) {
@@ -1295,9 +2633,7 @@ class _ChatUserSheetState extends State<_ChatUserSheet> {
   Widget build(BuildContext context) {
     final settings = widget.settings();
     final logs = _history.values.where((message) => _showMessage(message, settings)).toList();
-    final knownUsers = {
-      for (final message in widget.messages()) message.login.toLowerCase(): message,
-    };
+    final knownUsers = widget.knownUsers();
     final moderationNotices = _moderationNoticeIds(logs);
     return SafeArea(
       top: false,
@@ -1309,39 +2645,155 @@ class _ChatUserSheetState extends State<_ChatUserSheet> {
               future: widget.profile,
               builder: (context, snapshot) {
                 final profile = snapshot.data;
-                return ListTile(
-                  leading: CircleAvatar(
-                    child: profile?.profileImageUrl == null
-                        ? const Icon(Icons.person_rounded)
-                        : ClipOval(
-                            child: Image.network(
-                              profile!.profileImageUrl!,
-                              width: 48,
-                              height: 48,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, _, _) => const Icon(Icons.person_rounded),
-                            ),
+                final observed = knownUsers[widget.message.login.toLowerCase()] ?? widget.message;
+                final name = profile?.displayName ?? observed.displayName;
+                final user = TwitchChatMessage(
+                  id: observed.id,
+                  userId: profile?.id ?? observed.userId,
+                  login: observed.login,
+                  displayName: name,
+                  color: profile?.chatColor ?? observed.color,
+                  text: "",
+                );
+                final style = Theme.of(context).textTheme.titleMedium!.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: _chatNameColor(user, Theme.of(context).brightness),
+                );
+                final paint = settings.sevenTvPaints
+                    ? widget.assets?.userPaintsByLogin[user.login.toLowerCase()]
+                    : null;
+                final badgeIds = <String>{};
+                final badges = [
+                  for (final badge in profile?.badges ?? <TwitchUserBadge>[])
+                    ChatAssetBadge(
+                      id: badge.id,
+                      title: badge.title,
+                      url: badge.imageUrl,
+                      provider: ChatEmoteProvider.twitch,
+                    ),
+                  for (final id in observed.badges)
+                    if (widget.assets?.badgeUrls[id] case final url?)
+                      widget.assets?.badgesById[id] ??
+                          ChatAssetBadge(
+                            id: id,
+                            title: id.split("/").first,
+                            url: url,
+                            provider: ChatEmoteProvider.twitch,
                           ),
-                  ),
-                  title: Text(profile?.displayName ?? widget.message.displayName),
-                  subtitle: Text("@${widget.message.login}"),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (widget.onReply != null)
-                        IconButton(
-                          key: const ValueKey("chat_user_reply"),
-                          tooltip: "Reply",
-                          onPressed: widget.onReply,
-                          icon: const Icon(Icons.reply_rounded),
+                  ...widget.assets?.userBadgesByLogin[user.login.toLowerCase()] ??
+                      <ChatAssetBadge>[],
+                ].where((badge) => badgeIds.add("${badge.provider.name}:${badge.id}")).toList();
+                final tier = switch (profile?.subscriptionTier) {
+                  "1000" || "1" => "Tier 1",
+                  "2000" || "2" => "Tier 2",
+                  "3000" || "3" => "Tier 3",
+                  _ => null,
+                };
+                final months = profile?.subscriptionMonths;
+                final subscription = [
+                  switch (profile?.isSubscribed) {
+                    true => "Subscriber",
+                    false => "Not currently subscribed",
+                    null => "Subscription details unavailable",
+                  },
+                  ?tier,
+                  if (profile?.subscriptionIsPrime == true) "Prime",
+                  if (months != null && months >= 0) "$months month${months == 1 ? '' : 's'} total",
+                ].join(" · ");
+                return ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.4),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        ListTile(
+                          leading: CircleAvatar(
+                            child: profile?.profileImageUrl == null
+                                ? const Icon(Icons.person_rounded)
+                                : ClipOval(
+                                    child: Image.network(
+                                      profile!.profileImageUrl!,
+                                      width: 48,
+                                      height: 48,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, _, _) => const Icon(Icons.person_rounded),
+                                    ),
+                                  ),
+                          ),
+                          title: paint == null
+                              ? Text(name, key: const ValueKey("chat_user_name"), style: style)
+                              : ChatUsername(
+                                  key: const ValueKey("chat_user_name"),
+                                  name: name,
+                                  style: style,
+                                  paint: paint,
+                                  animated: settings.animatedPaints,
+                                ),
+                          subtitle: Text("@${widget.message.login}"),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (widget.onReply != null)
+                                IconButton(
+                                  key: const ValueKey("chat_user_reply"),
+                                  tooltip: "Reply",
+                                  onPressed: widget.onReply,
+                                  icon: const Icon(Icons.reply_rounded),
+                                ),
+                              IconButton(
+                                key: const ValueKey("chat_user_more"),
+                                tooltip: "User options",
+                                onPressed: widget.onMore,
+                                icon: const Icon(Icons.more_vert_rounded),
+                              ),
+                            ],
+                          ),
                         ),
-                      IconButton(
-                        key: const ValueKey("chat_user_more"),
-                        tooltip: "User options",
-                        onPressed: widget.onMore,
-                        icon: const Icon(Icons.more_vert_rounded),
-                      ),
-                    ],
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (badges.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: Wrap(
+                                    key: const ValueKey("chat_user_badges"),
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: [
+                                      for (final badge in badges)
+                                        Tooltip(
+                                          message: badge.title,
+                                          child: _chatBadge(
+                                            badge,
+                                            size: 24,
+                                            onTap: widget.onBadgeTap,
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              if (snapshot.connectionState == ConnectionState.done) ...[
+                                Text(
+                                  profile?.createdAt == null
+                                      ? "Account creation date unavailable"
+                                      : "Account created · ${MaterialLocalizations.of(context).formatShortDate(profile!.createdAt!.toLocal())}",
+                                  key: const ValueKey("chat_user_created"),
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  subscription,
+                                  key: const ValueKey("chat_user_subscription"),
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 );
               },
@@ -1361,7 +2813,11 @@ class _ChatUserSheetState extends State<_ChatUserSheet> {
                   showTimestamps: true,
                   knownUsers: knownUsers,
                   showModeration: moderationNotices.contains(logs[index].id),
-                  onUserTap: widget.onUserTap,
+                  onUserTap: (message) {
+                    if (message.login.toLowerCase() != widget.message.login.toLowerCase()) {
+                      widget.onUserTap(message);
+                    }
+                  },
                   onThreadTap: widget.onThreadTap,
                   onEmoteTap: widget.onEmoteTap,
                   onBadgeTap: widget.onBadgeTap,
@@ -1377,10 +2833,33 @@ class _ChatUserSheetState extends State<_ChatUserSheet> {
 }
 
 bool _showMessage(TwitchChatMessage message, ChatPreferences settings) =>
-    settings.showDeletedMessages ||
-    !message.isDeleted ||
-    message.moderation == TwitchChatModeration.timeout ||
-    message.moderation == TwitchChatModeration.ban;
+    message.isPrivate ||
+    ((message.noticeType != "moderation" || settings.showModerationNotices) &&
+        (settings.showDeletedMessages ||
+            !message.isDeleted ||
+            (settings.showModerationNotices &&
+                (message.moderation == TwitchChatModeration.timeout ||
+                    message.moderation == TwitchChatModeration.ban))));
+
+TwitchChatMessage _retainModeration(TwitchChatMessage? previous, TwitchChatMessage incoming) {
+  if (previous == null || (!previous.isDeleted && previous.moderation == null)) {
+    return incoming;
+  }
+  final latest =
+      incoming.moderation != null &&
+          (previous.moderation == null ||
+              (incoming.moderatedAt != null &&
+                  (previous.moderatedAt == null ||
+                      !incoming.moderatedAt!.isBefore(previous.moderatedAt!))))
+      ? incoming
+      : previous;
+  return incoming.copyWith(
+    isDeleted: incoming.isDeleted || previous.isDeleted,
+    moderation: latest.moderation,
+    timeoutSeconds: latest.timeoutSeconds,
+    moderatedAt: latest.moderatedAt,
+  );
+}
 
 Set<String> _moderationNoticeIds(Iterable<TwitchChatMessage> messages) => {
   ...{
@@ -1397,6 +2876,7 @@ class _ChatThreadSheet extends StatefulWidget {
     required this.title,
     required this.source,
     required this.messages,
+    required this.knownUsers,
     required this.loadHistory,
     required this.settings,
     required this.assets,
@@ -1410,6 +2890,7 @@ class _ChatThreadSheet extends StatefulWidget {
   final String title;
   final Listenable source;
   final List<TwitchChatMessage> Function() messages;
+  final ValueGetter<Map<String, TwitchChatMessage>> knownUsers;
   final Future<List<TwitchChatMessage>> Function() loadHistory;
   final ChatPreferences Function() settings;
   final TwitchChatAssets? assets;
@@ -1428,6 +2909,7 @@ class _ChatThreadSheet extends StatefulWidget {
     properties.add(StringProperty("title", title));
     properties.add(DiagnosticsProperty<Listenable>("source", source));
     properties.add(ObjectFlagProperty<Object>.has("messages", messages));
+    properties.add(ObjectFlagProperty<Object>.has("knownUsers", knownUsers));
     properties.add(ObjectFlagProperty<Object>.has("loadHistory", loadHistory));
     properties.add(ObjectFlagProperty<Object>.has("settings", settings));
     properties.add(DiagnosticsProperty<TwitchChatAssets?>("assets", assets));
@@ -1453,12 +2935,15 @@ class _ChatThreadSheetState extends State<_ChatThreadSheet> {
           animation: Listenable.merge([widget.source, widget.assets]),
           builder: (context, child) {
             final message = widget.message;
-            final history = {
-              for (final item in snapshot.data ?? <TwitchChatMessage>[]) item.id: item,
-              ..._retained,
-              for (final item in widget.messages()) item.id: item,
-            };
-            history.putIfAbsent(message.id, () => message);
+            final history = <String, TwitchChatMessage>{};
+            for (final item in [
+              ...?snapshot.data,
+              ..._retained.values,
+              ...widget.messages(),
+            ]) {
+              history[item.id] = _retainModeration(history[item.id], item);
+            }
+            history[message.id] = _retainModeration(message, history[message.id] ?? message);
             final loadedIds = history.keys.toSet();
             var root =
                 snapshot.data?.firstOrNull?.id ??
@@ -1504,19 +2989,42 @@ class _ChatThreadSheetState extends State<_ChatThreadSheet> {
               for (final item in members)
                 if (loadedIds.contains(item.id)) item.id: item,
             });
-            final thread = members.where((item) => _showMessage(item, preferences)).toList();
-            // A parent supplied by Twitch can predate the retained session history.
-            final parentIndex = thread.indexWhere((item) => item.id == message.parentMessageId);
-            final replyIndex = thread.indexWhere((item) => item.id == message.id);
-            if (parentIndex > replyIndex && replyIndex >= 0) {
-              thread.insert(replyIndex, thread.removeAt(parentIndex));
+            final children = <String, List<TwitchChatMessage>>{};
+            for (final item in members) {
+              if (item.id == root) {
+                continue;
+              }
+              final parent = item.parentMessageId;
+              final parentId = parent != item.id && ids.contains(parent) ? parent! : root;
+              (children[parentId] ??= []).add(item);
             }
-            final rootIndex = thread.indexWhere((item) => item.id == root);
-            if (rootIndex > 0) {
-              thread.insert(0, thread.removeAt(rootIndex));
+            final thread = <TwitchChatMessage>[];
+            final depths = <String, int>{};
+            void append(TwitchChatMessage item, int depth) {
+              if (depths.containsKey(item.id)) {
+                return;
+              }
+              depths[item.id] = depth;
+              if (_showMessage(item, preferences)) {
+                thread.add(item);
+              }
+              for (final child in children[item.id] ?? <TwitchChatMessage>[]) {
+                append(child, depth + 1);
+              }
             }
-            final knownUsers = {for (final item in history.values) item.login.toLowerCase(): item};
+
+            if (history[root] case final rootMessage?) {
+              append(rootMessage, 0);
+            }
+            for (final item in members) {
+              append(item, item.id == root ? 0 : 1);
+            }
+            final knownUsers = widget.knownUsers();
             final moderationNotices = _moderationNoticeIds(thread);
+            final indices = {
+              for (var index = 0; index < thread.length; index++)
+                ValueKey("thread-item-${thread[index].id}"): index,
+            };
             return Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -1534,8 +3042,6 @@ class _ChatThreadSheetState extends State<_ChatThreadSheet> {
                     icon: const Icon(Icons.close_rounded),
                   ),
                 ),
-                if (snapshot.connectionState == ConnectionState.waiting)
-                  const LinearProgressIndicator(),
                 if (snapshot.hasError)
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
@@ -1555,35 +3061,45 @@ class _ChatThreadSheetState extends State<_ChatThreadSheet> {
                     shrinkWrap: true,
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
                     itemCount: thread.length,
-                    itemBuilder: (context, index) => Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (thread[index].id != root)
-                          Padding(
-                            padding: const EdgeInsets.only(left: 4, top: 5, right: 12),
-                            child: Icon(
-                              Icons.subdirectory_arrow_right_rounded,
-                              size: 20,
-                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    findChildIndexCallback: (key) => indices[key],
+                    itemBuilder: (context, index) => Padding(
+                      key: ValueKey("thread-item-${thread[index].id}"),
+                      padding: EdgeInsets.only(
+                        left: ((depths[thread[index].id]! - 1) * 16.0).clamp(
+                          0.0,
+                          MediaQuery.sizeOf(context).width * 0.4,
+                        ),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (thread[index].id != root)
+                            Padding(
+                              padding: const EdgeInsets.only(left: 4, top: 5, right: 12),
+                              child: Icon(
+                                Icons.subdirectory_arrow_right_rounded,
+                                size: 20,
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          Expanded(
+                            child: _ChatMessageRow(
+                              key: ValueKey("thread-${thread[index].id}"),
+                              message: thread[index],
+                              settings: preferences,
+                              assets: widget.assets,
+                              knownUsers: knownUsers,
+                              showModeration: moderationNotices.contains(thread[index].id),
+                              showTimestamps: false,
+                              showReplyContext: false,
+                              onUserTap: widget.onUserTap,
+                              onEmoteTap: widget.onEmoteTap,
+                              onBadgeTap: widget.onBadgeTap,
+                              onMessageHold: widget.onMessageHold,
                             ),
                           ),
-                        Expanded(
-                          child: _ChatMessageRow(
-                            key: ValueKey("thread-${thread[index].id}"),
-                            message: thread[index],
-                            settings: preferences,
-                            assets: widget.assets,
-                            knownUsers: knownUsers,
-                            showModeration: moderationNotices.contains(thread[index].id),
-                            showTimestamps: false,
-                            showReplyContext: false,
-                            onUserTap: widget.onUserTap,
-                            onEmoteTap: widget.onEmoteTap,
-                            onBadgeTap: widget.onBadgeTap,
-                            onMessageHold: widget.onMessageHold,
-                          ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -1594,6 +3110,114 @@ class _ChatThreadSheetState extends State<_ChatThreadSheet> {
       ),
     ),
   );
+}
+
+// Google Material Symbols, domino_mask (Apache-2.0).
+// https://github.com/google/material-design-icons/tree/master/symbols/web/domino_mask
+const _dominoMaskSvg =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="'
+    "M312-240q-51 0-97.5-18T131-311q-48-45-69.5-106.5T40-545q0-78 38-126.5T189-720"
+    "q14 0 26.5 2.5T241-710l239 89 239-89q13-5 25.5-7.5T771-720q73 0 111 48.5T920-545"
+    "q0 66-21.5 127.5T829-311q-37 35-83.5 53T648-240q-66 0-112-30l-46-30h-20l-46 30"
+    "q-46 30-112 30Zm0-80q37 0 69-17.5t59-42.5h80q27 25 59 42.5t69 17.5q36 0 69.5-12.5"
+    "T777-371q34-34 48.5-80t14.5-94q0-41-17-68.5T769-640q-3 0-22 4L480-536 213-636"
+    "q-5-2-10.5-3t-11.5-1q-37 0-54 27t-17 68q0 49 14.5 95t49.5 80q26 25 59 37.5t69 12.5"
+    "Zm49-60q37 0 58-16.5t21-45.5q0-49-64.5-93.5T239-580q-37 0-58 16.5T160-518"
+    "q0 49 64.5 93.5T361-380Zm-6-60q-38 0-82.5-25T220-516q5-2 11.5-3.5T245-521"
+    "q38 0 82.5 25.5T380-444q-5 2-11.5 3t-13.5 1Zm244 61q72 0 136.5-45t64.5-94"
+    "q0-29-20.5-46T721-581q-72 0-136.5 45T520-442q0 29 21 46t58 17Zm6-61q-7 0-13-1t-11-3"
+    'q8-26 52.5-51t82.5-25q7 0 13 1t11 3q-8 26-52.5 51T605-440Zm-125-40Z"/></svg>';
+
+// Google Material Symbols, mode_heat (Apache-2.0).
+// https://github.com/google/material-design-icons/tree/master/symbols/web/mode_heat
+const _modeHeatSvg =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="'
+    "M480-80q-134 0-227-93t-93-227q0-113 67-217t184-182q22-15 45.5-1.5T480-760v52"
+    "q0 34 23.5 57t57.5 23q17 0 32.5-7.5T621-657q8-10 20.5-12.5T665-664q63 45 99 115"
+    "t36 149q0 134-93 227T480-80ZM240-400q0 52 21 98.5t60 81.5q-1-5-1-9v-9q0-32 12-60"
+    "t35-51l113-111 113 111q23 23 35 51t12 60v9q0 4-1 9 39-35 60-81.5t21-98.5q0-50-18.5-94.5"
+    "T648-574q-20 13-42 19.5t-45 6.5q-62 0-107.5-41T401-690q-78 66-119.5 140.5T240-400Z"
+    "m240 52-57 56q-11 11-17 25t-6 29q0 32 23.5 55t56.5 23q33 0 56.5-23t23.5-55"
+    'q0-16-6-29.5T537-292l-57-56Z"/></svg>';
+
+// Google Material Symbols, crown (Apache-2.0).
+// https://github.com/google/material-design-icons/tree/master/symbols/web/crown
+const _crownSvg =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="'
+    "M240-160q-17 0-28.5-11.5T200-200q0-17 11.5-28.5T240-240h480q17 0 28.5 11.5T760-200"
+    "q0 17-11.5 28.5T720-160H240Zm28-140q-29 0-51.5-19T189-367l-40-254q-2 0-4.5.5t-4.5.5"
+    "q-25 0-42.5-17.5T80-680q0-25 17.5-42.5T140-740q25 0 42.5 17.5T200-680q0 7-1.5 13t-3.5 11"
+    "l125 56 125-171q-11-8-18-21t-7-28q0-25 17.5-42.5T480-880q25 0 42.5 17.5T540-820q0 15-7 28"
+    "t-18 21l125 171 125-56q-2-5-3.5-11t-1.5-13q0-25 17.5-42.5T820-740q25 0 42.5 17.5T880-680"
+    "q0 25-17.5 42.5T820-620q-2 0-4.5-.5t-4.5-.5l-40 254q-5 29-27.5 48T692-300H268Zm0-80h424"
+    "l26-167-46 20q-26 11-53 4t-44-30l-95-131-95 131q-17 23-44 30t-53-4l-46-20 26 167Z"
+    'm212 0Z"/></svg>';
+
+// Google Material Symbols, featured_seasonal_and_gifts (Apache-2.0).
+// https://github.com/google/material-design-icons/tree/master/symbols/web/featured_seasonal_and_gifts
+const _featuredSeasonalAndGiftsSvg =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -960 960 960"><path d="'
+    "M160-160v-360q-33 0-56.5-23.5T80-600v-80q0-33 23.5-56.5T160-760h128q-5-9-6.5-19t-1.5-21"
+    "q0-50 35-85t85-35q23 0 43 8.5t37 23.5q17-16 37-24t43-8q50 0 85 35t35 85q0 11-2 20.5t-6 19.5"
+    "h128q33 0 56.5 23.5T880-680v80q0 33-23.5 56.5T800-520v360q0 33-23.5 56.5T720-80H240"
+    "q-33 0-56.5-23.5T160-160Zm400-680q-17 0-28.5 11.5T520-800q0 17 11.5 28.5T560-760q17 0 28.5-11.5"
+    "T600-800q0-17-11.5-28.5T560-840Zm-200 40q0 17 11.5 28.5T400-760q17 0 28.5-11.5T440-800"
+    "q0-17-11.5-28.5T400-840q-17 0-28.5 11.5T360-800ZM160-680v80h280v-80H160Zm280 520v-360"
+    'H240v360h200Zm80 0h200v-360H520v360Zm280-440v-80H520v80h280Z"/></svg>';
+
+String _chatDuration(Duration duration) {
+  final remaining = (duration.inMilliseconds / 1000).ceil();
+  return remaining < 60
+      ? "${remaining}s"
+      : remaining % 60 == 0
+      ? "${remaining ~/ 60}m"
+      : "${remaining ~/ 60}m ${(remaining % 60).toString().padLeft(2, '0')}s";
+}
+
+final _chatNameRandom = Random();
+final _defaultChatNameColors = <String, int>{};
+
+Color _chatNameColor(TwitchChatMessage message, Brightness brightness) {
+  final rawColor = message.color?.replaceFirst("#", "");
+  final colorValue = rawColor?.length == 6 ? int.tryParse(rawColor!, radix: 16) : null;
+  const defaults = [
+    0xFFFF0000,
+    0xFF0000FF,
+    0xFF008000,
+    0xFFB22222,
+    0xFFFF7F50,
+    0xFF9ACD32,
+    0xFFFF4500,
+    0xFF2E8B57,
+    0xFFDAA520,
+    0xFFD2691E,
+    0xFF5F9EA0,
+    0xFF1E90FF,
+    0xFFFF69B4,
+    0xFF8A2BE2,
+    0xFF00FF7F,
+  ];
+  final fallback = colorValue == null
+      ? _defaultChatNameColors.putIfAbsent(
+          message.login.toLowerCase(),
+          () => defaults[_chatNameRandom.nextInt(defaults.length)],
+        )
+      : 0xFF000000 | colorValue;
+  return readableChatNameColor(
+    Color(fallback),
+    brightness,
+  );
+}
+
+int _replyBodyStart(TwitchChatMessage message) {
+  final parentLogin = message.parentLogin;
+  return parentLogin != null && parentLogin.isNotEmpty
+      ? RegExp(
+              "^@${RegExp.escape(parentLogin)}(?:\\s+|\$)",
+              caseSensitive: false,
+            ).firstMatch(message.text)?.end ??
+            0
+      : 0;
 }
 
 class _ChatMessageRow extends StatefulWidget {
@@ -1611,6 +3235,11 @@ class _ChatMessageRow extends StatefulWidget {
     this.showTimestamps,
     this.showReplyContext = true,
     this.pinned = false,
+    this.horizontalPadding = 0,
+    this.bodyKey,
+    this.replyContextKey,
+    this.previewPrefix,
+    this.previewLines = 2,
     super.key,
   });
 
@@ -1627,6 +3256,11 @@ class _ChatMessageRow extends StatefulWidget {
   final bool? showTimestamps;
   final bool showReplyContext;
   final bool pinned;
+  final double horizontalPadding;
+  final Key? bodyKey;
+  final Key? replyContextKey;
+  final String? previewPrefix;
+  final int previewLines;
 
   @override
   State<_ChatMessageRow> createState() => _ChatMessageRowState();
@@ -1653,12 +3287,18 @@ class _ChatMessageRow extends StatefulWidget {
       FlagProperty("showReplyContext", value: showReplyContext, ifTrue: "show reply context"),
     );
     properties.add(FlagProperty("pinned", value: pinned, ifTrue: "pinned message"));
+    properties.add(DoubleProperty("horizontalPadding", horizontalPadding));
+    properties.add(DiagnosticsProperty<Key?>("bodyKey", bodyKey));
+    properties.add(DiagnosticsProperty<Key?>("replyContextKey", replyContextKey));
+    properties.add(StringProperty("previewPrefix", previewPrefix));
+    properties.add(IntProperty("previewLines", previewLines));
   }
 }
 
 class _ChatMessageRowState extends State<_ChatMessageRow> {
   final _nameTap = TapGestureRecognizer();
   final _textTaps = <String, TapGestureRecognizer>{};
+  bool _holding = false;
 
   TwitchChatMessage get message => widget.message;
   ChatPreferences get settings => widget.settings;
@@ -1683,7 +3323,53 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
     super.dispose();
   }
 
-  double get _fontSize => settings.fontSize * settings.messageScale;
+  double get _fontSize =>
+      settings.fontSize * settings.messageScale - (widget.previewPrefix == null ? 0 : 2);
+
+  void _onLongPressDown(LongPressDownDetails details) {
+    final box = context.findRenderObject()! as RenderBox;
+    final hit = BoxHitTestResult();
+    box.hitTest(hit, position: box.globalToLocal(details.globalPosition));
+    final interactive =
+        widget.pinned ||
+        hit.path.any(
+          (entry) => switch (entry.target) {
+            TextSpan(:final recognizer) => recognizer != null,
+            RenderSemanticsGestureHandler(:final onTap) => onTap != null,
+            RenderSemanticsAnnotations(:final properties) => properties.onTap != null,
+            _ => false,
+          },
+        );
+    setState(() => _holding = !interactive);
+  }
+
+  Widget _moderatedContent(Widget child) => message.isDeleted
+      ? ColorFiltered(
+          colorFilter: const ColorFilter.matrix([
+            0.2126,
+            0.7152,
+            0.0722,
+            0,
+            0,
+            0.2126,
+            0.7152,
+            0.0722,
+            0,
+            0,
+            0.2126,
+            0.7152,
+            0.0722,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0.5,
+            0,
+          ]),
+          child: child,
+        )
+      : child;
 
   bool _enabled(ChatEmoteProvider provider) => switch (provider) {
     ChatEmoteProvider.twitch => settings.twitchEmotes,
@@ -1697,7 +3383,7 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
     child: ConstrainedBox(
       constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width - 24),
       child: Image.network(
-        emote.url,
+        emote.urlForBrightness(Theme.of(context).brightness),
         height: _fontSize * 1.7 * settings.emoteScale,
         fit: BoxFit.contain,
         semanticLabel: emote.name,
@@ -1708,32 +3394,11 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
 
   InlineSpan _badge(ChatAssetBadge badge) {
     final size = _fontSize * 1.2 * settings.badgeScale;
-    final color = int.tryParse(badge.color?.replaceFirst("#", "") ?? "", radix: 16);
     return WidgetSpan(
       alignment: PlaceholderAlignment.middle,
       child: Padding(
         padding: const EdgeInsets.only(right: 4),
-        child: GestureDetector(
-          onTap: onBadgeTap == null ? null : () => onBadgeTap!(badge),
-          child: ColoredBox(
-            color: color == null ? Colors.transparent : Color(0xFF000000 | color),
-            child: Uri.parse(badge.url).path.endsWith(".svg")
-                ? SvgPicture.network(
-                    badge.url,
-                    width: size,
-                    height: size,
-                    semanticsLabel: badge.title,
-                    errorBuilder: (_, _, _) => const SizedBox.shrink(),
-                  )
-                : Image.network(
-                    badge.url,
-                    width: size,
-                    height: size,
-                    semanticLabel: badge.title,
-                    errorBuilder: (_, _, _) => const SizedBox.shrink(),
-                  ),
-          ),
-        ),
+        child: _chatBadge(badge, size: size, onTap: onBadgeTap),
       ),
     );
   }
@@ -1778,17 +3443,137 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
     }
   }
 
+  Widget? _chatArt() {
+    final text = message.text
+        .substring(_replyBodyStart(message))
+        .trim()
+        .replaceFirst(RegExp(r"\u034f+$"), "")
+        .trim();
+    if (!RegExp(r"[\u2800-\u28ff]").hasMatch(text)) {
+      return null;
+    }
+    final tokens = text.split(RegExp(r"\s+"));
+    final content = <InlineSpan>[];
+    final braille =
+        tokens.length >= 3 &&
+        RegExp(r"[\u2801-\u28ff]").hasMatch(text) &&
+        tokens.every(
+          (token) =>
+              token.length == tokens.first.length && RegExp(r"^[\u2800-\u28ff]+$").hasMatch(token),
+        );
+    if (braille) {
+      content.add(TextSpan(text: tokens.join("\n")));
+    } else {
+      final rows = <({int indent, List<String> words})>[];
+      for (final token in tokens) {
+        if (RegExp(r"^\u2800{2,}$").hasMatch(token)) {
+          if (rows.isNotEmpty && rows.last.words.isEmpty) {
+            if (rows.length != 1) {
+              return null;
+            }
+            rows.clear();
+          }
+          rows.add((indent: token.length, words: []));
+        } else {
+          if (rows.isEmpty) {
+            return null;
+          }
+          rows.last.words.add(token);
+        }
+      }
+      if (rows.length < 3 || rows.first.words.length != 1) {
+        return null;
+      }
+      final name = rows.first.words.single;
+      for (var index = 0; index < rows.length; index++) {
+        final row = rows[index];
+        if (row.words.length != index + 1 ||
+            row.words.any((word) => word != name) ||
+            (index > 0 && row.indent >= rows[index - 1].indent)) {
+          return null;
+        }
+      }
+      var emote = assets?.emotesByName[name];
+      if (emote?.provider == ChatEmoteProvider.twitch &&
+          (!message.isOwn || message.emotes.isNotEmpty)) {
+        emote = null;
+      }
+      for (final native in message.emotes) {
+        if (native.start >= 0 &&
+            native.end <= message.text.length &&
+            native.start < native.end &&
+            message.text.substring(native.start, native.end) == name) {
+          emote = ChatAssetEmote(
+            id: native.id,
+            name: name,
+            provider: ChatEmoteProvider.twitch,
+            url:
+                "https://static-cdn.jtvnw.net/emoticons/v2/${Uri.encodeComponent(native.id)}/default/${Theme.of(context).brightness.name}/2.0",
+          );
+          break;
+        }
+      }
+      if (emote == null || emote.zeroWidth) {
+        return null;
+      }
+      for (var index = 0; index < rows.length; index++) {
+        if (index > 0) {
+          content.add(const TextSpan(text: "\n"));
+        }
+        for (var column = 0; column <= index; column++) {
+          if (column > 0) {
+            content.add(const TextSpan(text: " "));
+          }
+          content.add(
+            _enabled(emote.provider)
+                ? WidgetSpan(alignment: PlaceholderAlignment.middle, child: _emote(emote))
+                : TextSpan(text: name),
+          );
+        }
+      }
+    }
+    final theme = Theme.of(context);
+    return SizedBox(
+      width: double.infinity,
+      child: FittedBox(
+        key: ValueKey("chat_message_art-${message.id}"),
+        fit: braille && tokens.first.length >= 16 ? BoxFit.fitWidth : BoxFit.scaleDown,
+        alignment: braille ? Alignment.centerLeft : Alignment.center,
+        child: Text.rich(
+          TextSpan(children: content),
+          key: widget.bodyKey,
+          softWrap: false,
+          textAlign: braille ? TextAlign.left : TextAlign.center,
+          style: theme.textTheme.bodyMedium?.copyWith(
+            height: 1.4,
+            fontSize: _fontSize,
+            color: message.isDeleted
+                ? theme.colorScheme.onSurfaceVariant
+                : message.isAction
+                ? _chatNameColor(message, theme.brightness)
+                : null,
+            fontStyle: message.isAction ? FontStyle.italic : null,
+          ),
+        ),
+      ),
+    );
+  }
+
   void _appendLinksAndMentions(List<InlineSpan> content, String text) {
     var offset = 0;
     for (final match in RegExp(
       r"https?://\S+|"
       r"(?<![\w@.-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?(?![\w@-])(?::[0-9]{1,5})?(?:[/?#]\S*)?|"
-      r"(?<![\w@])@[a-zA-Z0-9_]{1,25}(?![a-zA-Z0-9_])",
+      r"(?<![\w@])@[a-zA-Z0-9_]{1,25}(?![a-zA-Z0-9_])|"
+      r"(?<![\w@./-])[a-zA-Z0-9_]{1,25}(?![\w@./-])",
       caseSensitive: false,
     ).allMatches(text)) {
       content.add(TextSpan(text: text.substring(offset, match.start)));
       final token = match[0]!;
-      final mention = token.startsWith("@");
+      final explicitMention = token.startsWith("@");
+      final login = token.substring(explicitMention ? 1 : 0).toLowerCase();
+      final knownUser = widget.knownUsers[login];
+      final mention = explicitMention || knownUser != null;
       var label = mention ? token : token.replaceFirst(RegExp(r"[.,!?;:]+$"), "");
       if (!mention) {
         while (label.isNotEmpty) {
@@ -1807,13 +3592,12 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
         offset = match.end;
         continue;
       }
-      final login = mention ? token.substring(1).toLowerCase() : "";
       final user =
-          widget.knownUsers[login] ??
+          knownUser ??
           TwitchChatMessage(
             id: "mention-$login",
             login: login,
-            displayName: token.substring(mention ? 1 : 0),
+            displayName: token.substring(explicitMention ? 1 : 0),
             text: "",
           );
       final recognizer = _textTaps.putIfAbsent(label, TapGestureRecognizer.new);
@@ -1831,17 +3615,33 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
               }
             };
       content.add(
-        TextSpan(
-          text: label,
-          style: TextStyle(
-            color: mention
-                ? _nameColor(user, Theme.of(context).brightness)
-                : Theme.of(context).colorScheme.primary,
-            fontWeight: mention ? FontWeight.w700 : null,
-            decoration: mention ? null : TextDecoration.underline,
-          ),
-          recognizer: mention && widget.onUserTap == null ? null : recognizer,
-        ),
+        (mention
+                ? _paintedName(
+                    user,
+                    label,
+                    style: Theme.of(context).textTheme.bodyMedium!.copyWith(
+                      height: 1.4,
+                      fontSize: _fontSize,
+                      fontStyle: message.isAction ? FontStyle.italic : null,
+                      fontWeight: FontWeight.w700,
+                      color: _chatNameColor(user, Theme.of(context).brightness),
+                    ),
+                    onTap: widget.onUserTap == null ? null : recognizer.onTap,
+                  )
+                : null) ??
+            TextSpan(
+              text: label,
+              style: TextStyle(
+                color: message.isDeleted
+                    ? Theme.of(context).colorScheme.onSurfaceVariant
+                    : mention
+                    ? _chatNameColor(user, Theme.of(context).brightness)
+                    : Theme.of(context).colorScheme.primary,
+                fontWeight: mention ? FontWeight.w700 : null,
+                decoration: mention ? null : TextDecoration.underline,
+              ),
+              recognizer: mention && widget.onUserTap == null ? null : recognizer,
+            ),
       );
       content.add(TextSpan(text: token.substring(label.length)));
       offset = match.end;
@@ -1849,46 +3649,43 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
     content.add(TextSpan(text: text.substring(offset)));
   }
 
-  Color _nameColor(TwitchChatMessage message, Brightness brightness) {
-    final rawColor = message.color?.replaceFirst("#", "");
-    final colorValue = rawColor?.length == 6 ? int.tryParse(rawColor!, radix: 16) : null;
-    const defaults = [
-      0xFFFF0000,
-      0xFF0000FF,
-      0xFF008000,
-      0xFFB22222,
-      0xFFFF7F50,
-      0xFF9ACD32,
-      0xFFFF4500,
-      0xFF2E8B57,
-      0xFFDAA520,
-      0xFFD2691E,
-      0xFF5F9EA0,
-      0xFF1E90FF,
-      0xFFFF69B4,
-      0xFF8A2BE2,
-      0xFF00FF7F,
-    ];
-    final hash = message.login.runes.fold(0, (value, rune) => (value * 31 + rune) & 0x7fffffff);
-    final useGrey =
-        colorValue != null &&
-        [colorValue >> 16, (colorValue >> 8) & 0xFF, colorValue & 0xFF].every(
-          (channel) => brightness == Brightness.light ? channel >= 245 : channel <= 10,
-        );
-    return Color(
-      useGrey
-          ? 0xFF808080
-          : colorValue == null
-          ? defaults[hash % defaults.length]
-          : 0xFF000000 | colorValue,
+  WidgetSpan? _paintedName(
+    TwitchChatMessage user,
+    String label, {
+    required TextStyle style,
+    VoidCallback? onTap,
+  }) {
+    final paint = settings.sevenTvPaints && !message.isDeleted
+        ? assets?.userPaintsByLogin[user.login.toLowerCase()]
+        : null;
+    if (paint == null) {
+      return null;
+    }
+    return WidgetSpan(
+      alignment: PlaceholderAlignment.baseline,
+      baseline: TextBaseline.alphabetic,
+      child: GestureDetector(
+        onTap: onTap,
+        child: ChatUsername(
+          name: label,
+          style: style,
+          paint: paint,
+          animated: settings.animatedPaints,
+        ),
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final nameColor = _nameColor(message, theme.brightness);
-    final moderation = !widget.showModeration || message.noticeType == "moderation"
+    final nameColor = message.isDeleted
+        ? theme.colorScheme.onSurfaceVariant
+        : _chatNameColor(message, theme.brightness);
+    final moderation =
+        !settings.showModerationNotices ||
+            !widget.showModeration ||
+            message.noticeType == "moderation"
         ? null
         : switch (message.moderation) {
             TwitchChatModeration.timeout =>
@@ -1897,11 +3694,11 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
             _ => null,
           };
     final hidden = message.isDeleted && !settings.showDeletedMessages;
-    if (hidden && moderation == null) {
+    if (!_showMessage(message, settings) || (hidden && moderation == null)) {
       return const SizedBox.shrink();
     }
     final content = <InlineSpan>[];
-    var offset = 0;
+    var offset = widget.previewPrefix == null ? _replyBodyStart(message) : 0;
     for (final emote in message.emotes) {
       if (emote.start < offset || emote.end > message.text.length || emote.start >= emote.end) {
         continue;
@@ -1927,6 +3724,21 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
       offset = emote.end;
     }
     _appendText(content, message.text.substring(offset));
+    if (widget.previewPrefix case final prefix?) {
+      return IgnorePointer(
+        child: Text.rich(
+          key: widget.bodyKey,
+          TextSpan(text: prefix, children: content),
+          maxLines: widget.previewLines,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            fontSize: _fontSize,
+          ),
+        ),
+      );
+    }
+    final art = hidden ? null : _chatArt();
     final recordedAt = message.offsetSeconds;
     final time = message.timestamp?.toLocal();
     final timestamp = recordedAt != null
@@ -1936,11 +3748,51 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
         : "${time.hour.toString().padLeft(2, "0")}:${time.minute.toString().padLeft(2, "0")}";
     final firstMessage = settings.highlightFirstMessages && message.isFirstMessage;
     final notice =
-        message.noticeText ?? (message.noticeType == "announcement" ? "Announcement" : null);
-    final subscription = switch (message.noticeType) {
-      null || "announcement" || "raid" || "moderation" => false,
-      _ => true,
-    };
+        message.noticeText ??
+        (message.isHighlighted
+            ? "Highlighted message"
+            : message.noticeType == "announcement"
+            ? "Announcement"
+            : null);
+    final system = message.noticeType == "system";
+    final highlighted = firstMessage || message.isHighlighted || (notice != null && !system);
+    final watchStreak = message.noticeType == "watch-streak";
+    final subscription =
+        !message.isPrivate &&
+        switch (message.noticeType) {
+          null || "announcement" || "raid" || "moderation" || "system" => false,
+          _ => true,
+        };
+    final gift = subscription && message.noticeType!.contains("gift");
+    final anonymousGift = gift && message.noticeType!.startsWith("anon");
+    final noticeImage = message.noticeType == "channel-points"
+        ? (_featuredSeasonalAndGiftsSvg, "Channel points")
+        : message.isPrimeSubscription
+        ? (_crownSvg, "Prime subscription")
+        : watchStreak
+        ? (_modeHeatSvg, "Watch streak")
+        : anonymousGift
+        ? (_dominoMaskSvg, "Anonymous gift")
+        : null;
+    final nameSeparator = widget.pinned
+        ? ""
+        : message.isAction
+        ? " "
+        : ": ";
+    final paintedSender = _paintedName(
+      message,
+      message.displayName,
+      style:
+          (widget.pinned
+                  ? theme.textTheme.bodySmall!
+                  : theme.textTheme.bodyMedium!.copyWith(height: 1.4))
+              .copyWith(
+                fontSize: _fontSize - (widget.pinned ? 2 : 0),
+                fontWeight: FontWeight.w700,
+                color: nameColor,
+              ),
+      onTap: onUserTap == null ? null : _nameTap.onTap,
+    );
     final sender = <InlineSpan>[
       if (settings.twitchBadges)
         for (final badge in message.badges)
@@ -1962,135 +3814,238 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
           ChatEmoteProvider.ffz => settings.ffzBadges,
         })
           _badge(badge),
+      ?paintedSender,
       TextSpan(
-        text:
-            "${message.displayName}${widget.pinned
-                ? ''
-                : message.isAction
-                ? ' '
-                : ': '}",
+        text: "${paintedSender == null ? message.displayName : ''}$nameSeparator",
         style: TextStyle(color: nameColor, fontWeight: FontWeight.w700),
         recognizer: onUserTap == null ? null : _nameTap,
       ),
     ];
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
-      onLongPress: widget.onMessageHold == null ? null : () => widget.onMessageHold!(message),
-      child: Container(
-        margin: EdgeInsets.symmetric(vertical: settings.messageSpacing / 2),
-        padding: firstMessage || notice != null ? const EdgeInsets.all(6) : EdgeInsets.zero,
-        decoration: firstMessage || notice != null
+      onLongPressDown: widget.onMessageHold == null ? null : _onLongPressDown,
+      onLongPressCancel: widget.onMessageHold == null
+          ? null
+          : () => setState(() => _holding = false),
+      onLongPressEnd: widget.onMessageHold == null ? null : (_) => setState(() => _holding = false),
+      onLongPress: widget.onMessageHold == null
+          ? null
+          : () async {
+              final startedOnControl = !_holding;
+              setState(() => _holding = true);
+              unawaited(HapticFeedback.selectionClick());
+              if (startedOnControl) {
+                await Future<void>.delayed(const Duration(milliseconds: 150));
+              }
+              if (mounted) {
+                widget.onMessageHold?.call(message);
+              }
+            },
+      child: AnimatedContainer(
+        key: ValueKey("chat_message_highlight-${message.id}"),
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeInOut,
+        margin: EdgeInsets.symmetric(vertical: widget.pinned ? 0 : settings.messageSpacing / 2),
+        padding: widget.horizontalPadding == 0
+            ? highlighted
+                  ? const EdgeInsets.all(6)
+                  : EdgeInsets.zero
+            : EdgeInsets.fromLTRB(
+                widget.horizontalPadding - (highlighted ? 3 : 0),
+                highlighted ? 6 : 0,
+                widget.horizontalPadding,
+                highlighted ? 6 : 0,
+              ),
+        decoration: _holding || highlighted
             ? BoxDecoration(
-                color: theme.colorScheme.primaryContainer.withValues(alpha: 0.45),
-                border: Border(left: BorderSide(color: theme.colorScheme.primary, width: 3)),
+                color: _holding
+                    ? theme.colorScheme.primary.withValues(alpha: 0.18)
+                    : theme.colorScheme.primaryContainer.withValues(alpha: 0.45),
+                border: highlighted
+                    ? Border(left: BorderSide(color: theme.colorScheme.primary, width: 3))
+                    : null,
               )
-            : null,
+            : const BoxDecoration(),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (widget.showReplyContext && message.parentMessageId != null && !hidden)
-              InkWell(
-                key: ValueKey("reply-context-${message.id}"),
-                onTap: widget.onThreadTap == null ? null : () => widget.onThreadTap!(message),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 3),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        Icons.format_quote_rounded,
-                        size: _fontSize + 2,
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          "${message.parentDisplayName ?? message.parentLogin ?? 'Reply'}: ${message.parentText ?? 'View thread'}",
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodySmall?.copyWith(
+            _moderatedContent(
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (message.isPrivate)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.lock_rounded,
+                            size: _fontSize - 2,
                             color: theme.colorScheme.onSurfaceVariant,
-                            fontSize: _fontSize - 2,
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              "Only visible to you",
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (widget.showReplyContext && message.parentMessageId != null && !hidden)
+                    InkWell(
+                      key: ValueKey("reply-context-${message.id}"),
+                      onTap: widget.onThreadTap == null ? null : () => widget.onThreadTap!(message),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 3),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Transform.flip(
+                              flipX: true,
+                              flipY: true,
+                              child: Icon(
+                                Icons.format_quote_rounded,
+                                size: _fontSize + 2,
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: _ChatMessageRow(
+                                message: TwitchChatMessage(
+                                  id: message.parentMessageId!,
+                                  login: message.parentLogin ?? "",
+                                  displayName:
+                                      message.parentDisplayName ?? message.parentLogin ?? "Reply",
+                                  text: message.parentText ?? "View thread",
+                                  emotes: message.parentEmotes,
+                                  isOwn:
+                                      widget
+                                          .knownUsers[message.parentLogin?.toLowerCase()]
+                                          ?.isOwn ??
+                                      false,
+                                ),
+                                settings: settings,
+                                assets: assets,
+                                bodyKey: widget.replyContextKey,
+                                previewPrefix:
+                                    "${message.parentDisplayName ?? message.parentLogin ?? 'Reply'}: ",
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  if (firstMessage)
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.auto_awesome, size: _fontSize),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text("First-time chatter", style: theme.textTheme.labelSmall),
+                        ),
+                      ],
+                    ),
+                  if (notice != null)
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (noticeImage != null ||
+                            subscription ||
+                            message.noticeType == "announcement") ...[
+                          if (noticeImage != null)
+                            SvgPicture.string(
+                              noticeImage.$1,
+                              width: _fontSize,
+                              height: _fontSize,
+                              colorFilter: ColorFilter.mode(
+                                theme.colorScheme.onSurface,
+                                BlendMode.srcIn,
+                              ),
+                              semanticsLabel: noticeImage.$2,
+                            )
+                          else
+                            Icon(
+                              message.noticeType == "announcement"
+                                  ? Icons.campaign
+                                  : gift
+                                  ? Icons.redeem
+                                  : Icons.star_rounded,
+                              size: _fontSize,
+                            ),
+                          const SizedBox(width: 4),
+                        ],
+                        Expanded(
+                          child: Text(
+                            message.text.isEmpty && showTimestamps && timestamp != null
+                                ? "$timestamp $notice"
+                                : notice,
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              fontSize: _fontSize - 2,
+                              color: system ? theme.colorScheme.onSurfaceVariant : null,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            if (firstMessage)
-              Row(
-                children: [
-                  Icon(Icons.auto_awesome, size: _fontSize),
-                  const SizedBox(width: 4),
-                  Expanded(child: Text("First-time chatter", style: theme.textTheme.labelSmall)),
-                ],
-              ),
-            if (notice != null)
-              Row(
-                children: [
-                  if (subscription) ...[
-                    Icon(Icons.star_rounded, size: _fontSize),
-                    const SizedBox(width: 4),
-                  ],
-                  Expanded(
-                    child: Text(
-                      message.text.isEmpty && showTimestamps && timestamp != null
-                          ? "$timestamp $notice"
-                          : notice,
-                      style: theme.textTheme.bodySmall?.copyWith(fontSize: _fontSize - 2),
+                      ],
                     ),
-                  ),
-                ],
-              ),
-            if (message.text.isNotEmpty && !hidden)
-              Text.rich(
-                TextSpan(
-                  children: [
-                    if (!widget.pinned && showTimestamps && timestamp != null)
+                  if (message.text.isNotEmpty && !hidden && (!widget.pinned || art == null))
+                    Text.rich(
                       TextSpan(
-                        text: "$timestamp ",
-                        style: TextStyle(
-                          color: theme.colorScheme.onSurfaceVariant,
-                          fontSize: _fontSize - 2,
-                        ),
+                        children: [
+                          if (!widget.pinned && showTimestamps && timestamp != null)
+                            TextSpan(
+                              text: "$timestamp ",
+                              style: TextStyle(
+                                color: theme.colorScheme.onSurfaceVariant,
+                                fontSize: _fontSize - 2,
+                              ),
+                            ),
+                          if (!widget.pinned) ...sender,
+                          if (art == null)
+                            TextSpan(
+                              children: content,
+                              style: TextStyle(
+                                color: message.isDeleted
+                                    ? theme.colorScheme.onSurfaceVariant
+                                    : message.isAction
+                                    ? nameColor
+                                    : null,
+                                fontStyle: message.isAction ? FontStyle.italic : null,
+                              ),
+                            ),
+                        ],
                       ),
-                    if (!widget.pinned) ...sender,
-                    TextSpan(
-                      children: content,
-                      style: TextStyle(
-                        color: message.isDeleted
-                            ? theme.colorScheme.onSurfaceVariant
-                            : message.isAction
-                            ? nameColor
-                            : null,
-                        fontStyle: message.isAction ? FontStyle.italic : null,
-                        decoration: message.isDeleted ? TextDecoration.lineThrough : null,
+                      key: art == null ? widget.bodyKey : null,
+                      style: theme.textTheme.bodyMedium?.copyWith(height: 1.4, fontSize: _fontSize),
+                    ),
+                  ?art,
+                  if (widget.pinned && !hidden)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text.rich(
+                        TextSpan(
+                          children: [
+                            ...sender,
+                            if (time != null)
+                              TextSpan(
+                                text:
+                                    " sent at ${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(time), alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context))}",
+                                style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+                              ),
+                          ],
+                        ),
+                        style: theme.textTheme.bodySmall?.copyWith(fontSize: _fontSize - 2),
                       ),
                     ),
-                    if (message.isDeleted) const TextSpan(text: " (deleted)"),
-                  ],
-                ),
-                style: theme.textTheme.bodyMedium?.copyWith(height: 1.4, fontSize: _fontSize),
+                ],
               ),
-            if (widget.pinned && !hidden)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text.rich(
-                  TextSpan(
-                    children: [
-                      ...sender,
-                      if (time != null)
-                        TextSpan(
-                          text:
-                              " sent at ${MaterialLocalizations.of(context).formatTimeOfDay(TimeOfDay.fromDateTime(time), alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context))}",
-                          style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
-                        ),
-                    ],
-                  ),
-                  style: theme.textTheme.bodySmall?.copyWith(fontSize: _fontSize - 2),
-                ),
-              ),
+            ),
             if (moderation != null)
               Padding(
                 padding: const EdgeInsets.only(top: 2),

@@ -1,0 +1,41 @@
+query FlowRecentChat($channelID: ID!) {
+  channel(id: $channelID) {
+    id
+    recentChatMessages {
+      id
+      sentAt
+      deletedAt
+      sender { id login displayName }
+      senderChatColor
+      senderBadges(channelID: $channelID) { setID version }
+      content {
+        text
+        fragments {
+          text
+          content {
+            __typename
+            ... on Emote { emoteID: id }
+          }
+        }
+      }
+      parentMessage {
+        id
+        content {
+          text
+          fragments {
+            text
+            content {
+              __typename
+              ... on Emote { emoteID: id }
+            }
+          }
+        }
+        sender { id login displayName }
+      }
+      threadParentMessage {
+        id
+        sender { login }
+      }
+    }
+  }
+}

@@ -1,0 +1,5 @@
+mutation FlowUnfollowUser($targetID: ID!) {
+  unfollowUser(input: {targetID: $targetID}) {
+    follow { user { id } }
+  }
+}

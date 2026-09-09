@@ -24,7 +24,6 @@ class TwitchChatPins extends ChangeNotifier {
   Timer? _readyDeadline;
   Timer? _initialDeadline;
   Timer? _retry;
-  Timer? _expiry;
   TwitchPinnedChat? _pin;
   Map<String, Map<String, Object?>>? _initialChanges;
   String _subscriptionId = "";
@@ -51,7 +50,6 @@ class TwitchChatPins extends ChangeNotifier {
   Future<void> _connect() async {
     final generation = ++_generation;
     _closeSocket();
-    _setPin(null);
     _deadline = Timer(const Duration(seconds: 10), () => _lost(generation));
     try {
       final socket = await _socketConnector();
@@ -183,6 +181,7 @@ class TwitchChatPins extends ChangeNotifier {
           TwitchPinnedChat(
             id: data["id"]! as String,
             message: _messageFromPin(data),
+            startsAt: _secondsDate(message["starts_at"]),
             endsAt: _secondsDate(message["ends_at"]),
             pinnedBy: pinnerId == null || pinnerId.isEmpty
                 ? null
@@ -205,6 +204,7 @@ class TwitchChatPins extends ChangeNotifier {
             TwitchPinnedChat(
               id: pin.id,
               message: pin.message,
+              startsAt: pin.startsAt,
               endsAt: _secondsDate(data["ends_at"]),
               pinnedBy: pin.pinnedBy,
             ),
@@ -214,16 +214,7 @@ class TwitchChatPins extends ChangeNotifier {
   }
 
   void _setPin(TwitchPinnedChat? pin) {
-    _expiry?.cancel();
     _pin = pin;
-    final remaining = pin?.endsAt?.difference(DateTime.now());
-    if (remaining != null) {
-      if (remaining <= Duration.zero) {
-        _pin = null;
-      } else {
-        _expiry = Timer(remaining, () => _setPin(null));
-      }
-    }
     if (!_disposed) {
       notifyListeners();
     }
@@ -235,7 +226,6 @@ class TwitchChatPins extends ChangeNotifier {
     }
     ++_generation;
     _closeSocket();
-    _setPin(null);
     _retry = Timer(
       Duration(seconds: min(30, 1 << min(_attempt++, 5))),
       () => unawaited(_connect()),
@@ -262,7 +252,6 @@ class TwitchChatPins extends ChangeNotifier {
     _disposed = true;
     ++_generation;
     _closeSocket();
-    _expiry?.cancel();
     super.dispose();
   }
 }
@@ -276,19 +265,6 @@ TwitchChatMessage _messageFromPin(Map<String, Object?> data) {
   final parentSender = parent?["sender"] as Map<String, Object?>?;
   final rootSender = root?["sender"] as Map<String, Object?>?;
   final parentContent = parent?["content"] as Map<String, Object?>?;
-  final emotes = <TwitchChatEmote>[];
-  var offset = 0;
-  for (final fragment
-      in (content["fragments"] as List<Object?>?)?.cast<Map<String, Object?>>() ??
-          const <Map<String, Object?>>[]) {
-    final text = fragment["text"] as String? ?? "";
-    final emote = fragment["emoticon"] as Map<String, Object?>?;
-    final id = emote?["emoticonID"] as String?;
-    if (id != null && text.isNotEmpty) {
-      emotes.add(TwitchChatEmote(id: id, start: offset, end: offset + text.length));
-    }
-    offset += text.length;
-  }
   return TwitchChatMessage(
     id: message["id"]! as String,
     userId: sender["id"] as String?,
@@ -302,16 +278,34 @@ TwitchChatMessage _messageFromPin(Map<String, Object?> data) {
               const <Map<String, Object?>>[])
         if (badge["id"] != null && badge["version"] != null) "${badge["id"]}/${badge["version"]}",
     ],
-    emotes: emotes,
+    emotes: _pinEmotes(content),
     timestamp: _secondsDate(message["sent_at"]),
     parentMessageId: parent?["id"] as String?,
     parentUserId: parentSender?["id"] as String?,
     parentLogin: parentSender?["login"] as String?,
     parentDisplayName: parentSender?["display_name"] as String?,
     parentText: parentContent?["text"] as String?,
+    parentEmotes: _pinEmotes(parentContent),
     threadRootId: root?["id"] as String? ?? parent?["id"] as String?,
     threadRootLogin: rootSender?["login"] as String? ?? parentSender?["login"] as String?,
   );
+}
+
+List<TwitchChatEmote> _pinEmotes(Map<String, Object?>? content) {
+  final emotes = <TwitchChatEmote>[];
+  final buffer = StringBuffer();
+  for (final fragment
+      in (content?["fragments"] as List<Object?>?)?.cast<Map<String, Object?>>() ??
+          const <Map<String, Object?>>[]) {
+    final text = fragment["text"] as String? ?? "";
+    final emote = fragment["emoticon"] as Map<String, Object?>?;
+    final id = emote?["emoticonID"] as String?;
+    if (id != null && text.isNotEmpty) {
+      emotes.add(TwitchChatEmote(id: id, start: buffer.length, end: buffer.length + text.length));
+    }
+    buffer.write(text);
+  }
+  return buffer.toString() == content?["text"] ? emotes : const [];
 }
 
 DateTime? _secondsDate(Object? value) =>

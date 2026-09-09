@@ -181,6 +181,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   bool _viewerRefreshInFlight = false;
   int _viewerRefreshGeneration = 0;
   bool _appIsResumed = true;
+  bool _chatWasBackgrounded = false;
   bool _openingDestination = false;
   bool _playerForcedLandscape = false;
   bool _playbackReloadInFlight = false;
@@ -252,16 +253,22 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final wasResumed = _appIsResumed;
     _appIsResumed = state == AppLifecycleState.resumed;
+    if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused) {
+      _chatWasBackgrounded = true;
+    }
     if (_appIsResumed) {
       unawaited(_refreshViewerCount());
       if (!wasResumed) {
-        if (_chat?.status == TwitchChatStatus.disconnected) {
+        if (_chatWasBackgrounded ||
+            _chat?.status == TwitchChatStatus.disconnected ||
+            _chat?.status == TwitchChatStatus.reconnecting) {
           _chat?.reconnect();
         }
         if (_replay?.status == TwitchChatStatus.disconnected) {
           _replay?.reconnect();
         }
       }
+      _chatWasBackgrounded = false;
     }
   }
 
@@ -1191,6 +1198,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
                 onToggleChatOnly: _toggleChatOnly,
                 onOpenSettings: _openChatSettings,
                 onReportUser: _reportUser,
+                onInlineBackHandlerChanged: (handler) => _host?.setInlineBackHandler(handler),
               ),
             );
             final playerHeader = GestureDetector(

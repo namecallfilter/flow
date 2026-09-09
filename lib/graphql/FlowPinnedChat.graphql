@@ -5,6 +5,7 @@ query FlowPinnedChat($channelID: ID!) {
       edges {
         node {
           id
+          startsAt
           endsAt
           pinnedBy {
             id
@@ -40,6 +41,13 @@ query FlowPinnedChat($channelID: ID!) {
               id
               content {
                 text
+                fragments {
+                  text
+                  content {
+                    __typename
+                    ... on Emote { emoteID: id }
+                  }
+                }
               }
               sender {
                 id

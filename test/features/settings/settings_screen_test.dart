@@ -39,16 +39,22 @@ void main() {
       "Show deleted messages",
       "Twitch badges",
       "7TV badges",
+      "7TV paints",
+      "Animated paints",
       "BetterTTV badges",
       "FrankerFaceZ badges",
+      "Emote autocomplete",
       "Twitch emotes",
       "7TV emotes",
       "BetterTTV emotes",
       "FrankerFaceZ emotes",
-      "Highlight first messages",
+      "Auto claim channel points",
+      "Watch streak popups",
+      "Highlight first-time chatters",
       "Subscription notices",
       "Announcements",
       "Raid notices",
+      "Timeouts and bans",
     ]) {
       final toggle = find.widgetWithText(SwitchListTile, title);
       await Scrollable.ensureVisible(tester.element(toggle), alignment: 0.5);
@@ -63,18 +69,31 @@ void main() {
     expect(reloaded.chatPreferences.showDeletedMessages, isTrue);
     expect(reloaded.chatPreferences.twitchBadges, isFalse);
     expect(reloaded.chatPreferences.sevenTvBadges, isFalse);
+    expect(reloaded.chatPreferences.sevenTvPaints, isFalse);
+    expect(reloaded.chatPreferences.animatedPaints, isFalse);
     expect(reloaded.chatPreferences.bttvBadges, isFalse);
     expect(reloaded.chatPreferences.ffzBadges, isFalse);
+    expect(reloaded.chatPreferences.emoteAutocomplete, isFalse);
     expect(reloaded.chatPreferences.twitchEmotes, isFalse);
     expect(reloaded.chatPreferences.sevenTvEmotes, isFalse);
     expect(reloaded.chatPreferences.bttvEmotes, isFalse);
     expect(reloaded.chatPreferences.ffzEmotes, isFalse);
+    expect(reloaded.chatPreferences.autoClaimChannelPoints, isTrue);
+    expect(reloaded.chatPreferences.showWatchStreakPopups, isFalse);
     expect(reloaded.chatPreferences.highlightFirstMessages, isFalse);
     expect(reloaded.chatPreferences.showSubscriptionNotices, isFalse);
     expect(reloaded.chatPreferences.showAnnouncements, isFalse);
     expect(reloaded.chatPreferences.showRaidNotices, isFalse);
+    expect(reloaded.chatPreferences.showModerationNotices, isFalse);
     expect(find.widgetWithText(SwitchListTile, "Badges"), findsNothing);
     expect(find.widgetWithText(SwitchListTile, "Emotes"), findsNothing);
+    expect(find.text("Highlight first messages"), findsNothing);
+    final autocomplete = find.widgetWithText(SwitchListTile, "Emote autocomplete");
+    await Scrollable.ensureVisible(tester.element(autocomplete), alignment: 0.5);
+    await tester.pumpAndSettle();
+    await tester.tap(autocomplete);
+    await tester.pumpAndSettle();
+    expect((await preferences.readChatPreferences()).emoteAutocomplete, isTrue);
     expect(tester.takeException(), isNull);
   });
 

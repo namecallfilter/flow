@@ -529,7 +529,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 ),
                               ),
                               const Divider(height: 1),
-                              _chatSection("Badges"),
+                              _chatSection("Badges and paints"),
                               _chatSlider(
                                 id: "chat_badge_scale",
                                 title: "Badge scale",
@@ -557,6 +557,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 ),
                               ),
                               SwitchListTile(
+                                title: const Text("7TV paints"),
+                                value: _settingsStore.chatPreferences.sevenTvPaints,
+                                onChanged: (value) => _changeChatSettings(
+                                  _settingsStore.chatPreferences.copyWith(sevenTvPaints: value),
+                                ),
+                              ),
+                              SwitchListTile(
+                                title: const Text("Animated paints"),
+                                value: _settingsStore.chatPreferences.animatedPaints,
+                                onChanged: (value) => _changeChatSettings(
+                                  _settingsStore.chatPreferences.copyWith(animatedPaints: value),
+                                ),
+                              ),
+                              SwitchListTile(
                                 title: const Text("BetterTTV badges"),
                                 value: _settingsStore.chatPreferences.bttvBadges,
                                 onChanged: (value) => _changeChatSettings(
@@ -572,6 +586,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ),
                               const Divider(height: 1),
                               _chatSection("Emotes"),
+                              SwitchListTile(
+                                title: const Text("Emote autocomplete"),
+                                subtitle: const Text("Suggest emotes while typing."),
+                                value: _settingsStore.chatPreferences.emoteAutocomplete,
+                                onChanged: (value) => _changeChatSettings(
+                                  _settingsStore.chatPreferences.copyWith(emoteAutocomplete: value),
+                                ),
+                              ),
                               _chatSlider(
                                 id: "chat_emote_scale",
                                 title: "Emote scale",
@@ -638,7 +660,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               const Divider(height: 1),
                               _chatSection("Alerts"),
                               SwitchListTile(
-                                title: const Text("Highlight first messages"),
+                                title: const Text("Auto claim channel points"),
+                                value: _settingsStore.chatPreferences.autoClaimChannelPoints,
+                                onChanged: (value) => _changeChatSettings(
+                                  _settingsStore.chatPreferences.copyWith(
+                                    autoClaimChannelPoints: value,
+                                  ),
+                                ),
+                              ),
+                              SwitchListTile(
+                                title: const Text("Watch streak popups"),
+                                value: _settingsStore.chatPreferences.showWatchStreakPopups,
+                                onChanged: (value) => _changeChatSettings(
+                                  _settingsStore.chatPreferences.copyWith(
+                                    showWatchStreakPopups: value,
+                                  ),
+                                ),
+                              ),
+                              SwitchListTile(
+                                title: const Text("Highlight first-time chatters"),
                                 value: _settingsStore.chatPreferences.highlightFirstMessages,
                                 onChanged: (value) => _changeChatSettings(
                                   _settingsStore.chatPreferences.copyWith(
@@ -667,6 +707,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 value: _settingsStore.chatPreferences.showRaidNotices,
                                 onChanged: (value) => _changeChatSettings(
                                   _settingsStore.chatPreferences.copyWith(showRaidNotices: value),
+                                ),
+                              ),
+                              SwitchListTile(
+                                title: const Text("Timeouts and bans"),
+                                value: _settingsStore.chatPreferences.showModerationNotices,
+                                onChanged: (value) => _changeChatSettings(
+                                  _settingsStore.chatPreferences.copyWith(
+                                    showModerationNotices: value,
+                                  ),
                                 ),
                               ),
                             ],

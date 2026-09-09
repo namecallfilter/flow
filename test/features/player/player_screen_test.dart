@@ -403,60 +403,97 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets("playback presentation and app lifecycle preserve healthy live chat connections", (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(400, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    final chat = _TrackedChatController("creator");
-    final host = await _pumpHostedPlayer(
-      tester,
-      player: _FakePlayerController(),
-      chatControllerFactory: (_) => chat,
+  for (final chatOnly in [false, true]) {
+    testWidgets(
+      "background resume reconnects live chat and keeps its state (chat only: $chatOnly)",
+      (
+        tester,
+      ) async {
+        tester.view.physicalSize = const Size(400, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final player = _FakePlayerController();
+        final chat = _TrackedChatController("creator", writable: true);
+        chat.addSystemMessage("Previous chat message");
+        final historyMessage = chat.messages.single;
+        final host = await _pumpHostedPlayer(
+          tester,
+          player: player,
+          chatControllerFactory: (_) => chat,
+        );
+        if (chatOnly) {
+          await _toggleChatOnly(tester);
+        }
+        final panel = tester.state(find.byType(TwitchChatPanel));
+        final composer = find.byKey(const ValueKey("chat_message_input"));
+        final draft = tester.widget<TextField>(composer).controller!;
+        await tester.enterText(composer, "Keep this draft");
+        FocusManager.instance.primaryFocus?.unfocus();
+        await tester.pump();
+        final playerDisposals = player._disposeCount;
+        final surface = chatOnly ? null : tester.element(find.byType(_FakePlayerSurface));
+        var reconnects = 0;
+        for (final status in TwitchChatStatus.values) {
+          chat.connectionStatus = status;
+          if (!chatOnly && status != TwitchChatStatus.disconnected) {
+            host.minimize();
+            await _pumpNavigation(tester);
+            host.restore();
+            await _pumpNavigation(tester);
+            host.setPictureInPicture(active: true);
+            await _pumpNavigation(tester);
+            host.setPictureInPicture(active: false);
+            await _pumpNavigation(tester);
+            expect(chat.reconnectCount, reconnects);
+          }
+          tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+          tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+          await tester.pump();
+          if (status == TwitchChatStatus.disconnected || status == TwitchChatStatus.reconnecting) {
+            reconnects++;
+          }
+          expect(chat.reconnectCount, reconnects);
+          for (final backgroundState in [AppLifecycleState.hidden, AppLifecycleState.paused]) {
+            tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+            tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+            if (backgroundState == AppLifecycleState.paused) {
+              tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+              tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+            }
+            tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+            tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+            tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+            await tester.pump();
+            expect(chat.reconnectCount, ++reconnects);
+          }
+          expect(chat.disposed, isFalse);
+          expect(
+            tester.widget<TwitchChatPanel>(find.byType(TwitchChatPanel)).controller,
+            same(chat),
+          );
+          expect(tester.state(find.byType(TwitchChatPanel)), same(panel));
+          expect(chat.recentHistory, contains(same(historyMessage)));
+          expect(find.text("Previous chat message"), findsOneWidget);
+          expect(tester.widget<TextField>(composer).controller, same(draft));
+          expect(draft.text, "Keep this draft");
+          expect(player._disposeCount, playerDisposals);
+          if (!chatOnly) {
+            expect(tester.element(find.byType(_FakePlayerSurface)), same(surface));
+          }
+        }
+        if (!chatOnly) {
+          host.minimize();
+          await _pumpNavigation(tester);
+          host.restore();
+          await _pumpNavigation(tester);
+          expect(chat.reconnectCount, reconnects + 1);
+        }
+        host.dismiss();
+        await _pumpNavigation(tester);
+        expect(chat.disposed, isTrue);
+      },
     );
-    for (final status in [
-      TwitchChatStatus.connecting,
-      TwitchChatStatus.connected,
-      TwitchChatStatus.reconnecting,
-    ]) {
-      chat.connectionStatus = status;
-      host.minimize();
-      await _pumpNavigation(tester);
-      host.restore();
-      await _pumpNavigation(tester);
-      host.setPictureInPicture(active: true);
-      await _pumpNavigation(tester);
-      host.setPictureInPicture(active: false);
-      await _pumpNavigation(tester);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-      await tester.pump();
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-      await tester.pump();
-      expect(chat.reconnectCount, 0);
-      expect(chat.disposed, isFalse);
-      expect(tester.widget<TwitchChatPanel>(find.byType(TwitchChatPanel)).controller, same(chat));
-    }
-    chat.connectionStatus = TwitchChatStatus.disconnected;
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-    await tester.pump();
-    expect(chat.reconnectCount, 1);
-    host.minimize();
-    await _pumpNavigation(tester);
-    host.restore();
-    await _pumpNavigation(tester);
-    expect(chat.reconnectCount, 2);
-    host.dismiss();
-    await _pumpNavigation(tester);
-    expect(chat.disposed, isTrue);
-  });
+  }
 
   testWidgets("mini and PiP release keyboard focus and retain the chat draft through resizing", (
     tester,
@@ -2325,6 +2362,8 @@ Future<void> _toggleChatOnly(WidgetTester tester) async {
   await tester.tap(find.byKey(const ValueKey("chat_only_toggle")));
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 350));
+  await tester.pump();
+  expect(find.byKey(const ValueKey("chat_only_toggle")), findsNothing);
 }
 
 Future<void> _pumpNavigation(WidgetTester tester) async {
@@ -2656,7 +2695,8 @@ class _TrackedReplayController extends TwitchVodChatController {
 
 class _TrackedChatController extends TwitchChatController {
   _TrackedChatController(String channel, {this.writable = false})
-    : super(
+    : connectionStatus = writable ? TwitchChatStatus.connected : TwitchChatStatus.connecting,
+      super(
         channel: channel,
         clientLoader: () async => throw StateError("Chat is offline in widget tests"),
         autoConnect: false,
@@ -2665,10 +2705,23 @@ class _TrackedChatController extends TwitchChatController {
   bool disposed = false;
   final bool writable;
   int reconnectCount = 0;
-  TwitchChatStatus connectionStatus = TwitchChatStatus.connecting;
+  TwitchChatStatus connectionStatus;
 
   @override
   TwitchChatStatus get status => connectionStatus;
+
+  @override
+  bool get isSignedIn => writable;
+
+  @override
+  String? get currentUserId => writable ? "123" : null;
+
+  @override
+  TwitchChatAccess get chatAccess => const TwitchChatAccess(
+    channelId: "1",
+    channelDisplayName: "Creator",
+    rules: [],
+  );
 
   @override
   bool get canSend => writable;
