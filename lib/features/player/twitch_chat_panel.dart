@@ -1496,7 +1496,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
             history = [
               for (final item in history)
                 item.copyWith(
-                  isDeleted: false,
+                  isDeleted: item.timestamp == null ? item.isDeleted : false,
                   offsetSeconds: item.timestamp == null
                       ? null
                       : message.offsetSeconds! +

@@ -1603,6 +1603,16 @@ void main() {
           parentMessageId: "root",
           timestamp: start.add(const Duration(seconds: 8)),
         ),
+        TwitchChatMessage(
+          id: "untimed-deleted-reply",
+          login: "deleted",
+          displayName: "Deleted",
+          text: "deleted thread body without a timestamp",
+          parentMessageId: "root",
+          isDeleted: true,
+          moderation: TwitchChatModeration.deleted,
+          moderatedAt: start.add(const Duration(seconds: 2)),
+        ),
       ],
     );
     final replay = TwitchVodChatController(clientLoader: () async => client, videoId: "123");
@@ -1628,9 +1638,17 @@ void main() {
     expect(find.text("REPLIES"), findsOneWidget);
     expect(find.textContaining("original thread body", findRichText: true), findsOneWidget);
     expect(find.textContaining("future thread body", findRichText: true), findsNothing);
+    expect(
+      find.textContaining("deleted thread body without a timestamp", findRichText: true),
+      findsNothing,
+    );
     replay.updatePosition(const Duration(seconds: 3));
     await tester.pumpAndSettle();
     expect(find.textContaining("original thread body", findRichText: true), findsNothing);
+    expect(
+      find.textContaining("deleted thread body without a timestamp", findRichText: true),
+      findsNothing,
+    );
     replay.updatePosition(Duration.zero, seek: true);
     await tester.pumpAndSettle();
     expect(find.text("REPLIES"), findsNothing);

@@ -38,6 +38,8 @@ typedef PlayerSurfaceBuilder =
     );
 
 abstract interface class PlayerDisplayModeController {
+  Future<void> setFullscreen({required bool fullscreen});
+
   Future<void> setLandscape({required bool landscape});
 
   Future<void> restore();
@@ -47,9 +49,14 @@ class SystemPlayerDisplayModeController implements PlayerDisplayModeController {
   const SystemPlayerDisplayModeController();
 
   @override
+  Future<void> setFullscreen({required bool fullscreen}) => SystemChrome.setEnabledSystemUIMode(
+    fullscreen ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
+  );
+
+  @override
   Future<void> setLandscape({required bool landscape}) async {
     if (landscape) {
-      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+      await setFullscreen(fullscreen: true);
       await SystemChrome.setPreferredOrientations(const [
         DeviceOrientation.landscapeLeft,
         DeviceOrientation.landscapeRight,
@@ -58,13 +65,13 @@ class SystemPlayerDisplayModeController implements PlayerDisplayModeController {
     }
 
     await SystemChrome.setPreferredOrientations(const [DeviceOrientation.portraitUp]);
-    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    await setFullscreen(fullscreen: false);
   }
 
   @override
   Future<void> restore() async {
     await SystemChrome.setPreferredOrientations(const <DeviceOrientation>[]);
-    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    await setFullscreen(fullscreen: false);
   }
 }
 
@@ -187,6 +194,8 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   bool _chatWasBackgrounded = false;
   bool _openingDestination = false;
   bool _playerForcedLandscape = false;
+  bool _fullscreen = false;
+  bool _playerIsForeground = true;
   bool _playbackReloadInFlight = false;
   bool _audioOnly = false;
   bool _chatOnly = false;
@@ -281,6 +290,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       _chatWasBackgrounded = true;
     }
     if (_appIsResumed) {
+      _syncFullscreen(force: true);
       unawaited(_refreshViewerCount());
       if (!wasResumed) {
         if (_chatWasBackgrounded ||
@@ -409,6 +419,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     super.didChangeDependencies();
     final presentation = PlaybackPresentation.maybeOf(context);
     _host = presentation?.host;
+    _playerIsForeground = presentation?.isForeground ?? true;
     _hideChrome = presentation?.hideChrome ?? false;
     _miniPlayerEnabled = presentation?.miniPlayerEnabled ?? false;
     final settings = AppSettingsScope.maybeOf(context);
@@ -450,6 +461,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       unawaited(_queueDisplayMode(widget.displayModeController.restore));
     }
     _mode = mode;
+    _syncFullscreen();
     if (_streamEnded && !_chatOnly && mode == PlaybackMode.expanded) {
       WidgetsBinding.instance.addPostFrameCallback((_) => _showOfflineChat());
     }
@@ -998,6 +1010,21 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     return result;
   }
 
+  void _syncFullscreen({bool force = false}) {
+    final fullscreen =
+        _mode == PlaybackMode.expanded &&
+        _playerIsForeground &&
+        !_openingDestination &&
+        MediaQuery.orientationOf(context) == Orientation.landscape;
+    if (!force && _fullscreen == fullscreen) {
+      return;
+    }
+    _fullscreen = fullscreen;
+    unawaited(
+      _queueDisplayMode(() => widget.displayModeController.setFullscreen(fullscreen: fullscreen)),
+    );
+  }
+
   Future<void> _toggleLandscape({required bool isLandscape}) async {
     setState(() => _controlsVisible = true);
     final landscape = _playerForcedLandscape ? false : !isLandscape;
@@ -1130,6 +1157,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       return;
     }
     _openingDestination = true;
+    _syncFullscreen();
     _controlsTimer?.cancel();
     final resumeOnReturn = _host == null && _playWhenReady;
     try {
@@ -1146,6 +1174,9 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       await open();
     } finally {
       _openingDestination = false;
+      if (mounted) {
+        _syncFullscreen();
+      }
       if (mounted && !_streamEnded && resumeOnReturn && ModalRoute.of(context)?.isCurrent == true) {
         await _playerController?.play();
       }
@@ -1753,7 +1784,7 @@ class _PlayerViewport extends StatelessWidget {
     final horizontalPadding = isLandscape
         ? math.max(AppSpacing.sm, math.max(viewPadding.left, viewPadding.right))
         : AppSpacing.sm;
-    final leftPadding = sideChatVisible ? AppSpacing.sm : horizontalPadding;
+    final leftPadding = horizontalPadding;
     final rightPadding = sideChatVisible ? AppSpacing.sm : horizontalPadding;
     final verticalPadding = isLandscape
         ? math.max(AppSpacing.sm, math.max(viewPadding.top, viewPadding.bottom))
@@ -1864,7 +1895,7 @@ class _PlayerViewport extends StatelessWidget {
                         ),
                       ),
                       AnimatedOpacity(
-                        opacity: controlsVisible ? 1 : 0,
+                        opacity: controlsVisible || seekFeedbackSeconds != null ? 1 : 0,
                         duration: const Duration(milliseconds: 160),
                         child: IgnorePointer(
                           ignoring: !controlsVisible,
@@ -1879,13 +1910,16 @@ class _PlayerViewport extends StatelessWidget {
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                _PlayerHeader(
-                                  channel: channel,
-                                  onBack: onBack,
-                                  miniPlayerEnabled: miniPlayerEnabled,
-                                  onSettings: onSettings,
-                                  onProfileTap: onProfileTap,
-                                  onCategoryTap: onCategoryTap,
+                                Opacity(
+                                  opacity: seekFeedbackSeconds == null ? 1 : 0,
+                                  child: _PlayerHeader(
+                                    channel: channel,
+                                    onBack: onBack,
+                                    miniPlayerEnabled: miniPlayerEnabled,
+                                    onSettings: onSettings,
+                                    onProfileTap: onProfileTap,
+                                    onCategoryTap: onCategoryTap,
+                                  ),
                                 ),
                                 if (!streamEnded)
                                   TooltipTheme(
