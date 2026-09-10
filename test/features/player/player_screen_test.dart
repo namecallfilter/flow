@@ -349,41 +349,116 @@ void main() {
     (false, "player_category_button", "category_streams_page_Just Chatting"),
     (false, "player_profile_button", "channel_page_creator"),
   ]) {
-    testWidgets("hosted $buttonKey reaches its destination when playback must close", (
-      tester,
-    ) async {
-      tester.view.physicalSize = const Size(400, 800);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.reset);
-      final search = Completer<void>();
-      final chat = _TrackedChatController("creator");
-      final host = await _pumpHostedPlayer(
-        tester,
-        player: _FakePlayerController(),
-        apiCache: _navigationApiCache(beforeCategorySearch: search.future),
-        chatControllerFactory: (_) => chat,
-      );
-      host.setMiniPlayerEnabled(enabled: chatOnly);
-      await tester.pump();
-      if (chatOnly) {
-        await _toggleChatOnly(tester);
+    for (final miniEnabled in [true, false]) {
+      for (final videoId in <String?>[null, "123456"]) {
+        testWidgets(
+          "Back from hosted $buttonKey restores the same ${videoId == null ? "live" : "VOD"} "
+          "session (mini: $miniEnabled)",
+          (tester) async {
+            tester.view.physicalSize = const Size(400, 800);
+            tester.view.devicePixelRatio = 1;
+            addTearDown(tester.view.reset);
+            final search = Completer<void>();
+            final player = _FakePlayerController();
+            final chat = videoId == null ? _TrackedChatController("creator") : null;
+            final replay = videoId == null ? null : _TrackedReplayController(videoId);
+            var loads = 0;
+            final host = await _pumpHostedPlayer(
+              tester,
+              player: player,
+              videoId: videoId,
+              apiCache: _navigationApiCache(beforeCategorySearch: search.future),
+              chatControllerFactory: (_) => chat!,
+              replayControllerFactory: (_) => replay!,
+              playbackUriLoader: (_) async {
+                loads++;
+                return Uri.parse("https://example.com/live.m3u8");
+              },
+            );
+            host.setMiniPlayerEnabled(enabled: miniEnabled);
+            await tester.pump();
+            if (chatOnly) {
+              await _toggleChatOnly(tester);
+            }
+            final screen = tester.state(find.byType(StreamPlayerScreen));
+            final chatState = tester.state(find.byType(TwitchChatPanel));
+            final surface = chatOnly ? null : tester.state(find.byType(_FakePlayerSurface));
+            final pauses = player._pauseCount;
+            final disposals = player._disposeCount;
+            await tester.tap(find.byKey(ValueKey(buttonKey)));
+            if (buttonKey.contains("category")) {
+              await tester.pump(const Duration(milliseconds: 100));
+              expect(tester.state(find.byType(StreamPlayerScreen)), same(screen));
+            }
+            search.complete();
+            await _pumpNavigation(tester);
+            expect(find.byKey(ValueKey(destinationKey)).hitTestable(), findsOneWidget);
+            expect(chat?.disposed ?? replay!.disposed, isFalse);
+            expect(player._pauseCount, pauses);
+            expect(player._disposeCount, disposals);
+            expect(
+              find.byKey(const ValueKey("player_mini")),
+              miniEnabled && !chatOnly ? findsOneWidget : findsNothing,
+            );
+            chat?.addSystemMessage("Arrived while browsing");
+            await tester.binding.handlePopRoute();
+            await _pumpNavigation(tester);
+            expect(find.byKey(ValueKey(destinationKey)), findsNothing);
+            expect(host.mode, PlaybackMode.expanded);
+            expect(tester.state(find.byType(StreamPlayerScreen)), same(screen));
+            expect(tester.state(find.byType(TwitchChatPanel)), same(chatState));
+            expect(
+              find.byKey(const ValueKey("player_chat_header")),
+              chatOnly ? findsOneWidget : findsNothing,
+            );
+            if (!chatOnly) {
+              expect(tester.state(find.byType(_FakePlayerSurface)), same(surface));
+            }
+            if (chat != null) {
+              expect(
+                find.textContaining("Arrived while browsing", findRichText: true),
+                findsOneWidget,
+              );
+            }
+            expect(loads, 1);
+            expect(player._pauseCount, pauses);
+            expect(player._playCount, 0);
+            expect(player._disposeCount, disposals);
+            host.dismiss();
+            await _pumpNavigation(tester);
+          },
+        );
       }
-      await tester.tap(find.byKey(ValueKey(buttonKey)));
-      if (buttonKey.contains("category")) {
-        await tester.pump(const Duration(milliseconds: 100));
-        expect(find.byType(StreamPlayerScreen), findsOneWidget);
-        expect(chat.disposed, isFalse);
-      }
-      search.complete();
-      await _pumpNavigation(tester);
-      expect(find.byKey(ValueKey(destinationKey)), findsOneWidget);
-      expect(find.byType(StreamPlayerScreen), findsNothing);
-      expect(chat.disposed, isTrue);
-      await tester.pageBack();
-      await _pumpNavigation(tester);
-      expect(find.text("Flow"), findsOneWidget);
-      await tester.pumpWidget(const SizedBox.shrink());
-    });
+    }
+  }
+
+  for (final chatOnly in [true, false]) {
+    testWidgets(
+      "hidden playback stays behind its destination when mini becomes available (chat only: $chatOnly)",
+      (tester) async {
+        final player = _FakePlayerController();
+        final host = await _pumpHostedPlayer(tester, player: player);
+        host.setChatOnly(enabled: chatOnly);
+        host.setMiniPlayerEnabled(enabled: chatOnly);
+        final screen = tester.state(find.byType(StreamPlayerScreen));
+        await tester.tap(find.byKey(const ValueKey("player_profile_button")));
+        await _pumpNavigation(tester);
+        expect(find.byType(StreamPlayerScreen), findsNothing);
+        host.setMiniPlayerEnabled(enabled: true);
+        host.setChatOnly(enabled: false);
+        await _pumpNavigation(tester);
+        expect(find.byKey(const ValueKey("channel_page_creator")).hitTestable(), findsOneWidget);
+        expect(find.byType(StreamPlayerScreen), findsNothing);
+        expect(tester.state(find.byType(StreamPlayerScreen, skipOffstage: false)), same(screen));
+        expect(player._disposeCount, 0);
+        await tester.binding.handlePopRoute();
+        await _pumpNavigation(tester);
+        expect(tester.state(find.byType(StreamPlayerScreen)), same(screen));
+        expect(host.mode, PlaybackMode.expanded);
+        host.dismiss();
+        await _pumpNavigation(tester);
+      },
+    );
   }
 
   testWidgets("chat-only title and category holds reveal the full text", (tester) async {
@@ -2305,6 +2380,56 @@ void main() {
       await _pumpNavigation(tester);
     });
   }
+
+  for (final miniEnabled in [true, false]) {
+    for (final chatOnly in [true, false]) {
+      testWidgets(
+        "opening another stream from a destination replaces its return session "
+        "(mini: $miniEnabled, chat only: $chatOnly)",
+        (tester) async {
+          tester.view.physicalSize = const Size(400, 800);
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+          final first = _FakePlayerController();
+          final chat = _TrackedChatController("creator");
+          final host = await _pumpHostedPlayer(
+            tester,
+            player: first,
+            chatControllerFactory: (_) => chat,
+          );
+          host.setMiniPlayerEnabled(enabled: miniEnabled);
+          await tester.pump();
+          if (chatOnly) {
+            await _toggleChatOnly(tester);
+          }
+          await tester.tap(
+            find.byKey(
+              ValueKey(chatOnly ? "player_chat_category_button" : "player_category_button"),
+            ),
+          );
+          await _pumpNavigation(tester);
+          final destination = find.byKey(const ValueKey("category_streams_page_Just Chatting"));
+          final next = _FakePlayerController();
+          final app = _playerApp(player: next, login: "another_creator") as MaterialApp;
+          await openStreamPlayer(tester.element(destination), builder: (_) => app.home!);
+          await _pumpNavigation(tester);
+          expect(chat.disposed, isTrue);
+          expect(first._disposeCount, 1);
+          expect(find.byKey(const ValueKey("player_page_another_creator")), findsOneWidget);
+          host.dismiss();
+          await _pumpNavigation(tester);
+          expect(destination.hitTestable(), findsOneWidget);
+          await tester.binding.handlePopRoute();
+          await _pumpNavigation(tester);
+          expect(destination, findsNothing);
+          expect(find.text("Flow").hitTestable(), findsOneWidget);
+          expect(find.byType(StreamPlayerScreen), findsNothing);
+          expect(next._disposeCount, 1);
+        },
+      );
+    }
+  }
+
   testWidgets("leaves background playback and automatic PiP to the native player", (tester) async {
     final player = _FakePlayerController();
     await tester.pumpWidget(_playerApp(player: player));
@@ -2362,7 +2487,7 @@ void main() {
 
     await tester.pageBack();
     await _pumpNavigation(tester);
-    expect(host.mode, PlaybackMode.mini);
+    expect(host.mode, PlaybackMode.expanded);
     expect(player._pauseCount, 0);
     expect(player._playCount, 0);
     host.dismiss();
@@ -2392,7 +2517,7 @@ void main() {
     await _pumpNavigation(tester);
     expect(displayMode._operations, ["landscape:true", "restore"]);
     expect(player._playCount, 0);
-    expect(host.mode, PlaybackMode.mini);
+    expect(host.mode, PlaybackMode.expanded);
     host.dismiss();
     await _pumpNavigation(tester);
   });
@@ -2712,6 +2837,8 @@ Future<PlaybackHost> _pumpHostedPlayer(
   PlaybackUriLoader? playbackUriLoader,
   TwitchApiCache? apiCache,
   TwitchChatController Function(String)? chatControllerFactory,
+  TwitchVodChatController Function(String)? replayControllerFactory,
+  String? videoId,
   bool initiallyOffline = false,
   bool useApiViewerLoader = false,
   VoidCallback? onSurfaceCreated,
@@ -2722,6 +2849,8 @@ Future<PlaybackHost> _pumpHostedPlayer(
             displayMode: displayMode,
             playbackUriLoader: playbackUriLoader,
             chatControllerFactory: chatControllerFactory,
+            replayControllerFactory: replayControllerFactory,
+            videoId: videoId,
             apiCache: apiCache ?? _navigationApiCache(),
             initiallyOffline: initiallyOffline,
             useApiViewerLoader: useApiViewerLoader,

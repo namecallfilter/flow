@@ -33,6 +33,7 @@ fragment FlowChatReplyMessage on Message {
         ... on Emote {
           emoteID: id
         }
+        ... on GifContent { gifID: id gifURL: url }
       }
     }
   }
@@ -45,6 +46,7 @@ fragment FlowChatReplyMessage on Message {
         content {
           __typename
           ... on Emote { emoteID: id }
+          ... on GifContent { gifID: id gifURL: url }
         }
       }
     }

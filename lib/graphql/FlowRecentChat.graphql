@@ -15,6 +15,7 @@ query FlowRecentChat($channelID: ID!) {
           content {
             __typename
             ... on Emote { emoteID: id }
+            ... on GifContent { gifID: id gifURL: url }
           }
         }
       }
@@ -27,6 +28,7 @@ query FlowRecentChat($channelID: ID!) {
             content {
               __typename
               ... on Emote { emoteID: id }
+              ... on GifContent { gifID: id gifURL: url }
             }
           }
         }

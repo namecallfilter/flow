@@ -9,12 +9,16 @@ void main() {
   test(
     "loads the original message and server replies with rich content and parent context",
     () async {
+      const label = "[Pink Ladies Yes GIF by Paramount+]";
+      const gifUrl =
+          "https://media4.giphy.com/media/example/giphy.gif?cid=example&rid=giphy.gif&ct=g";
       final client = TwitchApiClient(
         clientId: "client",
         accessToken: "",
         httpClient: MockClient((request) async {
           final payload = jsonDecode(request.body) as Map<String, dynamic>;
           expect(payload["variables"], {"messageID": "root"});
+          expect(payload["query"], contains("... on GifContent"));
           expect(request.headers["authorization"], isNull);
           return http.Response(
             jsonEncode({
@@ -28,12 +32,21 @@ void main() {
                     {"setID": "moderator", "version": "1"},
                   ],
                   "content": {
-                    "text": "😀 Kappa",
+                    "text": "😀 Kappa $label",
                     "fragments": [
                       {"text": "😀 ", "content": null},
                       {
                         "text": "Kappa",
                         "content": {"__typename": "Emote", "emoteID": "25"},
+                      },
+                      {"text": " "},
+                      {
+                        "text": label,
+                        "content": {
+                          "__typename": "GifContent",
+                          "gifID": "example",
+                          "gifURL": gifUrl,
+                        },
                       },
                     ],
                   },
@@ -49,12 +62,21 @@ void main() {
                         "parentMessage": {
                           "id": "root",
                           "content": {
-                            "text": "😀 Kappa",
+                            "text": "😀 Kappa $label",
                             "fragments": [
                               {"text": "😀 "},
                               {
                                 "text": "Kappa",
                                 "content": {"__typename": "Emote", "emoteID": "25"},
+                              },
+                              {"text": " "},
+                              {
+                                "text": label,
+                                "content": {
+                                  "__typename": "GifContent",
+                                  "gifID": "example",
+                                  "gifURL": gifUrl,
+                                },
                               },
                             ],
                           },
@@ -78,16 +100,24 @@ void main() {
       expect(messages.first.badges, ["moderator/1"]);
       expect(messages.first.emotes.single.start, 3);
       expect(messages.first.emotes.single.end, 8);
+      expect(messages.first.gifs.single.url, gifUrl);
+      expect(messages.first.gifs.single.start, 9);
       expect(messages.first.timestamp?.toUtc(), DateTime.utc(2026, 9, 7, 20));
       final reply = messages.last;
       expect(reply.threadRootId, "root");
       expect(reply.threadRootLogin, "alice");
       expect(reply.parentMessageId, "root");
       expect(reply.parentUserId, "1");
-      expect(reply.parentText, "😀 Kappa");
+      expect(reply.parentText, "😀 Kappa $label");
       expect(reply.parentEmotes.single.id, "25");
       expect(reply.parentEmotes.single.start, 3);
       expect(reply.parentEmotes.single.end, 8);
+      expect(reply.parentGifs.single.url, gifUrl);
+      expect(reply.parentGifs.single.start, 9);
+      expect(
+        reply.parentText!.substring(reply.parentGifs.single.start, reply.parentGifs.single.end),
+        label,
+      );
       expect(reply.isDeleted, isTrue);
     },
   );

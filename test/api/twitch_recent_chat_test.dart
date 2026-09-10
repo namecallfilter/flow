@@ -8,6 +8,9 @@ import "package:http/testing.dart";
 
 void main() {
   test("loads authenticated recent chat with original rich message metadata", () async {
+    const label = "[Pink Ladies Yes GIF by Paramount+]";
+    const gifUrl =
+        "https://media4.giphy.com/media/example/giphy.gif?cid=example&rid=giphy.gif&ct=g";
     final client = TwitchApiClient(
       clientId: "client",
       accessToken: "native-token",
@@ -17,6 +20,7 @@ void main() {
         expect(body["variables"], {"channelID": "1"});
         expect(request.headers["authorization"], "OAuth website-token");
         expect(body["query"], contains("senderBadges(channelID:"));
+        expect(body["query"], contains("... on GifContent"));
         return _response({
           "id": "1",
           "recentChatMessages": [
@@ -31,24 +35,34 @@ void main() {
                 {"setID": "subscriber", "version": "12"},
               ],
               "content": {
-                "text": "😀 Kappa",
+                "text": "😀 Kappa $label",
                 "fragments": [
                   {"text": "😀 "},
                   {
                     "text": "Kappa",
                     "content": {"__typename": "Emote", "emoteID": "25"},
                   },
+                  {"text": " "},
+                  {
+                    "text": label,
+                    "content": {"__typename": "GifContent", "gifID": "example", "gifURL": gifUrl},
+                  },
                 ],
               },
               "parentMessage": {
                 "id": "parent",
                 "content": {
-                  "text": "😀 Kappa",
+                  "text": "😀 Kappa $label",
                   "fragments": [
                     {"text": "😀 "},
                     {
                       "text": "Kappa",
                       "content": {"__typename": "Emote", "emoteID": "25"},
+                    },
+                    {"text": " "},
+                    {
+                      "text": label,
+                      "content": {"__typename": "GifContent", "gifID": "example", "gifURL": gifUrl},
                     },
                   ],
                 },
@@ -75,18 +89,29 @@ void main() {
     expect(message.displayName, "Alice");
     expect(message.badges, ["moderator/1", "subscriber/12"]);
     expect(message.color, "#123456");
-    expect(message.text, "😀 Kappa");
+    expect(message.text, "😀 Kappa $label");
     expect(message.emotes.single.id, "25");
     expect(message.emotes.single.start, 3);
     expect(message.emotes.single.end, 8);
+    expect(message.gifs.single.id, "example");
+    expect(message.gifs.single.url, gifUrl);
+    expect(message.gifs.single.start, 9);
+    expect(message.text.substring(message.gifs.single.start, message.gifs.single.end), label);
     expect(message.parentMessageId, "parent");
     expect(message.parentUserId, "88");
     expect(message.parentLogin, "bob");
     expect(message.parentDisplayName, "Bob");
-    expect(message.parentText, "😀 Kappa");
+    expect(message.parentText, "😀 Kappa $label");
     expect(message.parentEmotes.single.id, "25");
     expect(message.parentEmotes.single.start, 3);
     expect(message.parentEmotes.single.end, 8);
+    expect(message.parentGifs.single.id, "example");
+    expect(message.parentGifs.single.url, gifUrl);
+    expect(message.parentGifs.single.start, 9);
+    expect(
+      message.parentText!.substring(message.parentGifs.single.start, message.parentGifs.single.end),
+      label,
+    );
     expect(message.threadRootId, "root");
     expect(message.threadRootLogin, "carol");
   });

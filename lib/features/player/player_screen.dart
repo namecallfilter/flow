@@ -259,6 +259,20 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   }
 
   @override
+  bool handleStartBackGesture(PredictiveBackEvent backEvent) =>
+      _host?.startBackGesture(backEvent) ?? false;
+
+  @override
+  void handleUpdateBackGestureProgress(PredictiveBackEvent backEvent) =>
+      _host?.updateBackGestureProgress(backEvent);
+
+  @override
+  void handleCancelBackGesture() => _host?.finishBackGesture(commit: false);
+
+  @override
+  void handleCommitBackGesture() => _host?.finishBackGesture(commit: true);
+
+  @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final wasResumed = _appIsResumed;
     _appIsResumed = state == AppLifecycleState.resumed;
@@ -1268,6 +1282,9 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
                 onToggleChatOnly: _toggleChatOnly,
                 onOpenSettings: _openChatSettings,
                 onReportUser: _reportUser,
+                onSubscribe: () => _openOverlayPage(
+                  (_) => TwitchReportScreen.subscribe(login: widget.channel.login),
+                ),
                 onInlineBackHandlerChanged: (handler) => _host?.setInlineBackHandler(handler),
               ),
             );

@@ -1,13 +1,21 @@
 import "dart:async";
 
+import "package:flow/shared/external_url_opener.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:webview_flutter/webview_flutter.dart";
 
 class TwitchReportScreen extends StatefulWidget {
-  const TwitchReportScreen({required this.login, super.key});
+  const TwitchReportScreen({required this.login, super.key}) : _subscribe = false;
+
+  const TwitchReportScreen.subscribe({required this.login, super.key}) : _subscribe = true;
 
   final String login;
+  final bool _subscribe;
+
+  Uri get _uri => _subscribe
+      ? Uri(scheme: "https", host: "subs.twitch.tv", pathSegments: [login])
+      : Uri(scheme: "https", host: "www.twitch.tv", pathSegments: [login, "report"]);
 
   @override
   State<TwitchReportScreen> createState() => _TwitchReportScreenState();
@@ -66,9 +74,7 @@ class _TwitchReportScreenState extends State<TwitchReportScreen> {
         ),
       );
       if (mounted) {
-        await _controller.loadRequest(
-          Uri(scheme: "https", host: "www.twitch.tv", pathSegments: [widget.login, "report"]),
-        );
+        await _controller.loadRequest(widget._uri);
       }
     } on Object {
       if (mounted) {
@@ -111,6 +117,18 @@ class _TwitchReportScreenState extends State<TwitchReportScreen> {
     }
   }
 
+  Future<void> _openBrowser() async {
+    try {
+      await ExternalUrlLauncher.open(widget._uri);
+    } on Object {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't open your browser. Try again.")),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) => PopScope(
     canPop: !_canGoBack,
@@ -121,11 +139,17 @@ class _TwitchReportScreenState extends State<TwitchReportScreen> {
     },
     child: Scaffold(
       appBar: AppBar(
-        title: Text("Report ${widget.login}"),
+        title: Text(widget._subscribe ? "Subscribe to ${widget.login}" : "Report ${widget.login}"),
         leading: BackButton(onPressed: _goBack),
         actions: [
+          if (widget._subscribe)
+            IconButton(
+              tooltip: "Open in browser",
+              onPressed: _openBrowser,
+              icon: const Icon(Icons.open_in_browser_rounded),
+            ),
           IconButton(
-            tooltip: "Close report",
+            tooltip: widget._subscribe ? "Close subscription" : "Close report",
             onPressed: () => Navigator.of(context).pop(),
             icon: const Icon(Icons.close_rounded),
           ),

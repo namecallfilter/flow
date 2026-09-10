@@ -2153,18 +2153,34 @@ class TwitchApiClient {
     final fragments = _mapList(content?["fragments"]);
     final buffer = StringBuffer();
     final emotes = <TwitchChatEmote>[];
+    final gifs = <TwitchChatGif>[];
     for (final fragment in fragments) {
       final text = _stringValue(fragment["text"]);
-      final emoteId = _nonEmptyValue(_mapValue(fragment["content"])?["emoteID"] as String?);
+      final media = _mapValue(fragment["content"]);
+      final emoteId = _nonEmptyValue(media?["emoteID"] as String?);
       if (emoteId != null && text.isNotEmpty) {
         emotes.add(
           TwitchChatEmote(id: emoteId, start: buffer.length, end: buffer.length + text.length),
+        );
+      }
+      final gifId = _nonEmptyValue(media?["gifID"] as String?);
+      final gifUrl = media?["gifURL"] as String?;
+      final uri = gifUrl == null ? null : Uri.tryParse(gifUrl);
+      if (gifId != null && text.isNotEmpty && uri?.scheme == "https" && uri!.host.isNotEmpty) {
+        gifs.add(
+          TwitchChatGif(
+            id: gifId,
+            url: gifUrl!,
+            start: buffer.length,
+            end: buffer.length + text.length,
+          ),
         );
       }
       buffer.write(text);
     }
     final text = content?["text"] as String? ?? buffer.toString();
     final parent = _mapValue(message["parentMessage"]);
+    final parentMessage = parent == null ? null : _chatMessageFromGraphQl(parent);
     final parentSender = _mapValue(parent?["sender"]);
     final thread = _mapValue(message["threadParentMessage"]);
     return TwitchChatMessage(
@@ -2183,6 +2199,7 @@ class TwitchApiClient {
             "$setId/${_stringValue(badge["version"])}",
       ],
       emotes: buffer.toString() == text ? emotes : const [],
+      gifs: buffer.toString() == text ? gifs : const [],
       timestamp: _dateTimeValue(message["sentAt"]),
       isDeleted: message["deletedAt"] != null,
       moderation: message["deletedAt"] != null ? TwitchChatModeration.deleted : null,
@@ -2192,7 +2209,8 @@ class TwitchApiClient {
       parentLogin: parentSender?["login"] as String?,
       parentDisplayName: parentSender?["displayName"] as String?,
       parentText: _mapValue(parent?["content"])?["text"] as String?,
-      parentEmotes: parent == null ? const [] : _chatMessageFromGraphQl(parent).emotes,
+      parentEmotes: parentMessage?.emotes ?? const [],
+      parentGifs: parentMessage?.gifs ?? const [],
       threadRootId: thread?["id"] as String? ?? threadRootId,
       threadRootLogin: _mapValue(thread?["sender"])?["login"] as String? ?? threadRootLogin,
     );

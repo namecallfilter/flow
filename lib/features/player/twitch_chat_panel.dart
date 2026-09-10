@@ -9,6 +9,7 @@ import "package:flow/api/twitch_vod_chat.dart";
 import "package:flow/app/app_settings_store.dart";
 import "package:flow/features/player/chat_username.dart";
 import "package:flow/features/player/twitch_emote_picker.dart";
+import "package:flow/features/player/twitch_report_screen.dart";
 import "package:flow/shared/chat_links.dart";
 import "package:flow/shared/chat_name_color.dart";
 import "package:flow/shared/external_url_opener.dart";
@@ -41,6 +42,7 @@ class TwitchChatPanel extends StatefulWidget {
     this.settingsStore,
     this.onOpenSettings,
     this.onReportUser,
+    this.onSubscribe,
     this.onInlineBackHandlerChanged,
     this.topPadding = 0,
     this.latencyMs,
@@ -54,6 +56,7 @@ class TwitchChatPanel extends StatefulWidget {
   final AppSettingsStore? settingsStore;
   final AsyncCallback? onOpenSettings;
   final Future<void> Function(String login)? onReportUser;
+  final AsyncCallback? onSubscribe;
   final ValueChanged<VoidCallback?>? onInlineBackHandlerChanged;
   final bool chatOnly;
   final bool isLive;
@@ -79,6 +82,7 @@ class TwitchChatPanel extends StatefulWidget {
     properties.add(DiagnosticsProperty<AppSettingsStore?>("settingsStore", settingsStore));
     properties.add(ObjectFlagProperty<AsyncCallback?>.has("onOpenSettings", onOpenSettings));
     properties.add(ObjectFlagProperty<Object?>.has("onReportUser", onReportUser));
+    properties.add(ObjectFlagProperty<Object?>.has("onSubscribe", onSubscribe));
     properties.add(
       ObjectFlagProperty<Object?>.has("onInlineBackHandlerChanged", onInlineBackHandlerChanged),
     );
@@ -111,6 +115,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
   ReactionDisposer? _settingsReaction;
   ChatPreferences _settings = const ChatPreferences();
   bool _following = true;
+  bool _followingBeforePointer = false;
   bool _sending = false;
   int _receivedWhenPaused = 0;
   TwitchChatMessage? _replyTo;
@@ -387,6 +392,12 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
       _messageReleaseTimes.removeWhere((_, releaseAt) => releaseAt.isAfter(now));
     }
     final source = widget.controller?.recentHistory ?? widget.replayController!.messages;
+    var lastVisibleRelease = _messageReleaseTimes[_presentedMessages.lastOrNull?.id];
+    final ownReleases = {
+      for (final message in _presentedMessages)
+        if (message.isOwn && !message.isHistorical && message.timestamp != null)
+          message.timestamp!: _messageReleaseTimes[message.id],
+    };
     final retainedIds = source.map((message) => message.id).toSet();
     _messageReleaseTimes.removeWhere((id, _) => !retainedIds.contains(id));
     Duration? nextUpdate;
@@ -398,10 +409,15 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
           message.isPrivate ||
           message.noticeType == "system";
       final bypass = immediate || message.timestamp == null || delay <= Duration.zero;
-      if (message.isOwn && !message.isHistorical && message.timestamp != null) {
-        _messageReleaseTimes[message.id] = message.timestamp!;
+      if (message.isOwn && !message.isHistorical && ownReleases[message.timestamp] != null) {
+        _messageReleaseTimes[message.id] = ownReleases[message.timestamp]!;
       }
       final releaseAt = _messageReleaseTimes.putIfAbsent(message.id, () {
+        if (!message.isHistorical &&
+            (message.isOwn || message.isPrivate || message.noticeType == "system")) {
+          // Local rows keep their display position independently of server clocks.
+          return lastVisibleRelease ?? DateTime.fromMillisecondsSinceEpoch(0);
+        }
         final timestamp = message.timestamp == null || message.timestamp!.isAfter(now)
             ? now
             : message.timestamp!;
@@ -413,11 +429,11 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
       if (!immediate && (previousRelease == null || releaseAt.isAfter(previousRelease!))) {
         previousRelease = releaseAt;
       }
-      if (bypass) {
-        return true;
-      }
       final remaining = releaseAt.difference(now);
-      if (remaining <= Duration.zero) {
+      if (bypass || remaining <= Duration.zero) {
+        if (lastVisibleRelease == null || releaseAt.isAfter(lastVisibleRelease!)) {
+          lastVisibleRelease = releaseAt;
+        }
         return true;
       }
       if (nextUpdate == null || remaining < nextUpdate!) {
@@ -906,6 +922,12 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
       if (!mounted || controller != widget.controller || controller.chatAccess == null) {
         return false;
       }
+      if (!controller.subscriberChatEligible) {
+        await _showSubscriberGate(controller);
+      }
+      if (!mounted || controller != widget.controller || !controller.subscriberChatEligible) {
+        return false;
+      }
       if (!controller.followerChatEligible) {
         await _showFollowerGate(controller);
       }
@@ -990,6 +1012,66 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
       return _canCompose;
     } finally {
       _composerGateOpen = false;
+    }
+  }
+
+  Future<void> _showSubscriberGate(TwitchChatController controller) async {
+    final subscribe = await _showSheet<bool>(
+      builder: (context) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: AnimatedBuilder(
+            animation: controller,
+            builder: (context, _) {
+              if (controller.subscriberChatEligible) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (context.mounted && ModalRoute.of(context)?.isCurrent == true) {
+                    Navigator.pop(context);
+                  }
+                });
+              }
+              final channel = controller.chatAccess?.channelDisplayName ?? controller.channel;
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text("Subscriber-Only Chat", style: Theme.of(context).textTheme.titleLarge),
+                  const SizedBox(height: 12),
+                  Text("Only $channel's subscribers can chat right now. Subscribe to join in."),
+                  if (controller.chatAccessError case final error?) ...[
+                    const SizedBox(height: 8),
+                    Text(error),
+                  ],
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    onPressed: controller.isCheckingChatAccess
+                        ? null
+                        : () => Navigator.pop(context, true),
+                    icon: const Icon(Icons.star_border_rounded),
+                    label: const Text("Subscribe"),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    if (subscribe != true || !mounted || controller != widget.controller) {
+      return;
+    }
+    if (widget.onSubscribe case final open?) {
+      await open();
+    } else {
+      await Navigator.of(context, rootNavigator: true).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => TwitchReportScreen.subscribe(login: controller.channel),
+        ),
+      );
+    }
+    if (mounted && controller == widget.controller) {
+      await controller.refreshChatAccess();
     }
   }
 
@@ -2047,7 +2129,9 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
               : "Chat disconnected"
         : controller?.isSignedIn != true
         ? "Sign in from Following to chat"
-        : controller!.chatAccess == null
+        : !controller!.subscriberChatEligible
+        ? "Subscriber-Only Mode"
+        : controller.chatAccess == null
         ? controller.chatAccessError == null
               ? "Checking chat access…"
               : "Tap to retry chat"
@@ -2102,38 +2186,50 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
                                 ),
                               ),
                             ),
-                          ListView.builder(
-                            key: const ValueKey("chat_messages"),
-                            controller: _scroll,
-                            reverse: true,
-                            padding: EdgeInsets.fromLTRB(
-                              0,
-                              widget.topPadding + _pinHeight + 8,
-                              0,
-                              _composerHeight + 4,
-                            ),
-                            itemCount: messages.length,
-                            findChildIndexCallback: (key) => messageIndices[key],
-                            itemBuilder: (context, index) => _ChatMessageRow(
-                              key: ValueKey(messages[messages.length - index - 1].id),
-                              message: messages[messages.length - index - 1],
-                              isMention: _mentionsViewer(
-                                messages[messages.length - index - 1],
-                                widget._source,
+                          Listener(
+                            onPointerDown: (_) => _followingBeforePointer = _following,
+                            onPointerCancel: (_) {
+                              if (_followingBeforePointer) {
+                                setState(() {
+                                  _following = true;
+                                  _pausedMessages = null;
+                                });
+                                _scrollToLatest();
+                              }
+                            },
+                            child: ListView.builder(
+                              key: const ValueKey("chat_messages"),
+                              controller: _scroll,
+                              reverse: true,
+                              padding: EdgeInsets.fromLTRB(
+                                0,
+                                widget.topPadding + _pinHeight + 8,
+                                0,
+                                _composerHeight + 4,
                               ),
-                              horizontalPadding: 12,
-                              settings: _settings,
-                              assets: widget.assets,
-                              knownUsers: knownUsers,
-                              blockedLogins: _blockedLogins.value,
-                              showModeration: moderationNotices.contains(
-                                messages[messages.length - index - 1].id,
+                              itemCount: messages.length,
+                              findChildIndexCallback: (key) => messageIndices[key],
+                              itemBuilder: (context, index) => _ChatMessageRow(
+                                key: ValueKey(messages[messages.length - index - 1].id),
+                                message: messages[messages.length - index - 1],
+                                isMention: _mentionsViewer(
+                                  messages[messages.length - index - 1],
+                                  widget._source,
+                                ),
+                                horizontalPadding: 12,
+                                settings: _settings,
+                                assets: widget.assets,
+                                knownUsers: knownUsers,
+                                blockedLogins: _blockedLogins.value,
+                                showModeration: moderationNotices.contains(
+                                  messages[messages.length - index - 1].id,
+                                ),
+                                onUserTap: (message) => unawaited(_showUser(message)),
+                                onThreadTap: (message) => unawaited(_showThread(message)),
+                                onEmoteTap: (emote) => unawaited(_showEmote(emote)),
+                                onBadgeTap: (badge) => unawaited(_showBadge(badge)),
+                                onMessageHold: (message) => unawaited(_showMessageActions(message)),
                               ),
-                              onUserTap: (message) => unawaited(_showUser(message)),
-                              onThreadTap: (message) => unawaited(_showThread(message)),
-                              onEmoteTap: (emote) => unawaited(_showEmote(emote)),
-                              onBadgeTap: (badge) => unawaited(_showBadge(badge)),
-                              onMessageHold: (message) => unawaited(_showMessageActions(message)),
                             ),
                           ),
                           if (!_following)
@@ -3467,6 +3563,10 @@ class _ChatMessageRow extends StatefulWidget {
 }
 
 class _ChatMessageRowState extends State<_ChatMessageRow> {
+  static final _emojiPattern = RegExp(
+    r"[\p{ExtPict}\p{RI}\u{20E3}]",
+    unicode: true,
+  );
   final _nameTap = TapGestureRecognizer();
   final _textTaps = <String, TapGestureRecognizer>{};
   bool _holding = false;
@@ -3591,7 +3691,27 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
             ? content.last as TextSpan
             : null;
         final hadGap = gap?.text?.trim().isEmpty == true;
-        final previous = content.length - (hadGap ? 2 : 1);
+        var previous = content.length - (hadGap ? 2 : 1);
+        if (previous >= 0 && content[previous] is TextSpan) {
+          final span = content[previous] as TextSpan;
+          final emoji = span.text?.characters.lastOrNull;
+          if (span.recognizer == null && emoji != null && _emojiPattern.hasMatch(emoji)) {
+            content[previous] = TextSpan(
+              text: span.text!.substring(0, span.text!.length - emoji.length),
+              style: span.style,
+            );
+            content.insert(
+              ++previous,
+              WidgetSpan(
+                alignment: PlaceholderAlignment.middle,
+                child: Text(
+                  emoji,
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(fontSize: _fontSize),
+                ),
+              ),
+            );
+          }
+        }
         if (previous >= 0 && content[previous] is WidgetSpan) {
           final base = content[previous] as WidgetSpan;
           content.removeRange(previous, content.length);
@@ -3599,10 +3719,11 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
             WidgetSpan(
               alignment: PlaceholderAlignment.middle,
               child: Stack(
+                alignment: Alignment.center,
                 clipBehavior: Clip.none,
                 children: [
                   base.child,
-                  Positioned.fill(child: image),
+                  image,
                 ],
               ),
             ),
@@ -3739,7 +3860,6 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
       r"(?<![\w@./-])[a-zA-Z0-9_]{1,25}(?![\w@./-])",
       caseSensitive: false,
     ).allMatches(text)) {
-      content.add(TextSpan(text: text.substring(offset, match.start)));
       final token = match[0]!;
       final explicitMention = token.startsWith("@");
       final login = token.substring(explicitMention ? 1 : 0).toLowerCase();
@@ -3759,10 +3879,9 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
       }
       final uri = mention ? null : chatLinkUri(label);
       if (!mention && uri == null) {
-        content.add(TextSpan(text: token));
-        offset = match.end;
         continue;
       }
+      content.add(TextSpan(text: text.substring(offset, match.start)));
       final user =
           knownUser ??
           TwitchChatMessage(
@@ -3887,17 +4006,21 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
         asset is TwitchChatGif
             ? WidgetSpan(
                 alignment: PlaceholderAlignment.middle,
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(
-                    maxWidth: widget.previewPrefix == null ? 180 : 48,
-                    maxHeight: widget.previewPrefix == null ? 120 : _fontSize * 1.7,
-                  ),
-                  child: Image.network(
-                    asset.url,
-                    key: ValueKey("chat_gif-${message.id}-$start"),
-                    fit: BoxFit.contain,
-                    semanticLabel: label,
-                    errorBuilder: (_, _, _) => Text(label, style: TextStyle(fontSize: _fontSize)),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  widthFactor: widget.previewPrefix == null ? null : 1,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: widget.previewPrefix == null ? 140 : 48,
+                      maxHeight: widget.previewPrefix == null ? 140 : _fontSize * 1.7,
+                    ),
+                    child: Image.network(
+                      asset.url,
+                      key: ValueKey("chat_gif-${message.id}-$start"),
+                      fit: BoxFit.contain,
+                      semanticLabel: label,
+                      errorBuilder: (_, _, _) => Text(label, style: TextStyle(fontSize: _fontSize)),
+                    ),
                   ),
                 ),
               )

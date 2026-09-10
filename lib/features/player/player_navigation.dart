@@ -4,6 +4,7 @@ import "dart:math" as math;
 import "package:flow/features/player/player_screen.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 
 int _openStreamPlayerGeneration = 0;
 
@@ -33,6 +34,10 @@ class PlaybackHost extends NavigatorObserver {
   OverlayEntry? _entry;
   StreamPlayerScreen? _screen;
   PageRoute<void>? _playerRoute;
+  Route<dynamic>? _backPreviewRoute;
+  PageRoute<void>? _playerBackRoute;
+  double _backProgress = 0;
+  SwipeEdge _backSwipeEdge = SwipeEdge.left;
   LocalHistoryEntry? _inlineHistory;
   MaterialPageRoute<void>? _overlayPageRoute;
   PlaybackMode _mode = PlaybackMode.expanded;
@@ -41,6 +46,7 @@ class PlaybackHost extends NavigatorObserver {
   final _overlayRoutes = <Route<dynamic>>[];
   bool miniPlayerEnabled = true;
   bool _chatOnly = false;
+  bool _browsingFromPlayer = false;
   double _dragOffset = 0;
   bool _dragging = false;
   bool _dismissing = false;
@@ -56,6 +62,41 @@ class PlaybackHost extends NavigatorObserver {
 
   PlaybackMode get mode => _mode;
   bool get _canMinimize => miniPlayerEnabled && !_chatOnly;
+
+  bool startBackGesture(PredictiveBackEvent event) {
+    final route = _playerRoute;
+    if (event.isButtonEvent ||
+        _mode != PlaybackMode.expanded ||
+        route == null ||
+        !route.isCurrent ||
+        !route.popGestureEnabled) {
+      return false;
+    }
+    _playerBackRoute = route;
+    _backSwipeEdge = event.swipeEdge;
+    _backProgress = event.progress;
+    route.handleStartBackGesture(progress: 1 - event.progress);
+    _changed();
+    return true;
+  }
+
+  void updateBackGestureProgress(PredictiveBackEvent event) {
+    _backProgress = event.progress;
+    _playerBackRoute?.handleUpdateBackGestureProgress(progress: 1 - event.progress);
+    _changed();
+  }
+
+  void finishBackGesture({required bool commit}) {
+    final route = _playerBackRoute;
+    _playerBackRoute = null;
+    _backProgress = 0;
+    _changed();
+    if (commit) {
+      route?.handleCommitBackGesture();
+    } else {
+      route?.handleCancelBackGesture();
+    }
+  }
 
   void setInlineBackHandler(VoidCallback? onClose) {
     final previous = _inlineHistory;
@@ -86,7 +127,12 @@ class PlaybackHost extends NavigatorObserver {
   void setMiniPlayerEnabled({required bool enabled}) {
     miniPlayerEnabled = enabled;
     if (!enabled && _mode == PlaybackMode.mini) {
-      dismiss();
+      if (_browsingFromPlayer) {
+        _mode = PlaybackMode.expanded;
+        _changed();
+      } else {
+        dismiss();
+      }
     } else {
       _changed();
     }
@@ -155,25 +201,49 @@ class PlaybackHost extends NavigatorObserver {
       _identity = identity;
     }
     if (_entry == null) {
-      _entry = OverlayEntry(builder: _buildPlayer, maintainState: true);
+      _entry = OverlayEntry(
+        builder: (context) => Offstage(
+          offstage:
+              _browsingFromPlayer && _mode == PlaybackMode.expanded && _backPreviewRoute == null,
+          child: Transform.scale(
+            scale: 1 - 0.1 * _backProgress,
+            child: Transform.translate(
+              offset: Offset(
+                math.max(0, MediaQuery.sizeOf(context).width / 20 - 8) *
+                    _backProgress *
+                    (_backSwipeEdge == SwipeEdge.right ? -1 : 1),
+                0,
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(32 * _backProgress),
+                child: _buildPlayer(context),
+              ),
+            ),
+          ),
+        ),
+        maintainState: true,
+      );
       navigator!.overlay!.insert(_entry!);
     }
     _dismissing = false;
     restore();
   }
 
-  void minimize() {
+  void minimize({bool forNavigation = false}) {
     if (_entry == null || _mode == PlaybackMode.pip || _mode == PlaybackMode.mini) {
       return;
     }
-    if (!_canMinimize) {
+    if (!_canMinimize && !forNavigation) {
       dismiss();
       return;
     }
     _dragOffset = 0;
     _settling = true;
-    _mode = PlaybackMode.mini;
-    _removePlayerRoute();
+    _browsingFromPlayer = forNavigation && _playerRoute != null;
+    _mode = _canMinimize ? PlaybackMode.mini : PlaybackMode.expanded;
+    if (!forNavigation) {
+      _removePlayerRoute();
+    }
     _changed();
   }
 
@@ -181,11 +251,16 @@ class PlaybackHost extends NavigatorObserver {
     if (_entry == null || _dismissing) {
       return;
     }
-    _settling = _mode != PlaybackMode.expanded || _dragOffset > 0;
+    _settling = _backPreviewRoute == null && (_mode != PlaybackMode.expanded || _dragOffset > 0);
+    _backPreviewRoute = null;
     _mode = PlaybackMode.expanded;
     _dragOffset = 0;
     _dragging = false;
     _dismissing = false;
+    _browsingFromPlayer = false;
+    if (_playerRoute != null && !_playerRoute!.isCurrent) {
+      _removePlayerRoute();
+    }
     if (_playerRoute == null) {
       final route = PageRouteBuilder<void>(
         pageBuilder: (_, _, _) => const SizedBox.expand(),
@@ -246,7 +321,11 @@ class PlaybackHost extends NavigatorObserver {
     entry?.dispose();
     _screen = null;
     _chatOnly = false;
+    _browsingFromPlayer = false;
     _identity = null;
+    _backPreviewRoute = null;
+    _playerBackRoute = null;
+    _backProgress = 0;
     _mode = PlaybackMode.expanded;
     _modeBeforePip = PlaybackMode.expanded;
     _dragOffset = 0;
@@ -278,6 +357,7 @@ class PlaybackHost extends NavigatorObserver {
         navigator!.overlay!.rearrange(
           [
             _entry!,
+            if (_backPreviewRoute?.isCurrent == true) ..._backPreviewRoute!.overlayEntries,
             if (_mode != PlaybackMode.pip && !_pipTransition)
               for (final route in _overlayRoutes) ...route.overlayEntries,
           ],
@@ -285,6 +365,26 @@ class PlaybackHost extends NavigatorObserver {
         );
       }
     });
+  }
+
+  @override
+  void didStartUserGesture(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    if (previousRoute == _playerRoute && _browsingFromPlayer) {
+      _backPreviewRoute = route;
+      _skipAnimation = true;
+      _changed();
+      _bringToFront();
+    }
+  }
+
+  @override
+  void didStopUserGesture() {
+    if (_backPreviewRoute?.isCurrent == true) {
+      _backPreviewRoute = null;
+      _skipAnimation = true;
+      _changed();
+      _bringToFront();
+    }
   }
 
   @override
@@ -320,7 +420,11 @@ class PlaybackHost extends NavigatorObserver {
         route != _overlayPageRoute &&
         _entry != null) {
       // Navigator is locked during observer callbacks.
-      WidgetsBinding.instance.addPostFrameCallback((_) => minimize());
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (route.isCurrent) {
+          minimize(forNavigation: true);
+        }
+      });
     }
     _bringToFront();
   }
@@ -336,6 +440,13 @@ class PlaybackHost extends NavigatorObserver {
 
   @override
   void didChangeTop(Route<dynamic> topRoute, Route<dynamic>? previousTopRoute) {
+    if (topRoute == _playerRoute && _browsingFromPlayer) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_playerRoute?.isCurrent == true && _browsingFromPlayer) {
+          restore();
+        }
+      });
+    }
     _bringToFront();
   }
 
@@ -350,12 +461,13 @@ class PlaybackHost extends NavigatorObserver {
 
   Widget _buildPlayer(BuildContext context) {
     final media = MediaQuery.of(context);
+    final mode = _backPreviewRoute == null ? _mode : PlaybackMode.expanded;
     final mini =
-        _mode == PlaybackMode.mini ||
-        (_mode == PlaybackMode.pip &&
+        mode == PlaybackMode.mini ||
+        (mode == PlaybackMode.pip &&
             _modeBeforePip == PlaybackMode.mini &&
             media.size.width < media.size.height);
-    final pip = _mode == PlaybackMode.pip;
+    final pip = mode == PlaybackMode.pip;
     final resized = _windowSize != null && _windowSize != media.size;
     _windowSize = media.size;
     final animate = !_dragging && !pip && !_pipTransition && !_skipAnimation && !resized;
@@ -406,7 +518,7 @@ class PlaybackHost extends NavigatorObserver {
             rect.width,
             media.size.height - expandedRect.top,
           );
-    final moving = _dragging || _settling || _dismissing;
+    final moving = _backPreviewRoute == null && (_dragging || _settling || _dismissing);
     final borderRadius = BorderRadius.circular(mini || _dragOffset > 0 ? 10 : 0);
     return Stack(
       children: [
@@ -462,7 +574,7 @@ class PlaybackHost extends NavigatorObserver {
                 onHorizontalDragCancel: mini ? cancelSwipe : null,
                 child: PlaybackPresentation(
                   host: this,
-                  mode: _mode,
+                  mode: mode,
                   hideChrome: moving || _pipTransition,
                   miniPlayerEnabled: miniPlayerEnabled,
                   child: KeyedSubtree(key: ValueKey(_identity), child: _screen!),

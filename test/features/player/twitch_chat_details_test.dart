@@ -41,6 +41,86 @@ const _brailleArtRows = [
 ];
 
 void main() {
+  testWidgets("zero-width emotes center over whole emoji and preserve their natural width", (
+    tester,
+  ) async {
+    await _cacheImages(tester);
+    await tester.runAsync(() async {
+      final recorder = ui.PictureRecorder();
+      ui.Canvas(recorder).drawColor(Colors.green, ui.BlendMode.src);
+      final picture = recorder.endRecording();
+      final image = await picture.toImage(96, 32);
+      picture.dispose();
+      PaintingBinding.instance.imageCache.putIfAbsent(
+        const NetworkImage("https://example.com/wide.webp"),
+        () => OneFrameImageStreamCompleter(Future.value(ImageInfo(image: image))),
+      );
+    });
+    final client = _Client();
+    final controller = _Controller(client);
+    final assets = _OverlayAssets(client);
+    addTearDown(controller.dispose);
+    addTearDown(assets.dispose);
+    await tester.pumpWidget(_panel(controller, assets: assets));
+    for (final base in ["👃", "👃🏻", "👨‍👩‍👧", "🇺🇸", "1️⃣", "Party", "Kappa"]) {
+      controller.items
+        ..clear()
+        ..add(
+          TwitchChatMessage(
+            id: "overlay",
+            login: "viewer",
+            displayName: "Viewer",
+            text: "before $base ALERT ALERT after",
+            emotes: base == "Kappa" ? [const TwitchChatEmote(id: "25", start: 7, end: 12)] : [],
+          ),
+        );
+      controller.update();
+      await tester.pumpAndSettle();
+      final row = find.byKey(const ValueKey("overlay"));
+      final overlays = find.descendant(
+        of: row,
+        matching: find.byWidgetPredicate(
+          (widget) => widget is Image && widget.semanticLabel == "ALERT",
+        ),
+      );
+      expect(overlays, findsNWidgets(2), reason: base);
+      final baseWidget = base == "Party" || base == "Kappa"
+          ? find.descendant(
+              of: row,
+              matching: find.byWidgetPredicate(
+                (widget) => widget is Image && widget.semanticLabel == base,
+              ),
+            )
+          : find.descendant(of: row, matching: find.text(base));
+      expect(baseWidget, findsOneWidget, reason: base);
+      final center = tester.getCenter(baseWidget);
+      for (var i = 0; i < 2; i++) {
+        expect((tester.getCenter(overlays.at(i)) - center).distance, lessThan(0.01), reason: base);
+        final size = tester.getSize(overlays.at(i));
+        expect(size.width / size.height, closeTo(3, 0.01), reason: base);
+      }
+      expect(_textPoint(tester, row, "before").dx, lessThan(center.dx));
+      expect(_textPoint(tester, row, "after").dx, greaterThan(tester.getRect(overlays.last).right));
+    }
+    for (final base in ["ordinary", "https://example.com/👃"]) {
+      controller.items
+        ..clear()
+        ..add(_message("plain", "$base ALERT", minute: 1));
+      controller.update();
+      await tester.pumpAndSettle();
+      final row = find.byKey(const ValueKey("plain"));
+      final overlay = find.descendant(
+        of: row,
+        matching: find.byWidgetPredicate(
+          (widget) => widget is Image && widget.semanticLabel == "ALERT",
+        ),
+      );
+      expect(_textPoint(tester, row, base).dx, lessThan(tester.getRect(overlay).left));
+      expect(find.descendant(of: row, matching: find.text("👃")), findsNothing);
+    }
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets("mentions and replies highlight and sound once without replaying history", (
     tester,
   ) async {
@@ -182,26 +262,34 @@ void main() {
     expect(sounds, hasLength(1));
   });
 
-  testWidgets("native GIFs render alongside emotes and in quoted replies without changing URLs", (
+  testWidgets("native GIFs use their own line while emotes and reply previews remain inline", (
     tester,
   ) async {
     const url =
         "https://media4.giphy.com/media/joSNxeswxuc74Juo8X/giphy.gif?cid=example&ep=v1_gifs_trending&rid=giphy.gif&ct=g";
+    const squareUrl = "https://example.com/square.gif";
+    const smallUrl = "https://example.com/small.gif";
     const label = "[Y A Y Yes GIF by Djemilah Birnie]";
     await _cacheImages(tester);
     await tester.runAsync(() async {
-      final recorder = ui.PictureRecorder();
-      ui.Canvas(recorder).drawColor(Colors.green, ui.BlendMode.src);
-      final picture = recorder.endRecording();
-      final image = await picture.toImage(240, 120);
-      picture.dispose();
-      PaintingBinding.instance.imageCache.putIfAbsent(
-        const NetworkImage(url),
-        () => OneFrameImageStreamCompleter(Future.value(ImageInfo(image: image))),
-      );
+      for (final (imageUrl, width, height) in [
+        (url, 240, 120),
+        (squareUrl, 240, 240),
+        (smallUrl, 48, 16),
+      ]) {
+        final recorder = ui.PictureRecorder();
+        ui.Canvas(recorder).drawColor(Colors.green, ui.BlendMode.src);
+        final picture = recorder.endRecording();
+        final image = await picture.toImage(width, height);
+        picture.dispose();
+        PaintingBinding.instance.imageCache.putIfAbsent(
+          NetworkImage(imageUrl),
+          () => OneFrameImageStreamCompleter(Future.value(ImageInfo(image: image))),
+        );
+      }
     });
     addTearDown(PaintingBinding.instance.imageCache.clear);
-    tester.view.physicalSize = const Size(240, 1000);
+    tester.view.physicalSize = const Size(392, 1000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -216,7 +304,24 @@ void main() {
       emotes: [TwitchChatEmote(id: "25", start: 0, end: 5)],
       gifs: [gif],
     );
-    final controller = _Controller(client)..items.add(parent);
+    final controller = _Controller(client)
+      ..items.addAll([
+        parent,
+        const TwitchChatMessage(
+          id: "square-gif",
+          login: "viewer",
+          displayName: "Viewer",
+          text: label,
+          gifs: [TwitchChatGif(id: "square", url: squareUrl, start: 0, end: label.length)],
+        ),
+        const TwitchChatMessage(
+          id: "small-gif",
+          login: "viewer",
+          displayName: "Viewer",
+          text: label,
+          gifs: [TwitchChatGif(id: "small", url: smallUrl, start: 0, end: label.length)],
+        ),
+      ]);
     addTearDown(controller.dispose);
     addTearDown(assets.dispose);
     await tester.pumpWidget(_panel(controller, assets: assets));
@@ -225,9 +330,41 @@ void main() {
     final image = find.byKey(const ValueKey("chat_gif-gif-parent-6"));
     expect((tester.widget<Image>(image).image as NetworkImage).url, url);
     expect(find.descendant(of: body, matching: find.byType(Image)), findsNWidgets(3));
-    expect(tester.getSize(image).width, greaterThan(100));
-    expect(tester.getSize(image).width, lessThanOrEqualTo(180));
-    expect(tester.getSize(image).height, lessThanOrEqualTo(120));
+    final emotes = find.descendant(
+      of: body,
+      matching: find.byWidgetPredicate(
+        (widget) => widget is Image && widget.semanticLabel == "Kappa",
+      ),
+    );
+    final square = find.byKey(const ValueKey("chat_gif-square-gif-0"));
+    final small = find.byKey(const ValueKey("chat_gif-small-gif-0"));
+    for (final width in [392.0, 240.0]) {
+      tester.view.physicalSize = Size(width, 1000);
+      await tester.pumpAndSettle();
+      expect(tester.getSize(image), const Size(140, 70));
+      expect(tester.getSize(square), const Size(140, 140));
+      expect(tester.getSize(small), const Size(48, 16));
+      expect(tester.getTopLeft(image).dx, closeTo(12, 0.01));
+      expect(tester.getTopLeft(square).dx, closeTo(12, 0.01));
+      expect(tester.getTopLeft(small).dx, closeTo(12, 0.01));
+      expect(tester.getTopLeft(image).dy, greaterThan(_textPoint(tester, body, "Viewer").dy));
+      expect(
+        tester.getTopLeft(square).dy,
+        greaterThan(_textPoint(tester, find.byKey(const ValueKey("square-gif")), "Viewer").dy),
+      );
+      expect(
+        tester.getTopLeft(small).dy,
+        greaterThan(_textPoint(tester, find.byKey(const ValueKey("small-gif")), "Viewer").dy),
+      );
+      expect(
+        _textPoint(tester, body, "Viewer").dy,
+        inInclusiveRange(tester.getTopLeft(emotes).dy, tester.getBottomLeft(emotes).dy),
+      );
+      expect(
+        tester.getBottomLeft(emotes).dy,
+        lessThanOrEqualTo(tester.getTopLeft(image).dy + 0.01),
+      );
+    }
     controller.items.add(
       TwitchChatMessage(
         id: "gif-reply",
@@ -3277,6 +3414,22 @@ class _Assets extends TwitchChatAssets {
       title: "Moderator",
       url: _badgeUrl,
       provider: ChatEmoteProvider.twitch,
+    ),
+  };
+}
+
+class _OverlayAssets extends _Assets {
+  _OverlayAssets(super.client);
+
+  @override
+  Map<String, ChatAssetEmote> get emotesByName => {
+    ...super.emotesByName,
+    "ALERT": const ChatAssetEmote(
+      name: "ALERT",
+      id: "wide-id",
+      url: "https://example.com/wide.webp",
+      provider: ChatEmoteProvider.sevenTv,
+      zeroWidth: true,
     ),
   };
 }

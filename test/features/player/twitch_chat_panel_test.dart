@@ -908,6 +908,99 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets("connection notices scroll away as history and live chat arrive", (tester) async {
+    final now = DateTime.now();
+    final controller = _ChatController()
+      ..items.addAll([
+        TwitchChatMessage(
+          id: "connecting",
+          login: "",
+          displayName: "",
+          text: "",
+          noticeType: "system",
+          noticeText: "Connecting to chat...",
+          timestamp: now,
+        ),
+        TwitchChatMessage(
+          id: "welcome",
+          login: "",
+          displayName: "",
+          text: "",
+          noticeType: "system",
+          noticeText: "Welcome to channel's Chat!",
+          timestamp: now,
+        ),
+      ]);
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(panel(controller, chatOnly: true));
+    await tester.pumpAndSettle();
+    final welcome = find.text("Welcome to channel's Chat!");
+    final initialTop = tester.getTopLeft(welcome).dy;
+    controller.items.insert(
+      0,
+      _message(1, timestamp: now.subtract(const Duration(minutes: 1))).copyWith(isHistorical: true),
+    );
+    controller.items.add(
+      _message(2, timestamp: now.subtract(const Duration(milliseconds: 200))),
+    );
+    controller.update();
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(welcome).dy, lessThan(initialTop));
+    expect(
+      tester.getTopLeft(welcome).dy,
+      lessThan(tester.getTopLeft(find.textContaining("message 1", findRichText: true)).dy),
+    );
+    expect(
+      tester.getTopLeft(find.textContaining("message 1", findRichText: true)).dy,
+      lessThan(tester.getTopLeft(find.textContaining("message 2", findRichText: true)).dy),
+    );
+    expect(controller.items.firstWhere((item) => item.id == "welcome").timestamp, now);
+  });
+
+  testWidgets("local echoes and notices keep their position when server timestamps lag", (
+    tester,
+  ) async {
+    final now = DateTime.now();
+    final controller = _ChatController()
+      ..items.add(_message(0, timestamp: now.subtract(const Duration(seconds: 20))));
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(panel(controller, chatOnly: true));
+    await tester.pumpAndSettle();
+    final sentAt = now.add(const Duration(minutes: 1));
+    controller.items.add(_message(1, timestamp: sentAt, isOwn: true));
+    controller.update();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("1")), findsOneWidget);
+    controller.items.add(_message(2, timestamp: now.subtract(const Duration(seconds: 19))));
+    controller.update();
+    await tester.pumpAndSettle();
+    double top(String id) => tester.getTopLeft(find.byKey(ValueKey(id))).dy;
+    expect(top("0"), lessThan(top("1")));
+    expect(top("1"), lessThan(top("2")));
+    controller.items[1] = _message(3, timestamp: sentAt, isOwn: true);
+    controller.items.add(
+      TwitchChatMessage(
+        id: "notice",
+        login: "",
+        displayName: "",
+        text: "",
+        isPrivate: true,
+        noticeType: "notice",
+        noticeText: "Local notice",
+        timestamp: sentAt,
+      ),
+    );
+    controller.update();
+    await tester.pumpAndSettle();
+    expect(top("3"), lessThan(top("2")));
+    expect(top("2"), lessThan(top("notice")));
+    controller.items.add(_message(4, timestamp: now.subtract(const Duration(seconds: 18))));
+    controller.update();
+    await tester.pumpAndSettle();
+    expect(top("notice"), lessThan(top("4")));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets("historical chat bypasses sync delay while new messages wait", (tester) async {
     final now = DateTime.now();
     final controller = _ChatController()
@@ -1014,6 +1107,10 @@ void main() {
     ]);
     await tester.pumpWidget(panel(controller, latencyMs: 1000));
     expect(find.byKey(const ValueKey("2")), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey("0"))).dy,
+      lessThan(tester.getTopLeft(find.byKey(const ValueKey("2"))).dy),
+    );
     expect(find.byKey(const ValueKey("1")), findsNothing);
     expect(find.byKey(const ValueKey("3")), findsNothing);
 
@@ -1401,6 +1498,72 @@ void main() {
     await tester.tap(find.text("Show video"));
     await tester.pumpAndSettle();
     expect(watching, isTrue);
+  });
+
+  testWidgets("keyboard dismissal keeps chat following and preserves an intentional pause", (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetViewInsets);
+    final controller = _ChatController()..items.addAll(List.generate(100, _message));
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(panel(controller, chatOnly: true));
+    await tester.pumpAndSettle();
+    final list = find.byKey(const ValueKey("chat_messages"));
+    final scroll = tester.widget<ListView>(list).controller!;
+    final input = find.byKey(const ValueKey("chat_message_input"));
+    await tester.tap(input);
+    for (final bottom in [300.0, 240.0, 120.0, 0.0]) {
+      tester.view.viewInsets = FakeViewPadding(bottom: bottom * tester.view.devicePixelRatio);
+      await tester.pump();
+      controller.items.add(_message(controller.items.length));
+      controller.update();
+      await tester.pump();
+    }
+    expect(scroll.position.extentBefore, 0);
+    expect(find.byIcon(Icons.arrow_downward_rounded), findsNothing);
+    scroll.jumpTo(200);
+    await tester.pump();
+    for (final bottom in [300.0, 0.0]) {
+      tester.view.viewInsets = FakeViewPadding(bottom: bottom * tester.view.devicePixelRatio);
+      await tester.pump();
+    }
+    expect(scroll.offset, 200);
+    expect(find.byIcon(Icons.arrow_downward_rounded), findsOneWidget);
+  });
+
+  testWidgets("a canceled system gesture does not leave live chat paused", (tester) async {
+    final controller = _ChatController()..items.addAll(List.generate(100, _message));
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(panel(controller, chatOnly: true));
+    await tester.pumpAndSettle();
+    final list = find.byKey(const ValueKey("chat_messages"));
+    final scroll = tester.widget<ListView>(list).controller!;
+    final gesture = await tester.startGesture(tester.getTopLeft(list) + const Offset(1, 150));
+    await gesture.moveBy(const Offset(5, 40));
+    await tester.pump();
+    await gesture.moveBy(const Offset(15, 40));
+    await tester.pump();
+    expect(scroll.position.extentBefore, greaterThan(0));
+    await gesture.cancel();
+    await tester.pumpAndSettle();
+    controller.items.add(_message(100));
+    controller.update();
+    await tester.pump();
+    expect(scroll.position.extentBefore, 0);
+    expect(find.textContaining("message 100", findRichText: true), findsOneWidget);
+    expect(find.byIcon(Icons.arrow_downward_rounded), findsNothing);
+    scroll.jumpTo(200);
+    await tester.pump();
+    final pausedGesture = await tester.startGesture(tester.getCenter(list));
+    await pausedGesture.moveBy(const Offset(5, 40));
+    await pausedGesture.moveBy(const Offset(15, 40));
+    await pausedGesture.cancel();
+    await tester.pumpAndSettle();
+    controller.items.add(_message(101));
+    controller.update();
+    await tester.pump();
+    expect(scroll.position.extentBefore, greaterThan(0));
+    expect(find.text("1 new message"), findsOneWidget);
   });
 
   testWidgets("follows new messages only at the bottom and jumps to latest", (tester) async {

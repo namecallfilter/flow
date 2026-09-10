@@ -1,7 +1,12 @@
 import "dart:async";
 
+import "package:flow/api/twitch_api.dart";
+import "package:flow/api/twitch_chat.dart";
+import "package:flow/features/player/twitch_chat_panel.dart";
 import "package:flow/features/player/twitch_report_screen.dart";
+import "package:flow/shared/preferences/preferences.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:flutter_test/flutter_test.dart";
 // The installed WebView package's platform interface supplies its test doubles.
 // ignore: depend_on_referenced_packages
@@ -10,6 +15,66 @@ import "package:webview_flutter_platform_interface/webview_flutter_platform_inte
 void main() {
   late _ReportWebViewPlatform platform;
   setUp(() => WebViewPlatform.instance = platform = _ReportWebViewPlatform());
+
+  testWidgets("subscriber gate opens channel checkout and rechecks access on return", (
+    tester,
+  ) async {
+    final controller = _SubscriptionChatController();
+    addTearDown(controller.dispose);
+    final opened = <String>[];
+    const external = MethodChannel("flow/external_url");
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(external, (call) async {
+      opened.add(call.arguments as String);
+      return true;
+    });
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(external, null),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TwitchChatPanel(
+            controller: controller,
+            preferences: MemoryFlowPreferences(),
+            chatOnly: true,
+            isLive: true,
+            onToggleChatOnly: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final input = find.byKey(const ValueKey("chat_message_input"));
+    expect(tester.widget<TextField>(input).decoration!.hintText, "Subscriber-Only Mode");
+    expect(tester.widget<TextField>(input).readOnly, isTrue);
+    await tester.tap(input);
+    await tester.pumpAndSettle();
+    expect(find.text("Subscriber-Only Chat"), findsOneWidget);
+    expect(tester.testTextInput.isVisible, isFalse);
+    await tester.tap(find.widgetWithText(FilledButton, "Subscribe"));
+    await tester.pumpAndSettle();
+    expect(platform.controller.requests.single, Uri.parse("https://subs.twitch.tv/creator"));
+    expect(find.text("Subscribe to creator"), findsOneWidget);
+    await tester.tap(find.byTooltip("Open in browser"));
+    await tester.pump();
+    expect(opened, ["https://subs.twitch.tv/creator"]);
+    await tester.tap(find.byTooltip("Close subscription"));
+    await tester.pumpAndSettle();
+    expect(controller.refreshes, 1);
+    expect(tester.widget<TextField>(input).readOnly, isTrue);
+    expect(tester.widget<TextField>(input).decoration!.hintText, "Subscriber-Only Mode");
+    await tester.tap(input);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, "Subscribe"));
+    await tester.pumpAndSettle();
+    controller.subscribed = true;
+    await tester.tap(find.byTooltip("Close subscription"));
+    await tester.pumpAndSettle();
+    expect(controller.refreshes, 2);
+    expect(find.text("Subscriber-Only Chat"), findsNothing);
+    expect(tester.widget<TextField>(input).readOnly, isFalse);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets("loads the official report page and keeps HTTPS links in the WebView", (
     tester,
@@ -120,6 +185,38 @@ void main() {
     await tester.pump();
     expect(tester.takeException(), isNull);
   });
+}
+
+class _SubscriptionChatController extends TwitchChatController {
+  _SubscriptionChatController()
+    : super(
+        channel: "creator",
+        clientLoader: () async => throw UnimplementedError(),
+        autoConnect: false,
+      );
+
+  int refreshes = 0;
+  bool subscribed = false;
+
+  @override
+  TwitchChatStatus get status => TwitchChatStatus.connected;
+  @override
+  bool get isSignedIn => true;
+  @override
+  bool get canSend => subscriberChatEligible;
+  @override
+  bool get subscriberChatEligible => subscribed;
+  @override
+  TwitchChatAccess get chatAccess => const TwitchChatAccess(
+    channelId: "1",
+    channelDisplayName: "Creator",
+    rules: [],
+  );
+  @override
+  Future<void> refreshChatAccess() async {
+    refreshes++;
+    notifyListeners();
+  }
 }
 
 class _ReportWebViewPlatform extends WebViewPlatform {

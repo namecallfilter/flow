@@ -5,6 +5,7 @@ import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_chat.dart";
 import "package:flow/api/twitch_chat_assets.dart";
 import "package:flow/api/twitch_vod_chat.dart";
+import "package:flow/app/theme.dart";
 import "package:flow/features/player/media3_player_controller.dart";
 import "package:flow/features/player/player_navigation.dart";
 import "package:flow/features/player/player_screen.dart";
@@ -14,6 +15,7 @@ import "package:flow/features/settings/settings_screen.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
@@ -140,6 +142,10 @@ void main() {
         await tester.tap(find.byKey(const ValueKey("chat_emote_toggle")));
         await tester.pumpAndSettle();
         expect(find.byType(TwitchEmotePicker), findsOneWidget);
+        expect(await _sendBackGesture(tester, "startBackGesture", progress: 0), isFalse);
+        await tester.pump();
+        expect(find.byType(TwitchEmotePicker), findsOneWidget);
+        expect(host.mode, PlaybackMode.expanded);
         await tester.binding.handlePopRoute();
         await tester.pumpAndSettle();
         expect(find.byType(TwitchEmotePicker), findsNothing);
@@ -1173,6 +1179,200 @@ void main() {
     }
   }
 
+  for (final (videoId, chatOnly, miniEnabled, swipeEdge) in [
+    (null, false, true, 0),
+    ("123456", false, true, 1),
+    (null, true, true, 0),
+    ("123456", false, false, 1),
+  ]) {
+    testWidgets(
+      "predictive Back from expanded ${videoId == null ? "live" : "VOD"} previews its origin "
+      "(chat only: $chatOnly, mini: $miniEnabled, edge: $swipeEdge)",
+      (tester) async {
+        tester.view.physicalSize = const Size(400, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final host = PlaybackHost()..setMiniPlayerEnabled(enabled: miniEnabled);
+        final player = _PlaybackProbe();
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildFlowTheme(Brightness.dark),
+            navigatorObservers: [host],
+            home: const Scaffold(body: Text("Browse Flow")),
+          ),
+        );
+        final home = find.text("Browse Flow");
+        await openStreamPlayer(
+          tester.element(home),
+          builder: (_) => player.screen("creator", videoId: videoId),
+        );
+        await tester.pumpAndSettle();
+        if (chatOnly) {
+          await tester.tap(find.byKey(const ValueKey("chat_menu")));
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const ValueKey("chat_only_toggle")));
+          await tester.pumpAndSettle();
+        }
+        final screen = tester.element(find.byType(StreamPlayerScreen));
+        final chat = tester.element(find.byType(TwitchChatPanel));
+        final page = find.byKey(const ValueKey("player_page_creator"));
+        final fullRect = tester.getRect(page);
+        final disposals = player.disposals;
+        final pauses = player.pauses;
+        for (final action in ["cancelBackGesture", "commitBackGesture"]) {
+          expect(
+            await _sendBackGesture(tester, "startBackGesture", progress: 0, swipeEdge: swipeEdge),
+            isTrue,
+          );
+          await tester.pump();
+          await _sendBackGesture(
+            tester,
+            "updateBackGestureProgress",
+            progress: 0.45,
+            swipeEdge: swipeEdge,
+          );
+          await tester.pump();
+          final preview = tester.getRect(page);
+          expect(preview.width, lessThan(fullRect.width));
+          expect(preview.height, lessThan(fullRect.height));
+          expect(
+            preview.center.dx,
+            swipeEdge == 0 ? greaterThan(fullRect.center.dx) : lessThan(fullRect.center.dx),
+          );
+          expect(home, findsOneWidget);
+          expect(preview.contains(tester.getCenter(home)), isFalse);
+          _expectPaintsAbove(tester, page, home);
+          expect(tester.element(find.byType(StreamPlayerScreen)), same(screen));
+          expect(tester.element(find.byType(TwitchChatPanel)), same(chat));
+          expect(player.loads, 1);
+          expect(player.surfaces, 1);
+          expect(player.disposals, disposals);
+          expect(player.pauses, pauses);
+          await _sendBackGesture(tester, action);
+          await tester.pumpAndSettle();
+          if (action == "cancelBackGesture") {
+            expect(host.mode, PlaybackMode.expanded);
+            expect(tester.getRect(page), fullRect);
+            expect(home.hitTestable(), findsNothing);
+          }
+        }
+        expect(home.hitTestable(), findsOneWidget);
+        if (miniEnabled && !chatOnly) {
+          expect(host.mode, PlaybackMode.mini);
+          expect(find.byKey(const ValueKey("player_mini")), findsOneWidget);
+          expect(tester.element(find.byType(StreamPlayerScreen)), same(screen));
+          expect(tester.element(find.byType(TwitchChatPanel, skipOffstage: false)), same(chat));
+          expect(player.disposals, 0);
+          host.dismiss();
+          await tester.pumpAndSettle();
+        } else {
+          expect(find.byType(StreamPlayerScreen), findsNothing);
+          expect(chat.mounted, isFalse);
+          expect(player.disposals, 1);
+        }
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+  }
+
+  for (final (chatOnly, miniEnabled, destinationName) in [
+    (false, true, "Category"),
+    (true, true, "Category"),
+    (false, false, "Profile"),
+  ]) {
+    testWidgets(
+      "predictive Back previews the retained player beneath $destinationName "
+      "(chat only: $chatOnly, mini: $miniEnabled)",
+      (tester) async {
+        tester.view.physicalSize = const Size(400, 800);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.reset);
+        final host = PlaybackHost()..setMiniPlayerEnabled(enabled: miniEnabled);
+        final player = _PlaybackProbe();
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildFlowTheme(Brightness.dark),
+            navigatorObservers: [host],
+            home: const Scaffold(body: Text("Browse Flow")),
+          ),
+        );
+        await openStreamPlayer(
+          tester.element(find.text("Browse Flow")),
+          builder: (_) => player.screen("creator"),
+        );
+        await tester.pumpAndSettle();
+        if (chatOnly) {
+          await tester.tap(find.byKey(const ValueKey("chat_menu")));
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const ValueKey("chat_only_toggle")));
+          await tester.pumpAndSettle();
+        }
+        final screen = tester.element(find.byType(StreamPlayerScreen));
+        final chat = tester.element(find.byType(TwitchChatPanel));
+        final disposals = player.disposals;
+        final pauses = player.pauses;
+        unawaited(
+          Navigator.of(screen).push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => Scaffold(
+                key: ValueKey(destinationName),
+                body: Text(destinationName),
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final destination = find.byKey(ValueKey(destinationName));
+        final page = find.byKey(const ValueKey("player_page_creator"));
+        final originalMode = host.mode;
+        for (final action in ["cancelBackGesture", "commitBackGesture"]) {
+          expect(await _sendBackGesture(tester, "startBackGesture", progress: 0), isTrue);
+          await tester.pump();
+          await _sendBackGesture(tester, "updateBackGestureProgress", progress: 0.45);
+          await tester.pump();
+          expect(tester.element(find.byType(StreamPlayerScreen)), same(screen));
+          expect(tester.getSize(page), const Size(400, 800));
+          expect(
+            tester.widget<PlaybackPresentation>(find.byType(PlaybackPresentation)).mode,
+            PlaybackMode.expanded,
+          );
+          _expectPaintsAbove(tester, destination, page);
+          _expectPaintsAbove(tester, page, find.text("Browse Flow"));
+          await _sendBackGesture(tester, action);
+          if (action == "cancelBackGesture") {
+            await tester.pumpAndSettle();
+            expect(destination.hitTestable(), findsOneWidget);
+            expect(host.mode, originalMode);
+            expect(
+              page,
+              miniEnabled && !chatOnly ? findsOneWidget : findsNothing,
+            );
+            if (miniEnabled && !chatOnly) {
+              expect(tester.getSize(page), const Size(200, 112.5));
+            }
+          } else {
+            for (var frame = 0; frame < 3; frame++) {
+              await tester.pump(const Duration(milliseconds: 16));
+              expect(tester.getSize(page), const Size(400, 800));
+              expect(find.text("Browse Flow").hitTestable(), findsNothing);
+            }
+            await tester.pumpAndSettle();
+            expect(destination, findsNothing);
+            expect(host.mode, PlaybackMode.expanded);
+          }
+        }
+        expect(tester.element(find.byType(TwitchChatPanel)), same(chat));
+        expect(player.loads, 1);
+        expect(player.surfaces, 1);
+        expect(player.disposals, disposals);
+        expect(player.pauses, pauses);
+        host.dismiss();
+        await tester.pumpAndSettle();
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.android),
+    );
+  }
+
   testWidgets("browsing, restoring and PiP preserve one player and its audio quality", (
     tester,
   ) async {
@@ -1469,6 +1669,32 @@ void main() {
     expect(player.disposals, 1);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+}
+
+Future<Object?> _sendBackGesture(
+  WidgetTester tester,
+  String method, {
+  double? progress,
+  int swipeEdge = 0,
+}) async {
+  ByteData? response;
+  await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+    SystemChannels.backGesture.name,
+    const StandardMethodCodec().encodeMethodCall(
+      MethodCall(
+        method,
+        progress == null
+            ? null
+            : {
+                "touchOffset": <double>[120, 300],
+                "progress": progress,
+                "swipeEdge": swipeEdge,
+              },
+      ),
+    ),
+    (data) => response = data,
+  );
+  return response == null ? null : const StandardMethodCodec().decodeEnvelope(response!);
 }
 
 void _expectPaintsAbove(WidgetTester tester, Finder above, Finder below) {

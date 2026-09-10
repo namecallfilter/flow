@@ -512,6 +512,77 @@ void main() {
     },
   );
 
+  test("subscribers-only chat preserves subscriber and privileged access and refreshes", () async {
+    final client = _Client();
+    final chat = TwitchChatController(
+      channel: "channel",
+      clientLoader: () async => client,
+      socketConnector: server.connect,
+      loadPins: false,
+      loadPrivateNotices: false,
+    );
+    addTearDown(chat.dispose);
+    await server.join(chat);
+    server.send("@subs-only=1 :tmi.twitch.tv ROOMSTATE #channel\r\n");
+    await _waitFor(() => chat.roomState["subs-only"] == "1" && !chat.isCheckingChatAccess);
+    expect(chat.subscriberChatEligible, isFalse);
+    expect(await chat.send("Blocked"), isFalse);
+    expect(server.commands.any((command) => command.contains("PRIVMSG")), isFalse);
+    for (final role in ["subscriber", "founder", "moderator", "broadcaster", "vip"]) {
+      server.send("@badges=$role/1 :tmi.twitch.tv USERSTATE #channel\r\n");
+      await _waitFor(() => chat.canSend);
+      server.send("@badges=;subscriber=0;mod=0 :tmi.twitch.tv USERSTATE #channel\r\n");
+      await _waitFor(() => !chat.canSend);
+    }
+    server.send("@badges=;subscriber=1 :tmi.twitch.tv USERSTATE #channel\r\n");
+    await _waitFor(() => chat.canSend);
+    server.send("@msg-id=msg_subsonly :tmi.twitch.tv NOTICE #channel :Subscribers only.\r\n");
+    await _waitFor(() => !chat.canSend && !chat.isCheckingChatAccess);
+    expect(chat.error, isNull);
+    client.subscribed = true;
+    await chat.refreshChatAccess();
+    expect(chat.canSend, isTrue);
+    client.subscribed = false;
+    server.send("@badges= :tmi.twitch.tv USERSTATE #channel\r\n");
+    await _waitFor(() => !chat.canSend);
+    server.send("@subs-only=0 :tmi.twitch.tv ROOMSTATE #channel\r\n");
+    await _waitFor(() => chat.canSend);
+  });
+
+  for (final subscribed in [false, true]) {
+    test(
+      "newer USERSTATE subscriber=$subscribed supersedes a pending subscription query",
+      () async {
+        final requested = Completer<void>();
+        final response = Completer<bool>();
+        final client = _Client()
+          ..loadSubscription = () {
+            requested.complete();
+            return response.future;
+          };
+        final chat = TwitchChatController(
+          channel: "channel",
+          clientLoader: () async => client,
+          socketConnector: server.connect,
+          loadPins: false,
+          loadPrivateNotices: false,
+        );
+        addTearDown(chat.dispose);
+        await server.join(chat);
+        server.send("@subs-only=1 :tmi.twitch.tv ROOMSTATE #channel\r\n");
+        await requested.future;
+        server.send(
+          "@subscriber=${subscribed ? 1 : 0} :tmi.twitch.tv USERSTATE #channel\r\n"
+          "PING :subscription-state\r\n",
+        );
+        await _waitFor(() => server.commands.contains("PONG :subscription-state\r\n"));
+        response.complete(!subscribed);
+        await _waitFor(() => !chat.isCheckingChatAccess);
+        expect(chat.subscriberChatEligible, subscribed);
+      },
+    );
+  }
+
   test("moderators, VIPs, and the broadcaster bypass the follower wait", () async {
     final client = _Client();
     final chat = TwitchChatController(
@@ -793,8 +864,10 @@ void main() {
     await _waitFor(() => server.commands.contains("PRIVMSG #channel :first message\r\n"));
     server.send("@msg-id=msg_subsonly :tmi.twitch.tv NOTICE #channel :Subscribers only\r\n");
     expect(await rejected, isFalse);
-    expect(chat.error, "Subscribers only");
+    expect(chat.error, isNull);
     expect(chat.conversation, isEmpty);
+    server.send("@subs-only=0 :tmi.twitch.tv ROOMSTATE #channel\r\n");
+    await _waitFor(() => chat.canSend);
 
     await Future<void>.delayed(const Duration(milliseconds: 1050));
     const parent = TwitchChatMessage(
@@ -990,7 +1063,9 @@ void main() {
     server.send("@msg-id=msg_subsonly :tmi.twitch.tv NOTICE #channel :Subscribers only\r\n");
     expect(await blocked, isFalse);
     expect(chat.slowModeWaitRemaining, Duration.zero);
-    expect(chat.canSend, isTrue);
+    expect(chat.canSend, isFalse);
+    server.send("@subs-only=0 :tmi.twitch.tv ROOMSTATE #channel\r\n");
+    await _waitFor(() => chat.canSend);
   });
 
   test("confirms an own send when recent history arrives before its acknowledgement", () async {
@@ -1524,6 +1599,13 @@ class _Client extends TwitchApiClient {
     rules: [],
   );
   Future<TwitchChatAccess> Function()? loadAccess;
+  bool subscribed = false;
+  Future<bool> Function()? loadSubscription;
+
+  @override
+  Future<bool> fetchChannelSubscriptionStatus(String login) =>
+      loadSubscription?.call() ?? Future.value(subscribed);
+
   Future<TwitchUser> Function()? loadUser;
   Future<List<TwitchChatMessage>> Function()? loadHistory;
   int historyLoads = 0;

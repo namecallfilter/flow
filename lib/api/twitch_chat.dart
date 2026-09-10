@@ -85,6 +85,8 @@ class TwitchChatController extends ChangeNotifier {
   bool _isCheckingChatAccess = false;
   bool _isFollowingChannel = false;
   bool _isPrivileged = false;
+  bool _isSubscriber = false;
+  int _userStateRevision = 0;
   bool _welcomed = false;
   int _systemMessageCount = 0;
   int _accessRevision = 0;
@@ -115,6 +117,14 @@ class TwitchChatController extends ChangeNotifier {
   bool get isCheckingChatAccess => _isCheckingChatAccess;
   bool get isFollowingChannel => _isFollowingChannel;
   int get followersOnlyMinutes => int.tryParse(_roomState["followers-only"] ?? "") ?? -1;
+  bool get subscriberChatEligible =>
+      _roomState["subs-only"] != "1" ||
+      (isSignedIn &&
+          (_user!.login.toLowerCase() == channel ||
+              _isSubscriber ||
+              _isPrivileged ||
+              _chatAccess?.isModerator == true ||
+              _chatAccess?.isVip == true));
   bool get followerChatEligible =>
       followersOnlyMinutes < 0 ||
       (isSignedIn &&
@@ -161,6 +171,7 @@ class TwitchChatController extends ChangeNotifier {
   bool get canSend =>
       _status == TwitchChatStatus.connected &&
       isSignedIn &&
+      subscriberChatEligible &&
       followerChatEligible &&
       slowModeWaitRemaining == Duration.zero;
 
@@ -197,6 +208,16 @@ class TwitchChatController extends ChangeNotifier {
         return;
       }
       _chatAccess = access;
+      if (!subscriberChatEligible) {
+        final userStateRevision = _userStateRevision;
+        final subscribed = await client.fetchChannelSubscriptionStatus(channel);
+        if (!_isCurrent(generation) || revision != _accessRevision) {
+          return;
+        }
+        if (userStateRevision == _userStateRevision) {
+          _isSubscriber = subscribed;
+        }
+      }
       final lastMessage = access.lastRecentChatMessageAt;
       if (lastMessage != null &&
           (_lastMessageSentAt == null || lastMessage.isAfter(_lastMessageSentAt!))) {
@@ -528,6 +549,7 @@ class TwitchChatController extends ChangeNotifier {
     _user = null;
     _userColor = null;
     _isPrivileged = false;
+    _isSubscriber = false;
     _chatAccess = null;
     _chatAccessError = null;
     _isFollowingChannel = false;
@@ -678,6 +700,7 @@ class TwitchChatController extends ChangeNotifier {
       case "366":
         if (message.command == "ROOMSTATE") {
           final previousFollowerMode = followersOnlyMinutes;
+          final previousSubscriberMode = _roomState["subs-only"];
           final previousSlowMode = _roomState["slow"];
           _roomState.addAll(message.tags);
           if (message.tags.containsKey("slow")) {
@@ -690,6 +713,7 @@ class TwitchChatController extends ChangeNotifier {
             _scheduleFollowerEligibility();
           }
           if ((previousFollowerMode != followersOnlyMinutes ||
+                  previousSubscriberMode != _roomState["subs-only"] ||
                   previousSlowMode != _roomState["slow"]) &&
               isSignedIn) {
             unawaited(refreshChatAccess());
@@ -736,17 +760,20 @@ class TwitchChatController extends ChangeNotifier {
         unawaited(_claimAvailableChannelPoints());
         notifyListeners();
       case "USERSTATE":
+        _userStateRevision++;
         _userColor = message.tags["color"];
+        final badges = (message.tags["badges"] ?? "").split(",");
+        _isSubscriber =
+            message.tags["subscriber"] == "1" ||
+            badges.any((badge) => badge.startsWith("subscriber/") || badge.startsWith("founder/"));
         _isPrivileged =
             message.tags["mod"] == "1" ||
-            (message.tags["badges"] ?? "")
-                .split(",")
-                .any(
-                  (badge) =>
-                      badge.startsWith("moderator/") ||
-                      badge.startsWith("broadcaster/") ||
-                      badge.startsWith("vip/"),
-                );
+            badges.any(
+              (badge) =>
+                  badge.startsWith("moderator/") ||
+                  badge.startsWith("broadcaster/") ||
+                  badge.startsWith("vip/"),
+            );
         _scheduleFollowerEligibility();
         _scheduleSlowMode();
         _scheduleNotify();
@@ -1031,6 +1058,11 @@ class TwitchChatController extends ChangeNotifier {
         final followersOnlyRejection = (message.tags["msg-id"] ?? "").startsWith(
           "msg_followersonly",
         );
+        final subscribersOnlyRejection = message.tags["msg-id"] == "msg_subsonly";
+        if (subscribersOnlyRejection) {
+          _roomState["subs-only"] = "1";
+          _isSubscriber = false;
+        }
         if (message.tags["msg-id"] == "msg_slowmode") {
           final seconds = int.tryParse(
             RegExp(r"(\d+) seconds?\b").firstMatch(message.text)?[1] ?? "",
@@ -1040,12 +1072,12 @@ class TwitchChatController extends ChangeNotifier {
           );
           _scheduleSlowMode();
         }
-        _error = followersOnlyRejection ? null : message.text;
+        _error = followersOnlyRejection || subscribersOnlyRejection ? null : message.text;
         if ((message.tags["msg-id"] ?? "").startsWith("msg_") ||
             message.tags["msg-id"] == "unrecognized_cmd") {
           _failSend();
         }
-        if (followersOnlyRejection) {
+        if (followersOnlyRejection || subscribersOnlyRejection) {
           _chatAccess = null;
           unawaited(refreshChatAccess());
         }

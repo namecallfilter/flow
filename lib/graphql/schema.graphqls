@@ -2464,6 +2464,13 @@ type GameChangeMomentDetails {
   game: Game
 }
 
+type GifContent implements Token {
+  id: ID
+  url: String
+  extensionID: ID
+  jwt: String
+}
+
 type Gift {
   isGift: Boolean
 }
