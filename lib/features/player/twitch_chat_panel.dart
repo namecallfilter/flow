@@ -142,12 +142,14 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
   Timer? _followerHintTimer;
   List<TwitchChatMessage>? _pausedMessages;
   List<TwitchChatMessage> _presentedMessages = [];
+  int? _replayTimelineRevision;
   final _seenMentionMessages = <String>{};
   String? _mentionUserId;
 
   @override
   void initState() {
     super.initState();
+    _replayTimelineRevision = widget.replayController?.timelineRevision;
     widget._source.addListener(_chatChanged);
     widget.assets?.addListener(_chatChanged);
     _draft.addListener(_draftChanged);
@@ -171,6 +173,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
       _bindSettings();
     }
     if (oldWidget._source != widget._source) {
+      _replayTimelineRevision = widget.replayController?.timelineRevision;
       oldWidget.controller?.setAutoClaimChannelPoints(enabled: false);
       _closeSheets();
       oldWidget._source.removeListener(_chatChanged);
@@ -303,6 +306,13 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
   }
 
   void _chatChanged() {
+    final revision = widget.replayController?.timelineRevision;
+    if (revision != _replayTimelineRevision) {
+      _replayTimelineRevision = revision;
+      _pausedMessages = null;
+      _following = true;
+      _closeSheets();
+    }
     _rememberUsers(_history);
     setState(() {});
     if (_following) {
@@ -479,31 +489,34 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     final byId = {
       for (final message in widget.controller?.recentHistory ?? source) message.id: message,
     };
-    _presentedMessages =
-        (paused == null ? messages : paused.map((message) => byId[message.id] ?? message)).where((
-          message,
-        ) {
-          if (message.id == _syncMessageId && !syncing) {
-            return false;
-          }
-          if (!_showMessage(message, _settings, _blockedLogins.value)) {
-            return false;
-          }
-          if (message.isPrivate && message.noticeType == "watch-streak") {
-            return false;
-          }
-          if (message.isPrivate) {
-            return true;
-          }
-          return switch (message.noticeType) {
-            "moderation" => _settings.showModerationNotices,
-            "system" => true,
-            "announcement" => _settings.showAnnouncements,
-            "raid" => _settings.showRaidNotices,
-            null => true,
-            _ => _settings.showSubscriptionNotices,
-          };
-        }).toList();
+    final displayed =
+        paused?.map((message) {
+          final latest = byId[message.id] ?? message;
+          return widget.replayController?.messageAtPosition(latest) ?? latest;
+        }) ??
+        messages;
+    _presentedMessages = displayed.where((message) {
+      if (message.id == _syncMessageId && !syncing) {
+        return false;
+      }
+      if (!_showMessage(message, _settings, _blockedLogins.value)) {
+        return false;
+      }
+      if (message.isPrivate && message.noticeType == "watch-streak") {
+        return false;
+      }
+      if (message.isPrivate) {
+        return true;
+      }
+      return switch (message.noticeType) {
+        "moderation" => _settings.showModerationNotices,
+        "system" => true,
+        "announcement" => _settings.showAnnouncements,
+        "raid" => _settings.showRaidNotices,
+        null => true,
+        _ => _settings.showSubscriptionNotices,
+      };
+    }).toList();
     return _presentedMessages;
   }
 
@@ -1464,6 +1477,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
   Future<void> _showThread(TwitchChatMessage message, {bool pinned = false}) async {
     FocusManager.instance.primaryFocus?.unfocus();
     final source = widget._source;
+    final replayTimeline = widget.replayController?.timelineRevision;
     final loader = widget.controller?.clientLoader ?? widget.replayController!.clientLoader;
     await _showSheet<void>(
       builder: (context) => _ChatThreadSheet(
@@ -1474,9 +1488,26 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
         knownUsers: () => _knownUsers,
         blockedLogins: _blockedLogins.value,
         loadHistory: () async {
-          final history = await (await loader()).fetchChatReplyThread(
+          var history = await (await loader()).fetchChatReplyThread(
             message.threadRootId ?? message.parentMessageId ?? message.id,
           );
+          if (widget.replayController case final replay?
+              when message.offsetSeconds != null && message.timestamp != null) {
+            history = [
+              for (final item in history)
+                item.copyWith(
+                  isDeleted: false,
+                  offsetSeconds: item.timestamp == null
+                      ? null
+                      : message.offsetSeconds! +
+                            item.timestamp!.difference(message.timestamp!).inMicroseconds /
+                                Duration.microsecondsPerSecond,
+                ),
+            ];
+            if (mounted && widget._source == source && replay.timelineRevision == replayTimeline) {
+              replay.registerModerationEvents(history);
+            }
+          }
           if (mounted && widget._source == source) {
             setState(() => _rememberUsers(history, historical: true));
           }
@@ -2841,7 +2872,11 @@ class _ChatUserSheetState extends State<_ChatUserSheet> {
   @override
   Widget build(BuildContext context) {
     final settings = widget.settings();
+    final replay = widget.source is TwitchVodChatController
+        ? widget.source as TwitchVodChatController
+        : null;
     final logs = _history.values
+        .map((message) => replay?.messageAtPosition(message) ?? message)
         .where((message) => _showMessage(message, settings, widget.blockedLogins))
         .toList();
     final knownUsers = widget.knownUsers();
@@ -3156,6 +3191,9 @@ class _ChatThreadSheetState extends State<_ChatThreadSheet> {
           animation: Listenable.merge([widget.source, widget.assets]),
           builder: (context, child) {
             final message = widget.message;
+            final replay = widget.source is TwitchVodChatController
+                ? widget.source as TwitchVodChatController
+                : null;
             final history = <String, TwitchChatMessage>{};
             for (final item in [
               ...?snapshot.data,
@@ -3165,6 +3203,15 @@ class _ChatThreadSheetState extends State<_ChatThreadSheet> {
               history[item.id] = _retainModeration(history[item.id], item);
             }
             history[message.id] = _retainModeration(message, history[message.id] ?? message);
+            if (replay != null) {
+              history.removeWhere(
+                (_, item) =>
+                    item.offsetSeconds != null &&
+                    item.offsetSeconds! >
+                        replay.position.inMicroseconds / Duration.microsecondsPerSecond,
+              );
+              history.updateAll((_, item) => replay.messageAtPosition(item));
+            }
             final loadedIds = history.keys.toSet();
             var root =
                 snapshot.data?.firstOrNull?.id ??
@@ -4060,7 +4107,7 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
     final art = hidden ? null : _chatArt();
     final recordedAt = message.offsetSeconds;
     final time = message.timestamp?.toLocal();
-    final timestamp = recordedAt != null
+    final timestamp = recordedAt != null && recordedAt >= 0
         ? "${recordedAt ~/ 60}:${(recordedAt.toInt() % 60).toString().padLeft(2, "0")}"
         : time == null
         ? null

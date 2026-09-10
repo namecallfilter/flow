@@ -114,6 +114,7 @@ class TwitchChatMessage {
   TwitchChatMessage copyWith({
     bool? isOwn,
     bool? isHistorical,
+    double? offsetSeconds,
     String? noticeText,
     bool? isDeleted,
     TwitchChatModeration? moderation,
@@ -131,7 +132,7 @@ class TwitchChatMessage {
     isAction: isAction,
     isOwn: isOwn ?? this.isOwn,
     isHistorical: isHistorical ?? this.isHistorical,
-    offsetSeconds: offsetSeconds,
+    offsetSeconds: offsetSeconds ?? this.offsetSeconds,
     timestamp: timestamp,
     userId: userId,
     isDeleted: isDeleted ?? this.isDeleted,

@@ -1508,6 +1508,134 @@ void main() {
     expect(watching, isTrue);
   });
 
+  testWidgets("scrolled replay applies timed deletions after feed eviction and resets on seek", (
+    tester,
+  ) async {
+    final client = _VodPageClient([
+      TwitchChatMessage(
+        id: "original",
+        login: "viewer",
+        displayName: "Viewer",
+        text: "original recorded message",
+        offsetSeconds: 0,
+        timestamp: DateTime.utc(2026),
+        moderatedAt: DateTime.utc(2026).add(const Duration(seconds: 3)),
+      ),
+      for (var index = 1; index < 400; index++)
+        TwitchChatMessage(
+          id: "$index",
+          login: "viewer",
+          displayName: "Viewer",
+          text: "recorded message $index",
+          offsetSeconds: index < 100 ? 0 : 2,
+        ),
+    ]);
+    final replay = TwitchVodChatController(clientLoader: () async => client, videoId: "123");
+    addTearDown(replay.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TwitchChatPanel(
+            replayController: replay,
+            chatOnly: false,
+            isLive: false,
+            preferences: MemoryFlowPreferences(),
+            onToggleChatOnly: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final scroll = tester.widget<ListView>(find.byKey(const ValueKey("chat_messages"))).controller!;
+    scroll.jumpTo(scroll.position.maxScrollExtent);
+    await tester.pumpAndSettle();
+    final original = find.textContaining("original recorded message", findRichText: true);
+    expect(original, findsOneWidget);
+    replay.updatePosition(const Duration(milliseconds: 2999));
+    await tester.pumpAndSettle();
+    expect(replay.messages.any((message) => message.id == "original"), isFalse);
+    expect(original, findsOneWidget);
+    replay.updatePosition(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(original, findsNothing);
+    replay.updatePosition(Duration.zero, seek: true);
+    await tester.pumpAndSettle();
+    expect(find.text("Jump to latest"), findsNothing);
+    scroll.jumpTo(scroll.position.maxScrollExtent);
+    await tester.pumpAndSettle();
+    expect(original, findsOneWidget);
+  });
+
+  testWidgets("replay threads hide future replies and defer current deletion flags", (
+    tester,
+  ) async {
+    final start = DateTime.utc(2026);
+    final client = _VodPageClient(
+      [
+        TwitchChatMessage(
+          id: "reply",
+          login: "viewer",
+          displayName: "Viewer",
+          text: "recorded reply",
+          parentMessageId: "root",
+          parentLogin: "parent",
+          parentText: "parent preview",
+          offsetSeconds: 1,
+          timestamp: start.add(const Duration(seconds: 1)),
+        ),
+      ],
+      thread: [
+        TwitchChatMessage(
+          id: "root",
+          login: "parent",
+          displayName: "Parent",
+          text: "original thread body",
+          timestamp: start,
+          isDeleted: true,
+          moderation: TwitchChatModeration.deleted,
+          moderatedAt: start.add(const Duration(seconds: 3)),
+        ),
+        TwitchChatMessage(
+          id: "future-reply",
+          login: "future",
+          displayName: "Future",
+          text: "future thread body",
+          parentMessageId: "root",
+          timestamp: start.add(const Duration(seconds: 8)),
+        ),
+      ],
+    );
+    final replay = TwitchVodChatController(clientLoader: () async => client, videoId: "123");
+    addTearDown(replay.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TwitchChatPanel(
+            replayController: replay,
+            chatOnly: false,
+            isLive: false,
+            preferences: MemoryFlowPreferences(),
+            onToggleChatOnly: () {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    replay.updatePosition(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey("reply-context-reply")));
+    await tester.pumpAndSettle();
+    expect(find.text("REPLIES"), findsOneWidget);
+    expect(find.textContaining("original thread body", findRichText: true), findsOneWidget);
+    expect(find.textContaining("future thread body", findRichText: true), findsNothing);
+    replay.updatePosition(const Duration(seconds: 3));
+    await tester.pumpAndSettle();
+    expect(find.textContaining("original thread body", findRichText: true), findsNothing);
+    replay.updatePosition(Duration.zero, seek: true);
+    await tester.pumpAndSettle();
+    expect(find.text("REPLIES"), findsNothing);
+  });
+
   testWidgets("timestamps switch between 24-hour and 12-hour clocks", (tester) async {
     final controller = _ChatController()
       ..items.addAll([
@@ -2640,6 +2768,24 @@ class _ChattersClient extends TwitchApiClient {
     }
     return response ?? result;
   }
+}
+
+class _VodPageClient extends TwitchApiClient {
+  _VodPageClient(this.messages, {this.thread = const []})
+    : super(clientId: "test", accessToken: "");
+
+  final List<TwitchChatMessage> messages;
+  final List<TwitchChatMessage> thread;
+
+  @override
+  Future<List<TwitchChatMessage>> fetchChatReplyThread(String messageId) async => thread;
+
+  @override
+  Future<TwitchVodChatPage> fetchVodChatPage(
+    String videoId, {
+    int? offsetSeconds,
+    String? cursor,
+  }) async => TwitchVodChatPage(messages: messages, cursor: null, hasNextPage: false);
 }
 
 class _ReplayController extends TwitchVodChatController {

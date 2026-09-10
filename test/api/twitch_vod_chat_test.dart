@@ -6,6 +6,137 @@ import "package:flow/api/twitch_vod_chat.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  testWidgets("replay deletion follows playback time and seeking restores the recorded row", (
+    tester,
+  ) async {
+    final sentAt = DateTime.utc(2026, 9, 9, 18, 55, 1);
+    final archived = _message(
+      1,
+      timestamp: sentAt,
+      moderatedAt: sentAt.add(const Duration(milliseconds: 1500)),
+    );
+    final page = TwitchVodChatPage(messages: [archived], cursor: null, hasNextPage: false);
+    final client = _ReplayClient();
+    final replay = TwitchVodChatController(clientLoader: () async => client, videoId: "123");
+    addTearDown(replay.dispose);
+    var notifications = 0;
+    replay.addListener(() => notifications++);
+    await tester.pump();
+    client.requests.single.complete(page);
+    await tester.pump();
+    replay.updatePosition(const Duration(seconds: 1));
+    expect(replay.messages.single.isDeleted, isFalse);
+    expect(replay.messages.single.moderation, isNull);
+    final beforeDeletion = notifications;
+    await tester.pump(const Duration(minutes: 1));
+    replay.updatePosition(const Duration(milliseconds: 2499));
+    expect(replay.messages.single.isDeleted, isFalse);
+    expect(notifications, beforeDeletion);
+    replay.updatePosition(const Duration(milliseconds: 2500));
+    expect(replay.messages.single.isDeleted, isTrue);
+    expect(replay.messages.single.moderation, TwitchChatModeration.deleted);
+    expect(replay.messages.single.moderatedAt, archived.moderatedAt);
+    expect(replay.messageAtPosition(archived).isDeleted, isTrue);
+    expect(notifications, beforeDeletion + 1);
+    replay.updatePosition(const Duration(seconds: 3));
+    expect(notifications, beforeDeletion + 1);
+
+    replay.updatePosition(const Duration(seconds: 1), seek: true);
+    expect(replay.timelineRevision, 1);
+    expect(replay.position, const Duration(seconds: 1));
+    expect(replay.messageAtPosition(archived).isDeleted, isFalse);
+    await tester.pump();
+    client.requests.last.complete(page);
+    await tester.pump();
+    expect(replay.messages.single.isDeleted, isFalse);
+    replay.updatePosition(const Duration(seconds: 3), seek: true);
+    expect(replay.timelineRevision, 2);
+    await tester.pump();
+    client.requests.last.complete(page);
+    await tester.pump();
+    expect(replay.messages.single.isDeleted, isTrue);
+    expect(archived.isDeleted, isFalse);
+  });
+
+  test("evicted rows still notify paused readers at deletion and seek clears old events", () async {
+    final sentAt = DateTime.utc(2026, 9, 9, 18, 55, 1);
+    final held = _message(
+      0,
+      timestamp: sentAt,
+      moderatedAt: sentAt.add(const Duration(seconds: 5)),
+    );
+    final later = _message(
+      1,
+      timestamp: sentAt,
+      moderatedAt: sentAt.add(const Duration(seconds: 7)),
+    );
+    final client = _ReplayClient();
+    final replay = TwitchVodChatController(clientLoader: () async => client, videoId: "123");
+    addTearDown(replay.dispose);
+    var notifications = 0;
+    replay.addListener(() => notifications++);
+    await _flush();
+    client.requests.single.complete(
+      TwitchVodChatPage(
+        messages: [
+          held,
+          later,
+          for (var index = 0; index < 310; index++) _message(2 + index / 1000),
+        ],
+        cursor: null,
+        hasNextPage: false,
+      ),
+    );
+    await _flush();
+    replay.updatePosition(const Duration(seconds: 4));
+    expect(replay.messages.length, 300);
+    expect(
+      replay.messages.any((message) => message.id == held.id || message.id == later.id),
+      isFalse,
+    );
+    final beforeDeletion = notifications;
+    replay.updatePosition(const Duration(seconds: 5));
+    expect(notifications, beforeDeletion + 1);
+    expect(replay.messageAtPosition(held).isDeleted, isTrue);
+    expect(replay.messages.every((message) => !message.isDeleted), isTrue);
+    replay.updatePosition(const Duration(seconds: 5));
+    expect(notifications, beforeDeletion + 1);
+
+    replay.updatePosition(const Duration(seconds: 1), seek: true);
+    await _flush();
+    client.requests.last.complete(
+      TwitchVodChatPage(messages: [_message(1)], cursor: null, hasNextPage: false),
+    );
+    await _flush();
+    final afterSeek = notifications;
+    replay.updatePosition(const Duration(seconds: 8));
+    expect(notifications, afterSeek);
+  });
+
+  test("deletion without original timing metadata does not guess a replay position", () async {
+    final client = _ReplayClient();
+    final replay = TwitchVodChatController(clientLoader: () async => client, videoId: "123");
+    addTearDown(replay.dispose);
+    final archived = _message(0, moderatedAt: DateTime.utc(2026, 9, 9));
+    await _flush();
+    client.requests.single.complete(
+      TwitchVodChatPage(messages: [archived], cursor: null, hasNextPage: false),
+    );
+    await _flush();
+    replay.updatePosition(const Duration(seconds: 5));
+    expect(replay.messages.single.isDeleted, isFalse);
+    expect(replay.messageAtPosition(archived), same(archived));
+    final threadMessage = TwitchChatMessage(
+      id: "thread",
+      login: "viewer",
+      displayName: "Viewer",
+      text: "No recording offset",
+      timestamp: DateTime.utc(2026, 9, 9),
+      moderatedAt: DateTime.utc(2026, 9, 9, 0, 0, 1),
+    );
+    expect(replay.messageAtPosition(threadMessage), same(threadMessage));
+  });
+
   test("prefetches the next page without rebuilding unchanged chat", () async {
     final client = _ReplayClient();
     final replay = TwitchVodChatController(clientLoader: () async => client, videoId: "123");
@@ -38,6 +169,34 @@ void main() {
     replay.updatePosition(const Duration(seconds: 6));
     expect(replay.messages.map((message) => message.offsetSeconds), [0, 5, 6]);
     expect(notifications, 2);
+  });
+
+  test("registered thread deletions notify at playback time without adding feed rows", () async {
+    final client = _ReplayClient();
+    final replay = TwitchVodChatController(clientLoader: () async => client, videoId: "123");
+    addTearDown(replay.dispose);
+    await _flush();
+    client.requests.single.complete(
+      const TwitchVodChatPage(messages: [], cursor: null, hasNextPage: false),
+    );
+    await _flush();
+    final sentAt = DateTime.utc(2026, 9, 9);
+    final threadMessage = _message(
+      0,
+      timestamp: sentAt,
+      moderatedAt: sentAt.add(const Duration(seconds: 5)),
+    );
+    var notifications = 0;
+    replay.addListener(() => notifications++);
+    replay.registerModerationEvents([threadMessage]);
+    expect(notifications, 0);
+    replay.updatePosition(const Duration(seconds: 4));
+    expect(notifications, 0);
+    expect(replay.messageAtPosition(threadMessage).isDeleted, isFalse);
+    replay.updatePosition(const Duration(seconds: 5));
+    expect(notifications, 1);
+    expect(replay.messageAtPosition(threadMessage).isDeleted, isTrue);
+    expect(replay.messages, isEmpty);
   });
 
   test("releases recorded messages at playback time and paginates without duplicates", () async {
@@ -220,13 +379,16 @@ void main() {
   });
 }
 
-TwitchChatMessage _message(double offset) => TwitchChatMessage(
-  id: "$offset",
-  login: "viewer",
-  displayName: "Viewer",
-  text: "message at $offset",
-  offsetSeconds: offset,
-);
+TwitchChatMessage _message(double offset, {DateTime? timestamp, DateTime? moderatedAt}) =>
+    TwitchChatMessage(
+      id: "$offset",
+      login: "viewer",
+      displayName: "Viewer",
+      text: "message at $offset",
+      offsetSeconds: offset,
+      timestamp: timestamp,
+      moderatedAt: moderatedAt,
+    );
 
 Future<void> _flush() => Future<void>.delayed(Duration.zero);
 

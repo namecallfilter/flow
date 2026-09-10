@@ -443,6 +443,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       children: [
                         Material(
                           type: MaterialType.transparency,
+                          borderRadius: BorderRadius.circular(AppRadius.lg),
+                          clipBehavior: Clip.antiAlias,
                           child: Column(
                             children: [
                               _chatSection("Appearance", "Text size, spacing and timestamps", [

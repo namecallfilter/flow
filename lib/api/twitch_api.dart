@@ -1497,18 +1497,48 @@ class TwitchApiClient {
         text.write(content);
       }
       final commenter = _mapValue(node?["commenter"]);
+      final login = _stringValue(commenter?["login"]);
+      final displayName =
+          _nonEmptyValue(commenter?["displayName"] as String?) ??
+          _nonEmptyValue(login) ??
+          "Deleted user";
+      final recordedText = text.toString();
+      final match = _vodNoticePattern.firstMatch(recordedText);
+      final notice =
+          match != null &&
+              {login.toLowerCase(), displayName.toLowerCase()}.contains(match[1]!.toLowerCase())
+          ? match
+          : null;
+      final bodyStart = notice?.end ?? 0;
+      final subscription = notice?[2];
       messages.add(
         TwitchChatMessage(
           id: id,
-          login: _stringValue(commenter?["login"]),
+          login: login,
           userId: _nonEmptyValue(commenter?["id"] as String?),
-          displayName:
-              _nonEmptyValue(commenter?["displayName"] as String?) ??
-              _nonEmptyValue(commenter?["login"] as String?) ??
-              "Deleted user",
-          text: text.toString(),
+          displayName: displayName,
+          text: recordedText.substring(bodyStart),
+          noticeType: notice == null
+              ? null
+              : subscription == null
+              ? "watch-streak"
+              : subscription.contains("They've subscribed for")
+              ? "resub"
+              : "sub",
+          noticeText: notice == null ? null : recordedText.substring(0, bodyStart).trimRight(),
+          isPrimeSubscription: subscription?.startsWith("subscribed with Prime.") ?? false,
           color: message?["userColor"] as String?,
-          emotes: emotes,
+          emotes: bodyStart == 0
+              ? emotes
+              : [
+                  for (final emote in emotes)
+                    if (emote.start >= bodyStart)
+                      TwitchChatEmote(
+                        id: emote.id,
+                        start: emote.start - bodyStart,
+                        end: emote.end - bodyStart,
+                      ),
+                ],
           badges: [
             for (final badge in _mapList(message?["userBadges"]))
               if (_nonEmptyValue(badge["setID"] as String?) case final setId?)
@@ -1533,9 +1563,19 @@ class TwitchApiClient {
     );
   }
 
+  // Twitch's replay adapter drops notice tags and prepends the generated English notice.
+  static final _vodNoticePattern = RegExp(
+    r"^(\S+) (?:(subscribed (?:at Tier [123](?: for [1-9]\d* months in advance)?|with Prime)\."
+    r"(?: They've subscribed for [1-9]\d* months?(?:, currently on a [1-9]\d* month streak)?!)?)"
+    r"|watched [1-9]\d* consecutive streams and sparked a watch streak!)(?: |$)",
+  );
+
   Future<List<TwitchChatMessage>> _enrichVodChatMessages(List<TwitchChatMessage> messages) async {
     final enriched = {for (final message in messages) message.id: message};
-    for (final ids in _batches(enriched.keys.toList())) {
+    for (final ids in _batches([
+      for (final message in messages)
+        if (message.noticeType == null) message.id,
+    ])) {
       // Replay fragments omit GIFs and replies; original message IDs retain them.
       final document = graphql.gql('''
         query FlowVodChatDetails {
@@ -2272,9 +2312,13 @@ class TwitchApiClient {
       gifs: buffer.toString() == text ? gifs : const [],
       timestamp: replay?.timestamp ?? _dateTimeValue(message["sentAt"]),
       offsetSeconds: replay?.offsetSeconds,
-      isDeleted: message["deletedAt"] != null,
-      moderation: message["deletedAt"] != null ? TwitchChatModeration.deleted : null,
-      moderatedAt: _dateTimeValue(message["deletedAt"]),
+      isDeleted: replay?.isDeleted ?? message["deletedAt"] != null,
+      moderation: replay != null
+          ? replay.moderation
+          : message["deletedAt"] != null
+          ? TwitchChatModeration.deleted
+          : null,
+      moderatedAt: _dateTimeValue(message["deletedAt"]) ?? replay?.moderatedAt,
       parentMessageId: parent?["id"] as String?,
       parentUserId: parentSender?["id"] as String?,
       parentLogin: parentSender?["login"] as String?,

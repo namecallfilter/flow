@@ -158,6 +158,145 @@ void main() {
     }
   });
 
+  test("recorded subscription and watch-streak notices keep their separate message body", () async {
+    const mintyNotice =
+        "minty11e subscribed at Tier 1. They've subscribed for 10 months, "
+        "currently on a 9 month streak!";
+    const primeNotice = "Viewer subscribed with Prime. They've subscribed for 1 month!";
+    final client = _client(
+      _page([
+        _edge(
+          "resub",
+          10,
+          login: "minty11e",
+          displayName: "minty11e",
+          message: {
+            "fragments": [
+              {"text": mintyNotice},
+            ],
+          },
+        ),
+        _edge(
+          "prime",
+          11,
+          message: {
+            "fragments": [
+              {"text": "$primeNotice 😀 "},
+              {
+                "text": "Kappa",
+                "emote": {"emoteID": "25"},
+              },
+            ],
+          },
+        ),
+        _edge(
+          "watch",
+          12,
+          message: {
+            "fragments": [
+              {"text": "Viewer watched 25 consecutive streams and sparked a watch streak! hello"},
+            ],
+          },
+        ),
+        _edge(
+          "sub",
+          13,
+          message: {
+            "fragments": [
+              {"text": "Viewer subscribed at Tier 2. "},
+            ],
+          },
+        ),
+        _edge(
+          "advance",
+          14,
+          message: {
+            "fragments": [
+              {"text": "Viewer subscribed at Tier 3 for 3 months in advance. hello"},
+            ],
+          },
+        ),
+      ]),
+    );
+    final messages = (await client.fetchVodChatPage("123")).messages;
+    expect(messages[0].noticeType, "resub");
+    expect(messages[0].noticeText, mintyNotice);
+    expect(messages[0].text, isEmpty);
+    expect(messages[0].displayName, "minty11e");
+    expect(messages[1].noticeType, "resub");
+    expect(messages[1].noticeText, primeNotice);
+    expect(messages[1].isPrimeSubscription, isTrue);
+    expect(messages[1].text, "😀 Kappa");
+    expect(messages[1].emotes.single.start, 3);
+    expect(messages[1].emotes.single.end, 8);
+    expect(messages[2].noticeType, "watch-streak");
+    expect(
+      messages[2].noticeText,
+      "Viewer watched 25 consecutive streams and sparked a watch streak!",
+    );
+    expect(messages[2].text, "hello");
+    expect(messages[3].noticeType, "sub");
+    expect(messages[3].text, isEmpty);
+    expect(messages[4].noticeText, "Viewer subscribed at Tier 3 for 3 months in advance.");
+    expect(messages[4].text, "hello");
+  });
+
+  test(
+    "ordinary subscription discussion and bot announcements stay ordinary replay messages",
+    () async {
+      const texts = [
+        "I'm subbed",
+        "minty11e subscribed at Tier 1. They've subscribed for 10 months!",
+        "@Viewer subscribed with Prime.",
+        "Viewer subscribed to this channel",
+        "Viewer subscribed at Tier 4.",
+        "Viewer watched 25 streams today",
+        "Bot says: Viewer subscribed at Tier 1.",
+      ];
+      final messages = (await _client(
+        _page([
+          for (var index = 0; index < texts.length; index++)
+            _edge(
+              "$index",
+              index,
+              message: {
+                "fragments": [
+                  {"text": texts[index]},
+                ],
+              },
+            ),
+        ]),
+      ).fetchVodChatPage("123")).messages;
+      expect(messages.map((message) => message.text), texts);
+      expect(messages.every((message) => message.noticeType == null), isTrue);
+      expect(messages.every((message) => message.noticeText == null), isTrue);
+    },
+  );
+
+  test("replay retains the future deletion time without immediately dimming the message", () async {
+    final page = await _client(
+      _page([_edge("future-delete", 53, createdAt: "2026-09-09T18:55:01.524Z")]),
+      replayDetails: {
+        "m0": {
+          "id": "future-delete",
+          "deletedAt": "2026-09-09T19:21:27.899593615Z",
+          "content": {
+            "text": "hello",
+            "fragments": [
+              {"text": "hello"},
+            ],
+          },
+        },
+      },
+    ).fetchVodChatPage("123");
+    final message = page.messages.single;
+    expect(message.text, "hello");
+    expect(message.isDeleted, isFalse);
+    expect(message.moderation, isNull);
+    expect(message.moderatedAt?.toUtc(), DateTime.parse("2026-09-09T19:21:27.899593615Z"));
+    expect(message.moderatedAt!.difference(message.timestamp!).inMicroseconds, 1586375593);
+  });
+
   test("cursor pagination omits an offset and an empty terminal page is valid", () async {
     final client = _client(
       _page([]),
@@ -282,13 +421,20 @@ Map<String, Object?> _page(List<Map<String, Object?>> edges, {bool hasNextPage =
   },
 };
 
-Map<String, Object?> _edge(String id, int offset, {Map<String, Object?>? message}) => {
+Map<String, Object?> _edge(
+  String id,
+  int offset, {
+  Map<String, Object?>? message,
+  String login = "viewer",
+  String displayName = "Viewer",
+  String createdAt = "2026-09-10T13:30:00Z",
+}) => {
   "cursor": "next",
   "node": <String, Object?>{
     "id": id,
-    "createdAt": "2026-09-10T13:30:00Z",
+    "createdAt": createdAt,
     "contentOffsetSeconds": offset,
-    "commenter": {"login": "viewer", "displayName": "Viewer"},
+    "commenter": {"login": login, "displayName": displayName},
     "message":
         message ??
         {

@@ -8,10 +8,60 @@ import "package:flow/features/settings/settings_screen.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/widgets/app_bottom_nav.dart";
 import "package:flutter/material.dart";
+import "package:flutter/rendering.dart";
 import "package:flutter_secure_storage/flutter_secure_storage.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  testWidgets("held chat category highlights stay inside the rounded card", (tester) async {
+    tester.view.physicalSize = const Size(400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    const frame = ValueKey("settings_frame");
+    final store = AppSettingsStore(preferences: MemoryFlowPreferences());
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: RepaintBoundary(
+          key: frame,
+          child: SettingsScreen(settingsStore: store),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final group = find.byKey(const ValueKey("settings_chat_group"));
+    await tester.scrollUntilVisible(group, 300);
+    await Scrollable.ensureVisible(tester.element(group), alignment: 0.5);
+    await tester.pumpAndSettle();
+    final bounds = tester.getRect(group);
+    final boundary = tester.renderObject<RenderRepaintBoundary>(find.byKey(frame));
+    Future<List<int>?> pixels() => tester.runAsync(() async {
+      final image = await boundary.toImage();
+      final bytes = (await image.toByteData())!.buffer.asUint8List();
+      image.dispose();
+      return bytes;
+    });
+    List<int> colorAt(List<int> bytes, Offset point) {
+      final offset = (point.dy.floor() * 400 + point.dx.floor()) * 4;
+      return bytes.sublist(offset, offset + 4);
+    }
+
+    for (final top in [true, false]) {
+      final corner = Offset(bounds.left + 2, top ? bounds.top + 2 : bounds.bottom - 3);
+      final inside = Offset(bounds.left + 6, top ? bounds.top + 30 : bounds.bottom - 30);
+      final before = (await pixels())!;
+      final gesture = await tester.startGesture(Offset(bounds.center.dx, inside.dy));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 300));
+      final held = (await pixels())!;
+      expect(colorAt(held, inside), isNot(colorAt(before, inside)));
+      expect(colorAt(held, corner), colorAt(before, corner));
+      await gesture.cancel();
+      await tester.pumpAndSettle();
+    }
+  });
+
   testWidgets("chat categories are compact and timestamp format saves", (tester) async {
     final preferences = MemoryFlowPreferences();
     final store = AppSettingsStore(preferences: preferences);
