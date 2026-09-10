@@ -20,7 +20,9 @@ class TwitchVodChatController extends ChangeNotifier {
   final TwitchApiClientLoader clientLoader;
   final String videoId;
   final _messages = <TwitchChatMessage>[];
+  final _messageIds = <String>{};
   final _upcoming = Queue<TwitchChatMessage>();
+  final _pendingModerationOffsets = SplayTreeSet<double>();
   Duration _position = Duration.zero;
   TwitchChatStatus _status = TwitchChatStatus.connecting;
   String? _error;
@@ -31,10 +33,13 @@ class TwitchVodChatController extends ChangeNotifier {
   bool _loading = false;
   bool _disposed = false;
   int _generation = 0;
+  int _timelineRevision = 0;
 
   List<TwitchChatMessage> get messages => UnmodifiableListView(_messages);
   TwitchChatStatus get status => _status;
   String? get error => _error;
+  Duration get position => _position;
+  int get timelineRevision => _timelineRevision;
 
   void updatePosition(Duration position, {bool seek = false}) {
     if (_disposed) {
@@ -45,10 +50,13 @@ class TwitchVodChatController extends ChangeNotifier {
     _position = next;
     if (reset) {
       _generation++;
+      _timelineRevision++;
       _retry?.cancel();
       _deadline?.cancel();
       _upcoming.clear();
       _messages.clear();
+      _messageIds.clear();
+      _pendingModerationOffsets.clear();
       _cursor = null;
       _hasNextPage = true;
       _loading = false;
@@ -59,26 +67,71 @@ class TwitchVodChatController extends ChangeNotifier {
     _advance();
   }
 
-  void _advance() {
+  void _advance({bool statusChanged = false}) {
     final seconds = _position.inMilliseconds / Duration.millisecondsPerSecond;
-    var changed = false;
+    var changed = statusChanged;
     while (_upcoming.isNotEmpty && _upcoming.first.offsetSeconds! <= seconds) {
       final message = _upcoming.removeFirst();
-      if (!_messages.any((existing) => existing.id == message.id)) {
+      if (_messageIds.add(message.id)) {
         _messages.add(message);
+        registerModerationEvents([message]);
         changed = true;
       }
     }
     if (_messages.length > 300) {
+      for (final message in _messages.take(_messages.length - 300)) {
+        _messageIds.remove(message.id);
+      }
       _messages.removeRange(0, _messages.length - 300);
+    }
+    if (_pendingModerationOffsets.isNotEmpty && _pendingModerationOffsets.first <= seconds) {
+      do {
+        _pendingModerationOffsets.remove(_pendingModerationOffsets.first);
+      } while (_pendingModerationOffsets.isNotEmpty && _pendingModerationOffsets.first <= seconds);
+      for (var index = 0; index < _messages.length; index++) {
+        _messages[index] = messageAtPosition(_messages[index]);
+      }
+      changed = true;
     }
     if (changed) {
       notifyListeners();
     }
-    if (_upcoming.isEmpty && _hasNextPage && !_loading && _error == null) {
+    if ((_upcoming.isEmpty || _upcoming.last.offsetSeconds! <= seconds + 2) &&
+        _hasNextPage &&
+        !_loading &&
+        _error == null) {
       unawaited(_loadPage());
     }
   }
+
+  void registerModerationEvents(Iterable<TwitchChatMessage> messages) {
+    for (final message in messages) {
+      if (_moderationOffset(message) case final offset?) {
+        _pendingModerationOffsets.add(offset);
+      }
+    }
+  }
+
+  TwitchChatMessage messageAtPosition(TwitchChatMessage message) {
+    final offset = _moderationOffset(message);
+    return offset != null && offset <= _position.inMilliseconds / Duration.millisecondsPerSecond
+        ? message.copyWith(
+            isDeleted: true,
+            moderation: message.moderation ?? TwitchChatModeration.deleted,
+            timeoutSeconds: message.timeoutSeconds,
+          )
+        : message;
+  }
+
+  double? _moderationOffset(TwitchChatMessage message) =>
+      message.isDeleted ||
+          message.offsetSeconds == null ||
+          message.timestamp == null ||
+          message.moderatedAt == null
+      ? null
+      : message.offsetSeconds! +
+            message.moderatedAt!.difference(message.timestamp!).inMicroseconds /
+                Duration.microsecondsPerSecond;
 
   Future<void> _loadPage() async {
     if (_disposed || _loading || !_hasNextPage) {
@@ -109,11 +162,11 @@ class TwitchVodChatController extends ChangeNotifier {
       _deadline?.cancel();
       _hasNextPage = page.hasNextPage && page.cursor != null && page.cursor != cursor;
       _upcoming.addAll(page.messages);
+      final changed = _status != TwitchChatStatus.connected || _error != null;
       _status = TwitchChatStatus.connected;
       _error = null;
       _loading = false;
-      notifyListeners();
-      _advance();
+      _advance(statusChanged: changed);
     } on Object catch (error) {
       _failed(generation, error);
     }

@@ -5,6 +5,7 @@ query FlowVodChat($videoId: ID!, $offsetSeconds: Int, $cursor: Cursor) {
         cursor
         node {
           id
+          createdAt
           contentOffsetSeconds
           commenter {
             id

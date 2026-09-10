@@ -18,6 +18,7 @@ import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
+import "package:flutter/rendering.dart";
 import "package:flutter/services.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:http/http.dart" as http;
@@ -281,6 +282,10 @@ void main() {
         expect(chatRect.width, 280);
         expect(chatRect.left, videoRect.right);
         expect(chatRect.right, 792);
+        final overlayPadding = tester.widget<Padding>(
+          find.byKey(const ValueKey("player_overlay_padding")),
+        );
+        expect(overlayPadding.padding, const EdgeInsets.fromLTRB(44, 8, 8, 8));
         expect(
           tester.getTopLeft(find.byKey(const ValueKey("chat_message_input"))).dx,
           chatRect.left + 12,
@@ -309,7 +314,7 @@ void main() {
     expect(tester.getSize(find.byKey(const ValueKey("player_viewport"))).width, 320);
     await resize.moveBy(const Offset(2000, 0));
     await tester.pump();
-    expect(tester.getSize(find.byType(TwitchChatPanel)).width, 212);
+    expect(tester.getSize(find.byType(TwitchChatPanel)).width, closeTo(212, .001));
     await resize.up();
     await tester.pump();
     expect(tester.widget<Container>(resizeEdge).color, Colors.transparent);
@@ -338,10 +343,65 @@ void main() {
     expect(surfaceCreations, 1);
     tester.view.physicalSize = const Size(800, 400);
     await tester.pump();
-    expect(tester.getSize(find.byType(TwitchChatPanel)).width, 220);
+    expect(tester.getSize(find.byType(TwitchChatPanel)).width, closeTo(220, .001));
     host.dismiss();
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets("sidechat width persists from a stream to VODs and the VOD button toggles chat", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(800, 400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final preferences = MemoryFlowPreferences();
+    await tester.pumpWidget(
+      _playerApp(
+        player: _FakePlayerController(),
+        settingsStore: AppSettingsStore(preferences: preferences),
+      ),
+    );
+    await tester.pump();
+    final surface = tester.getRect(find.byKey(const ValueKey("player_surface_tap_target")));
+    final point = Offset(surface.right - 80, surface.center.dy);
+    await tester.tapAt(point);
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tapAt(point);
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.drag(
+      find.byKey(const ValueKey("player_chat_resize_handle")),
+      const Offset(-72, 0),
+    );
+    await tester.pump();
+    final width = tester.getSize(find.byType(TwitchChatPanel)).width;
+    expect(width, greaterThan(288));
+    expect(await preferences.readLandscapeChatWidthFraction(), closeTo(width / 800, .001));
+    await tester.pumpWidget(const SizedBox.shrink());
+
+    final player = _FakePlayerController();
+    for (final videoId in ["123456", "654321"]) {
+      await tester.pumpWidget(
+        _playerApp(
+          player: player,
+          videoId: videoId,
+          settingsStore: AppSettingsStore(preferences: preferences),
+        ),
+      );
+      await tester.pump();
+      final chatState = tester.state(find.byType(TwitchChatPanel));
+      expect(find.byType(TwitchChatPanel).hitTestable(), findsNothing);
+      await tester.tap(find.byTooltip("Show chat"));
+      await tester.pump();
+      expect(tester.getSize(find.byType(TwitchChatPanel)).width, closeTo(width, .001));
+      expect(tester.state(find.byType(TwitchChatPanel)), same(chatState));
+      await tester.tap(find.byTooltip("Hide chat"));
+      await tester.pump();
+      expect(find.byType(TwitchChatPanel).hitTestable(), findsNothing);
+      expect(tester.getSize(find.byKey(const ValueKey("player_viewport"))).width, 800);
+      expect(player._seekPositions, isEmpty);
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
   });
 
   for (final (chatOnly, buttonKey, destinationKey) in [
@@ -516,7 +576,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets("confirmed offline stops video and Check again requires a live response", (
+  testWidgets("confirmed offline opens chat and a confirmed broadcast restores video", (
     tester,
   ) async {
     tester.view.physicalSize = const Size(400, 800);
@@ -543,14 +603,15 @@ void main() {
     online = false;
     await tester.pump(const Duration(seconds: 30));
     await tester.pump();
-    expect(find.text("Stream ended"), findsOneWidget);
-    expect(find.text("Check again"), findsOneWidget);
+    expect(find.text("Stream ended"), findsNothing);
+    expect(find.text("Offline"), findsOneWidget);
+    expect(find.text("Check again"), findsNothing);
     expect(find.byKey(const ValueKey("player_live_duration")), findsNothing);
     expect(find.byKey(const ValueKey("player_viewers")), findsNothing);
     expect(find.byKey(const ValueKey("player_center_control")), findsNothing);
     expect(find.byType(CircularProgressIndicator), findsNothing);
     expect(player._stopCount, 1);
-    expect(player._disposeCount, 0);
+    expect(player._disposeCount, 1);
     expect(player._pictureInPictureEnabledValues.last, isFalse);
     expect(tester.state(find.byType(TwitchChatPanel)), same(chatState));
     expect(chat.disposed, isFalse);
@@ -562,20 +623,16 @@ void main() {
       const TwitchPlaybackStateEvent(isPlaying: true, isBuffering: true, playWhenReady: true),
     );
     await tester.pump();
-    await tester.tap(find.text("Check again"));
+    await tester.pump(const Duration(seconds: 30));
     await tester.pump();
-    expect(find.text("Stream ended"), findsOneWidget);
+    expect(find.text("Offline"), findsOneWidget);
     expect(playbackLoads, 1);
 
     online = true;
     await tester.pump(const Duration(seconds: 30));
     await tester.pump();
-    expect(find.text("Stream ended"), findsOneWidget);
-    expect(playbackLoads, 1);
-    await tester.tap(find.text("Check again"));
     await tester.pump();
-    await tester.pump();
-    expect(find.text("Stream ended"), findsNothing);
+    expect(find.text("Offline"), findsNothing);
     expect(playbackLoads, 2);
     expect(player._disposeCount, 1);
     expect(player._pictureInPictureEnabledValues.last, isTrue);
@@ -687,7 +744,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets("ended playback keeps PiP return events and the mini-player dismissible", (
+  testWidgets("ended playback keeps PiP return events and opens offline chat on return", (
     tester,
   ) async {
     tester.view.physicalSize = const Size(400, 800);
@@ -718,15 +775,10 @@ void main() {
     player.emit(const TwitchPictureInPictureEvent(active: false));
     await _pumpNavigation(tester);
     expect(host.mode, PlaybackMode.expanded);
-    expect(find.text("Check again"), findsOneWidget);
-    host.minimize();
-    await _pumpNavigation(tester);
-    expect(find.text("Stream ended"), findsOneWidget);
+    expect(find.text("Offline"), findsOneWidget);
+    expect(find.text("Stream ended"), findsNothing);
     expect(find.text("Check again"), findsNothing);
-    await tester.tap(find.byKey(const ValueKey("player_mini")));
-    await _pumpNavigation(tester);
-    expect(host.mode, PlaybackMode.expanded);
-    expect(find.text("Check again"), findsOneWidget);
+    expect(player._disposeCount, 1);
     expect(chat.disposed, isFalse);
     host.dismiss();
     await _pumpNavigation(tester);
@@ -763,8 +815,7 @@ void main() {
     );
     await tester.pump();
     expect(player._stopCount, 1);
-    expect(find.text("Stream ended"), findsOneWidget);
-    await _toggleChatOnly(tester);
+    expect(find.text("Stream ended"), findsNothing);
     expect(find.text("Offline"), findsOneWidget);
     expect(find.byKey(const ValueKey("player_live_dot")), findsNothing);
     expect(find.byKey(const ValueKey("player_live_duration")), findsNothing);
@@ -1384,6 +1435,8 @@ void main() {
     final player = _FakePlayerController();
     await tester.pumpWidget(_playerApp(player: player, videoId: "123456"));
     await tester.pump();
+    final timeline = find.byKey(const ValueKey("player_vod_seek"));
+    final footerOpacity = find.ancestor(of: timeline, matching: find.byType(AnimatedOpacity)).first;
     for (final (start, fraction, expected, label, icon) in [
       (20, .2, 10, "-10", Icons.chevron_left_rounded),
       (20, .8, 30, "+10", Icons.chevron_right_rounded),
@@ -1422,6 +1475,8 @@ void main() {
         );
       }
       expect(_controlsOpacity(tester), 0);
+      expect(tester.widget<AnimatedOpacity>(footerOpacity).opacity, 1);
+      expect(tester.widget<Slider>(timeline).value, expected * 1000);
       await tester.pump(const Duration(milliseconds: 800));
       expect(
         tester.widget<AnimatedOpacity>(find.byKey(const ValueKey("player_seek_feedback"))).opacity,
@@ -1444,6 +1499,10 @@ void main() {
       final player = _FakePlayerController();
       await tester.pumpWidget(_playerApp(player: player, videoId: "123456"));
       await tester.pump();
+      final timeline = find.byKey(const ValueKey("player_vod_seek"));
+      final footerOpacity = find
+          .ancestor(of: timeline, matching: find.byType(AnimatedOpacity))
+          .first;
       player.emit(
         const TwitchPlaybackStateEvent(
           isPlaying: false,
@@ -1461,12 +1520,15 @@ void main() {
         await tester.pump(const Duration(milliseconds: 350));
       }
       expect(_controlsOpacity(tester), controlsVisible ? 1 : 0);
+      expect(tester.widget<AnimatedOpacity>(footerOpacity).opacity, controlsVisible ? 1 : 0);
       await tester.tapAt(point);
       await tester.pump(const Duration(milliseconds: 100));
       await tester.tapAt(point);
       await tester.pump();
       expect(find.text("+10"), findsOneWidget);
       expect(_controlsOpacity(tester), 0);
+      expect(tester.widget<AnimatedOpacity>(footerOpacity).opacity, 1);
+      expect(tester.widget<Slider>(timeline).value, 30000);
 
       player.emit(
         const TwitchPlaybackStateEvent(
@@ -1486,19 +1548,42 @@ void main() {
       await tester.pump();
       expect(player._seekPositions, [const Duration(seconds: 30)]);
 
+      final settingsButton = find.byKey(const ValueKey("player_settings_button"));
+      expect(settingsButton.hitTestable(), findsNothing);
       for (var extraTap = 1; extraTap <= 3; extraTap++) {
         await tester.pump(const Duration(milliseconds: 100));
-        await tester.tapAt(point);
+        await tester.tapAt(extraTap == 1 ? tester.getCenter(settingsButton) : point);
         await tester.pump();
+        expect(find.byKey(const ValueKey("player_quality_sheet")), findsNothing);
         expect(player._seekPositions, hasLength(extraTap + 1));
         expect(player._seekPositions.last, Duration(seconds: 30 + extraTap * 10));
         expect(find.text("+${10 + extraTap * 10}"), findsOneWidget);
+        expect(tester.widget<AnimatedOpacity>(footerOpacity).opacity, 1);
+        expect(tester.widget<Slider>(timeline).value, (30 + extraTap * 10) * 1000);
       }
       await tester.pump(const Duration(milliseconds: 800));
       expect(_controlsOpacity(tester), 0);
       await tester.pump(const Duration(milliseconds: 160));
       expect(find.byKey(const ValueKey("player_seek_feedback")), findsNothing);
       expect(_controlsOpacity(tester), controlsVisible ? 1 : 0);
+      expect(tester.widget<AnimatedOpacity>(footerOpacity).opacity, controlsVisible ? 1 : 0);
+      final headerOpacity = find
+          .ancestor(
+            of: find.byKey(const ValueKey("player_top_row")),
+            matching: find.byType(Opacity),
+          )
+          .first;
+      final headerFade = find
+          .ancestor(of: headerOpacity, matching: find.byType(FadeTransition))
+          .first;
+      for (final milliseconds in [0, 80, 80]) {
+        await tester.pump(Duration(milliseconds: milliseconds));
+        expect(
+          tester.renderObject<RenderOpacity>(headerOpacity).opacity *
+              tester.renderObject<RenderAnimatedOpacity>(headerFade).opacity.value,
+          controlsVisible ? 1 : 0,
+        );
+      }
       expect(player._playCount, 0);
       expect(player._pauseCount, 0);
       expect(player._toggleCount, 0);
@@ -2227,6 +2312,15 @@ void main() {
     final hiddenSurfaceBuilds = surfaceBuilds;
 
     player.emit(const TwitchLatencyEvent(2300));
+    player.emit(
+      const TwitchPlaybackStateEvent(
+        isPlaying: true,
+        isBuffering: false,
+        playWhenReady: true,
+        position: Duration(seconds: 20),
+        duration: Duration(minutes: 30),
+      ),
+    );
     await tester.pump(const Duration(seconds: 2));
     expect(surfaceBuilds, hiddenSurfaceBuilds);
     expect(tester.widget<TwitchChatPanel>(find.byType(TwitchChatPanel)).latencyMs, 2300);
@@ -2235,6 +2329,65 @@ void main() {
     await tester.pump();
     expect(_controlsOpacity(tester), 1);
     expect(find.text("2.30s"), findsOneWidget);
+  });
+
+  testWidgets("hidden VOD progress advances replay without rebuilding the video", (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final player = _FakePlayerController();
+    final replay = _TrackedReplayController("123456");
+    var surfaceBuilds = 0;
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        videoId: "123456",
+        replayControllerFactory: (_) => replay,
+        playerSurfaceBuilder: (context, uri, onControllerCreated) {
+          surfaceBuilds++;
+          return _FakePlayerSurface(player: player, onControllerCreated: onControllerCreated);
+        },
+      ),
+    );
+    await tester.pump();
+    void progress(int seconds, {bool playing = true}) => player.emit(
+      TwitchPlaybackStateEvent(
+        isPlaying: playing,
+        isBuffering: false,
+        playWhenReady: playing,
+        position: Duration(seconds: seconds),
+        duration: const Duration(minutes: 30),
+      ),
+    );
+    progress(20);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(_controlsOpacity(tester), 0);
+    final hiddenSurfaceBuilds = surfaceBuilds;
+    for (final seconds in [21, 22, 23]) {
+      progress(seconds);
+      await tester.pump();
+    }
+    expect(surfaceBuilds, hiddenSurfaceBuilds);
+    expect(replay.positions.last, (position: const Duration(seconds: 23), seek: false));
+    await tester.tapAt(tester.getCenter(find.byKey(const ValueKey("player_viewport"))));
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(find.text("0:23"), findsOneWidget);
+    progress(23, playing: false);
+    await tester.pump();
+    final tapTarget = find.byKey(const ValueKey("player_surface_tap_target"));
+    final target = tester.getRect(tapTarget);
+    final tapPoint = Offset(target.left + target.width * .8, target.center.dy);
+    await tester.tapAt(tapPoint);
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(_controlsOpacity(tester), 0);
+    progress(23, playing: false);
+    await tester.pump();
+    await tester.tapAt(tapPoint);
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(_controlsOpacity(tester), 1);
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   testWidgets("an open quality sheet populates when player tracks arrive", (
@@ -2490,6 +2643,91 @@ void main() {
     expect(host.mode, PlaybackMode.expanded);
     expect(player._pauseCount, 0);
     expect(player._playCount, 0);
+    host.dismiss();
+    await _pumpNavigation(tester);
+  });
+
+  for (final videoId in <String?>[null, "123456"]) {
+    testWidgets("auto-rotation syncs fullscreen without locking orientation ($videoId)", (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final displayMode = _FakeDisplayModeController();
+      final host = await _pumpHostedPlayer(
+        tester,
+        player: _FakePlayerController(),
+        displayMode: displayMode,
+        videoId: videoId,
+      );
+      expect(displayMode._fullscreenRequests, isEmpty);
+      tester.view.physicalSize = const Size(800, 400);
+      await _pumpNavigation(tester);
+      expect(displayMode._fullscreenRequests, [true]);
+      await _pumpNavigation(tester);
+      expect(displayMode._fullscreenRequests, [true]);
+      tester.view.physicalSize = const Size(400, 800);
+      await _pumpNavigation(tester);
+      expect(displayMode._fullscreenRequests.last, isFalse);
+      tester.view.physicalSize = const Size(800, 400);
+      await _pumpNavigation(tester);
+      expect(displayMode._fullscreenRequests.last, isTrue);
+      host.minimize();
+      await _pumpNavigation(tester);
+      expect(displayMode._fullscreenRequests.last, isFalse);
+      host.restore();
+      await _pumpNavigation(tester);
+      expect(displayMode._fullscreenRequests.last, isTrue);
+      host.setPictureInPicture(active: true);
+      await _pumpNavigation(tester);
+      expect(displayMode._fullscreenRequests.last, isFalse);
+      host.setPictureInPicture(active: false);
+      await _pumpNavigation(tester);
+      expect(displayMode._fullscreenRequests.last, isTrue);
+      for (final miniEnabled in [true, false]) {
+        host.setMiniPlayerEnabled(enabled: miniEnabled);
+        await tester.pump();
+        await tester.tap(find.byKey(const ValueKey("player_profile_button")));
+        await _pumpNavigation(tester);
+        expect(displayMode._fullscreenRequests.last, isFalse);
+        await tester.pageBack();
+        await _pumpNavigation(tester);
+        expect(displayMode._fullscreenRequests.last, isTrue);
+      }
+      displayMode._fullscreenRequests.clear();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(displayMode._fullscreenRequests, [true]);
+      expect(displayMode._landscapeRequests, isEmpty);
+      host.dismiss();
+      await _pumpNavigation(tester);
+      expect(displayMode._restoreCount, 1);
+    });
+  }
+
+  testWidgets("failed category navigation restores hosted landscape fullscreen", (tester) async {
+    tester.view.physicalSize = const Size(800, 400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final displayMode = _FakeDisplayModeController();
+    final search = Completer<void>();
+    final host = await _pumpHostedPlayer(
+      tester,
+      player: _FakePlayerController(),
+      displayMode: displayMode,
+      apiCache: _navigationApiCache(beforeCategorySearch: search.future),
+    );
+    await tester.tap(find.byKey(const ValueKey("player_category_button")));
+    await tester.pump();
+    expect(displayMode._fullscreenRequests, [true, false]);
+    search.completeError(StateError("Category search failed"));
+    await _pumpNavigation(tester);
+    expect(displayMode._fullscreenRequests, [true, false, true]);
+    expect(displayMode._landscapeRequests, isEmpty);
+    expect(host.mode, PlaybackMode.expanded);
+    expect(find.byKey(const ValueKey("category_streams_page_Just Chatting")), findsNothing);
     host.dismiss();
     await _pumpNavigation(tester);
   });
@@ -2799,16 +3037,17 @@ void main() {
   });
 }
 
-double _controlsOpacity(WidgetTester tester) => tester
-    .widget<AnimatedOpacity>(
-      find
-          .ancestor(
-            of: find.byKey(const ValueKey("player_top_row")),
-            matching: find.byType(AnimatedOpacity),
+double _controlsOpacity(WidgetTester tester) {
+  final header = find.byKey(const ValueKey("player_top_row"));
+  return tester
+          .widget<Opacity>(find.ancestor(of: header, matching: find.byType(Opacity)).first)
+          .opacity *
+      tester
+          .widget<AnimatedOpacity>(
+            find.ancestor(of: header, matching: find.byType(AnimatedOpacity)).first,
           )
-          .first,
-    )
-    .opacity;
+          .opacity;
+}
 
 Future<void> _toggleChatOnly(WidgetTester tester) async {
   final wasChatOnly = find.byKey(const ValueKey("player_chat_header")).evaluate().isNotEmpty;
@@ -3274,8 +3513,14 @@ class _FakePlayerController implements TwitchPlayerController {
 
 class _FakeDisplayModeController implements PlayerDisplayModeController {
   final _landscapeRequests = <bool>[];
+  final _fullscreenRequests = <bool>[];
   final _operations = <String>[];
   int _restoreCount = 0;
+
+  @override
+  Future<void> setFullscreen({required bool fullscreen}) async {
+    _fullscreenRequests.add(fullscreen);
+  }
 
   @override
   Future<void> restore() async {
@@ -3295,6 +3540,9 @@ class _BlockingDisplayModeController implements PlayerDisplayModeController {
   final _operations = <String>[];
 
   void completeLandscapeTransition() => _landscapeTransition.complete();
+
+  @override
+  Future<void> setFullscreen({required bool fullscreen}) async {}
 
   @override
   Future<void> restore() async {

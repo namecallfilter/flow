@@ -281,6 +281,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
                   if (_store.isInitialLoading)
                     _ChannelSkeleton(
                       viewportHeight: constraints.maxHeight - topSafeAreaInset,
+                      isOffline: !widget.initialChannel.isLive,
                     )
                   else if (_store.errorMessage != null && channel == null)
                     _StatusMessage(message: _store.errorMessage!)
@@ -288,31 +289,28 @@ class _ChannelScreenState extends State<ChannelScreen> {
                     _ChannelHeader(
                       channel: channel,
                       initialChannel: widget.initialChannel,
-                      followButton: FilledButton.tonalIcon(
-                        key: const ValueKey("channel_follow_button"),
-                        onPressed: _followBusy
-                            ? null
-                            : () => unawaited(_updateFollow(toggle: !_followFailed)),
-                        icon: _followBusy
-                            ? const SizedBox.square(
-                                dimension: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : Icon(
+                      followButton: _followBusy && _followSession == null
+                          ? const SkeletonShimmer(child: _channelFollowButtonSkeleton)
+                          : FilledButton.tonalIcon(
+                              key: const ValueKey("channel_follow_button"),
+                              onPressed: _followBusy
+                                  ? null
+                                  : () => unawaited(_updateFollow(toggle: !_followFailed)),
+                              icon: Icon(
                                 _followFailed
                                     ? Icons.refresh_rounded
                                     : _follow?.isFollowing == true
                                     ? Icons.favorite_rounded
                                     : Icons.favorite_border_rounded,
                               ),
-                        label: Text(
-                          _followFailed
-                              ? "Retry follow status"
-                              : _follow?.isFollowing == true
-                              ? "Following"
-                              : "Follow",
-                        ),
-                      ),
+                              label: Text(
+                                _followFailed
+                                    ? "Retry follow status"
+                                    : _follow?.isFollowing == true
+                                    ? "Following"
+                                    : "Follow",
+                              ),
+                            ),
                       onProfileTap: playerChannel == null || liveStream == null
                           ? null
                           : () => _openChannelPlayer(playerChannel),
@@ -380,7 +378,16 @@ class _ChannelScreenState extends State<ChannelScreen> {
   );
 }
 
-const _channelHeaderSkeletonExtent = 174.0;
+const _channelHeaderSkeletonExtent = 234.0;
+const _channelFollowButtonSkeleton = Padding(
+  padding: EdgeInsets.symmetric(vertical: 4),
+  child: SkeletonBox(
+    key: ValueKey("channel_follow_button_skeleton"),
+    width: 132,
+    height: 40,
+    borderRadius: BorderRadius.all(Radius.circular(AppRadius.pill)),
+  ),
+);
 const _pastBroadcastThumbnailWidth = 148.0;
 const _pastBroadcastThumbnailMinHeight = _pastBroadcastThumbnailWidth * 9 / 16;
 const _pastBroadcastSkeletonExtent = _pastBroadcastThumbnailMinHeight + AppSpacing.md;
@@ -388,9 +395,10 @@ const _channelSkeletonFixedContentExtent =
     _channelHeaderSkeletonExtent + AppSpacing.md + 32 + AppSpacing.sm;
 
 class _ChannelSkeleton extends StatelessWidget {
-  const _ChannelSkeleton({required this.viewportHeight});
+  const _ChannelSkeleton({required this.viewportHeight, required this.isOffline});
 
   final double viewportHeight;
+  final bool isOffline;
 
   @override
   Widget build(BuildContext context) {
@@ -409,7 +417,7 @@ class _ChannelSkeleton extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const _ChannelHeaderSkeleton(),
+            _ChannelHeaderSkeleton(isOffline: isOffline),
             const SizedBox(height: AppSpacing.md),
             const SectionHeader(title: "Past broadcasts"),
             const SizedBox(height: AppSpacing.sm),
@@ -425,11 +433,14 @@ class _ChannelSkeleton extends StatelessWidget {
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
     super.debugFillProperties(properties);
     properties.add(DoubleProperty("viewportHeight", viewportHeight));
+    properties.add(DiagnosticsProperty<bool>("isOffline", isOffline));
   }
 }
 
 class _ChannelHeaderSkeleton extends StatelessWidget {
-  const _ChannelHeaderSkeleton();
+  const _ChannelHeaderSkeleton({required this.isOffline});
+
+  final bool isOffline;
 
   @override
   Widget build(BuildContext context) {
@@ -446,12 +457,12 @@ class _ChannelHeaderSkeleton extends StatelessWidget {
           ),
         ),
       ),
-      child: const Padding(
-        padding: EdgeInsets.all(AppSpacing.lg),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.lg),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
+            const Row(
               children: [
                 SkeletonBox(
                   key: ValueKey("channel_header_skeleton_avatar"),
@@ -491,8 +502,8 @@ class _ChannelHeaderSkeleton extends StatelessWidget {
                 ),
               ],
             ),
-            SizedBox(height: AppSpacing.lg),
-            SizedBox(
+            const SizedBox(height: AppSpacing.lg),
+            const SizedBox(
               height: 22,
               child: Align(
                 alignment: Alignment.centerLeft,
@@ -503,8 +514,8 @@ class _ChannelHeaderSkeleton extends StatelessWidget {
                 ),
               ),
             ),
-            SizedBox(height: AppSpacing.md),
-            SizedBox(
+            const SizedBox(height: AppSpacing.md),
+            const SizedBox(
               height: 22,
               child: Align(
                 alignment: Alignment.centerLeft,
@@ -515,10 +526,34 @@ class _ChannelHeaderSkeleton extends StatelessWidget {
                 ),
               ),
             ),
+            const SizedBox(height: AppSpacing.md),
+            Wrap(
+              spacing: AppSpacing.sm,
+              runSpacing: AppSpacing.xs,
+              children: [
+                _channelFollowButtonSkeleton,
+                if (isOffline)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 4),
+                    child: SkeletonBox(
+                      key: ValueKey("channel_chat_button_skeleton"),
+                      width: 96,
+                      height: 40,
+                      borderRadius: BorderRadius.all(Radius.circular(AppRadius.pill)),
+                    ),
+                  ),
+              ],
+            ),
           ],
         ),
       ),
     );
+  }
+
+  @override
+  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
+    super.debugFillProperties(properties);
+    properties.add(DiagnosticsProperty<bool>("isOffline", isOffline));
   }
 }
 

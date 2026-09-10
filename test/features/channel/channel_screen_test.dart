@@ -22,6 +22,70 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  for (final isLive in [true, false]) {
+    testWidgets("initial channel skeleton includes action buttons for live=$isLive", (
+      tester,
+    ) async {
+      final details = Completer<http.Response>();
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildFlowTheme(Brightness.dark),
+          home: ChannelScreen(
+            apiCache: TwitchApiCache(
+              clientLoader: () async => TwitchApiClient(
+                clientId: "client",
+                accessToken: "",
+                httpClient: MockClient((_) => details.future),
+              ),
+            ),
+            initialChannel: ChannelPreview(login: "jason", displayName: "Jason", isLive: isLive),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.byKey(const ValueKey("channel_header_skeleton")), findsOneWidget);
+      expect(find.byKey(const ValueKey("channel_follow_button_skeleton")), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey("channel_chat_button_skeleton")),
+        isLive ? findsNothing : findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey("channel_follow_button")), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+
+      details.complete(_channelDetailsResponse(isLive: isLive));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey("channel_follow_button_skeleton")), findsNothing);
+      expect(find.byKey(const ValueKey("channel_chat_button_skeleton")), findsNothing);
+      expect(find.byKey(const ValueKey("channel_follow_button")), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey("channel_chat_button")),
+        isLive ? findsNothing : findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets("follow skeleton remains while the initial status loads after the profile", (
+    tester,
+  ) async {
+    final client = _FollowClient(isLive: false)
+      ..following = true
+      ..statusGate = Completer<void>();
+    await tester.pumpWidget(_followApp(() async => client));
+    await tester.pump();
+    expect(find.byKey(const ValueKey("channel_header_card")), findsOneWidget);
+    expect(find.byKey(const ValueKey("channel_follow_button_skeleton")), findsOneWidget);
+    expect(find.byKey(const ValueKey("channel_chat_button")), findsOneWidget);
+    expect(find.text("Follow"), findsNothing);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+
+    client.statusGate!.complete();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("channel_follow_button_skeleton")), findsNothing);
+    expect(find.text("Following"), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets("channel follow waits for confirmation and ignores repeated taps", (tester) async {
     final client = _FollowClient();
     await tester.pumpWidget(_followApp(() async => client));
@@ -36,6 +100,8 @@ void main() {
     expect(client.changes, [true]);
     expect(tester.widget<FilledButton>(button).onPressed, isNull);
     expect(find.text("Following"), findsNothing);
+    expect(find.text("Follow"), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
     await tester.widget<FlowPullToRefresh>(find.byType(FlowPullToRefresh)).onRefresh();
     await tester.pump();
     expect(client.statusChecks, 1);
@@ -44,8 +110,12 @@ void main() {
     client.changeGate!.complete();
     await tester.pumpAndSettle();
     expect(find.text("Following"), findsOneWidget);
-    client.changeGate = null;
+    client.changeGate = Completer<void>();
     await tester.tap(button);
+    await tester.pump();
+    expect(find.text("Following"), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    client.changeGate!.complete();
     await tester.pumpAndSettle();
     expect(client.changes, [true, false]);
     expect(find.text("Follow"), findsOneWidget);
@@ -799,11 +869,13 @@ class _FollowClient extends TwitchApiClient {
   int statusChecks = 0;
   final changes = <bool>[];
   Completer<void>? changeGate;
+  Completer<void>? statusGate;
 
   @override
   Future<TwitchChatAccess> fetchChatAccess(String login) async {
     expect(login, "jason");
     statusChecks++;
+    await statusGate?.future;
     if (failStatus) {
       throw TwitchApiException("Status unavailable");
     }

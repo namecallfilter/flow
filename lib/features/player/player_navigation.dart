@@ -575,6 +575,7 @@ class PlaybackHost extends NavigatorObserver {
                 child: PlaybackPresentation(
                   host: this,
                   mode: mode,
+                  isForeground: !_browsingFromPlayer,
                   hideChrome: moving || _pipTransition,
                   miniPlayerEnabled: miniPlayerEnabled,
                   child: KeyedSubtree(key: ValueKey(_identity), child: _screen!),
@@ -594,6 +595,7 @@ class PlaybackPresentation extends InheritedWidget {
     required this.mode,
     this.miniPlayerEnabled = true,
     this.hideChrome = false,
+    this.isForeground = true,
     required super.child,
     super.key,
   });
@@ -602,6 +604,7 @@ class PlaybackPresentation extends InheritedWidget {
   final PlaybackMode mode;
   final bool miniPlayerEnabled;
   final bool hideChrome;
+  final bool isForeground;
 
   static PlaybackPresentation? maybeOf(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<PlaybackPresentation>();
@@ -610,7 +613,8 @@ class PlaybackPresentation extends InheritedWidget {
   bool updateShouldNotify(PlaybackPresentation oldWidget) =>
       mode != oldWidget.mode ||
       miniPlayerEnabled != oldWidget.miniPlayerEnabled ||
-      hideChrome != oldWidget.hideChrome;
+      hideChrome != oldWidget.hideChrome ||
+      isForeground != oldWidget.isForeground;
 
   @override
   void debugFillProperties(DiagnosticPropertiesBuilder properties) {
@@ -618,6 +622,7 @@ class PlaybackPresentation extends InheritedWidget {
     properties.add(DiagnosticsProperty<PlaybackHost>("host", host));
     properties.add(EnumProperty<PlaybackMode>("mode", mode));
     properties.add(DiagnosticsProperty<bool>("hideChrome", hideChrome));
+    properties.add(DiagnosticsProperty<bool>("isForeground", isForeground));
     properties.add(DiagnosticsProperty<bool>("miniPlayerEnabled", miniPlayerEnabled));
   }
 }

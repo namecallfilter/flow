@@ -154,7 +154,7 @@ internal class TwitchPlayerView(
                 return
             }
             updateAdProgress()
-            if (!isLive) emitState()
+            if (!isLive) emitState(updateSystemControls = false)
             val correctionStartedAt = correctionRequestedAtRealtimeMs
             if (
                 player.playWhenReady &&
@@ -1080,8 +1080,9 @@ internal class TwitchPlayerView(
         emit(mapOf("type" to "latency", "latencyMs" to latencyMs))
     }
 
-    private fun emitState() {
-        activity.updatePictureInPicture()
+    private fun emitState(updateSystemControls: Boolean = true) {
+        // MediaSession advances its clock; only state, seek and layout changes need system updates.
+        if (updateSystemControls) activity.updatePictureInPicture()
         emit(
             mapOf(
                 "type" to "state",

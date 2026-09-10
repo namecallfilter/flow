@@ -1497,24 +1497,55 @@ class TwitchApiClient {
         text.write(content);
       }
       final commenter = _mapValue(node?["commenter"]);
+      final login = _stringValue(commenter?["login"]);
+      final displayName =
+          _nonEmptyValue(commenter?["displayName"] as String?) ??
+          _nonEmptyValue(login) ??
+          "Deleted user";
+      final recordedText = text.toString();
+      final match = _vodNoticePattern.firstMatch(recordedText);
+      final notice =
+          match != null &&
+              {login.toLowerCase(), displayName.toLowerCase()}.contains(match[1]!.toLowerCase())
+          ? match
+          : null;
+      final bodyStart = notice?.end ?? 0;
+      final subscription = notice?[2];
       messages.add(
         TwitchChatMessage(
           id: id,
-          login: _stringValue(commenter?["login"]),
+          login: login,
           userId: _nonEmptyValue(commenter?["id"] as String?),
-          displayName:
-              _nonEmptyValue(commenter?["displayName"] as String?) ??
-              _nonEmptyValue(commenter?["login"] as String?) ??
-              "Deleted user",
-          text: text.toString(),
+          displayName: displayName,
+          text: recordedText.substring(bodyStart),
+          noticeType: notice == null
+              ? null
+              : subscription == null
+              ? "watch-streak"
+              : subscription.contains("They've subscribed for")
+              ? "resub"
+              : "sub",
+          noticeText: notice == null ? null : recordedText.substring(0, bodyStart).trimRight(),
+          isPrimeSubscription: subscription?.startsWith("subscribed with Prime.") ?? false,
           color: message?["userColor"] as String?,
-          emotes: emotes,
+          emotes: bodyStart == 0
+              ? emotes
+              : [
+                  for (final emote in emotes)
+                    if (emote.start >= bodyStart)
+                      TwitchChatEmote(
+                        id: emote.id,
+                        start: emote.start - bodyStart,
+                        end: emote.end - bodyStart,
+                      ),
+                ],
           badges: [
             for (final badge in _mapList(message?["userBadges"]))
               if (_nonEmptyValue(badge["setID"] as String?) case final setId?)
                 "$setId/${_stringValue(badge["version"])}",
           ],
           offsetSeconds: offset.toDouble(),
+          timestamp: _dateTimeValue(node?["createdAt"]),
         ),
       );
     }
@@ -1525,7 +1556,81 @@ class TwitchApiClient {
     if (hasNextPage && (nextCursor == null || nextCursor == normalizedCursor)) {
       throw TwitchApiException("Chat replay pagination did not advance.");
     }
-    return TwitchVodChatPage(messages: messages, cursor: nextCursor, hasNextPage: hasNextPage);
+    return TwitchVodChatPage(
+      messages: await _enrichVodChatMessages(messages),
+      cursor: nextCursor,
+      hasNextPage: hasNextPage,
+    );
+  }
+
+  // Twitch's replay adapter drops notice tags and prepends the generated English notice.
+  static final _vodNoticePattern = RegExp(
+    r"^(\S+) (?:(subscribed (?:at Tier [123](?: for [1-9]\d* months in advance)?|with Prime)\."
+    r"(?: They've subscribed for [1-9]\d* months?(?:, currently on a [1-9]\d* month streak)?!)?)"
+    r"|watched [1-9]\d* consecutive streams and sparked a watch streak!)(?: |$)",
+  );
+
+  Future<List<TwitchChatMessage>> _enrichVodChatMessages(List<TwitchChatMessage> messages) async {
+    final enriched = {for (final message in messages) message.id: message};
+    for (final ids in _batches([
+      for (final message in messages)
+        if (message.noticeType == null) message.id,
+    ])) {
+      // Replay fragments omit GIFs and replies; original message IDs retain them.
+      final document = graphql.gql('''
+        query FlowVodChatDetails {
+          ${[for (var index = 0; index < ids.length; index++) 'm$index: message(id: ${jsonEncode(ids[index])}) { ...ReplayMessage }'].join('\n')}
+        }
+        fragment ReplayMessage on Message {
+          id
+          deletedAt
+          content { ...ReplayContent }
+          parentMessage {
+            id
+            sender { id login displayName }
+            content { ...ReplayContent }
+          }
+          threadParentMessage { id sender { login } }
+        }
+        fragment ReplayContent on MessageContent {
+          text
+          fragments {
+            text
+            content {
+              __typename
+              ... on Emote { emoteID: id }
+              ... on GifContent { gifID: id gifURL: url }
+            }
+          }
+        }
+      ''');
+      try {
+        final details = await _query(
+          () => _graphQlClient.query(
+            graphql.QueryOptions<Map<String, dynamic>>(
+              document: document,
+              fetchPolicy: graphql.FetchPolicy.noCache,
+              errorPolicy: graphql.ErrorPolicy.all,
+              parserFn: (data) => data,
+            ),
+          ),
+          "FlowVodChatDetails",
+          allowPartialData: true,
+        ).timeout(const Duration(seconds: 3));
+        for (final value in details.values) {
+          final detail = _mapValue(value);
+          final recorded = enriched[detail?["id"]];
+          if (detail != null &&
+              recorded != null &&
+              _mapValue(detail["content"])?["text"] == recorded.text) {
+            enriched[recorded.id] = _chatMessageFromGraphQl(detail, replay: recorded);
+          }
+        }
+      } on Object {
+        // Older messages may no longer be retained by the live-message service.
+      }
+    }
+    return [for (final message in messages) enriched[message.id]!];
   }
 
   Future<TwitchVodSeekMetadata> fetchVodSeekMetadata(String videoId) async {
@@ -2147,6 +2252,7 @@ class TwitchApiClient {
     Map<String, Object?> message, {
     String? threadRootId,
     String? threadRootLogin,
+    TwitchChatMessage? replay,
   }) {
     final sender = _mapValue(message["sender"]);
     final content = _mapValue(message["content"]);
@@ -2185,25 +2291,34 @@ class TwitchApiClient {
     final thread = _mapValue(message["threadParentMessage"]);
     return TwitchChatMessage(
       id: _stringValue(message["id"]),
-      login: _stringValue(sender?["login"]),
+      login: replay?.login ?? _stringValue(sender?["login"]),
       displayName:
+          replay?.displayName ??
           _nonEmptyValue(sender?["displayName"] as String?) ??
           _nonEmptyValue(sender?["login"] as String?) ??
           "Deleted user",
-      userId: _nonEmptyValue(sender?["id"] as String?),
+      userId: replay?.userId ?? _nonEmptyValue(sender?["id"] as String?),
       text: text,
-      color: message["senderChatColor"] as String? ?? sender?["chatColor"] as String?,
-      badges: [
-        for (final badge in _mapList(message["senderBadges"] ?? sender?["displayBadges"]))
-          if (_nonEmptyValue(badge["setID"] as String?) case final setId?)
-            "$setId/${_stringValue(badge["version"])}",
-      ],
-      emotes: buffer.toString() == text ? emotes : const [],
+      color:
+          replay?.color ?? message["senderChatColor"] as String? ?? sender?["chatColor"] as String?,
+      badges:
+          replay?.badges ??
+          [
+            for (final badge in _mapList(message["senderBadges"] ?? sender?["displayBadges"]))
+              if (_nonEmptyValue(badge["setID"] as String?) case final setId?)
+                "$setId/${_stringValue(badge["version"])}",
+          ],
+      emotes: replay?.emotes ?? (buffer.toString() == text ? emotes : const []),
       gifs: buffer.toString() == text ? gifs : const [],
-      timestamp: _dateTimeValue(message["sentAt"]),
-      isDeleted: message["deletedAt"] != null,
-      moderation: message["deletedAt"] != null ? TwitchChatModeration.deleted : null,
-      moderatedAt: _dateTimeValue(message["deletedAt"]),
+      timestamp: replay?.timestamp ?? _dateTimeValue(message["sentAt"]),
+      offsetSeconds: replay?.offsetSeconds,
+      isDeleted: replay?.isDeleted ?? message["deletedAt"] != null,
+      moderation: replay != null
+          ? replay.moderation
+          : message["deletedAt"] != null
+          ? TwitchChatModeration.deleted
+          : null,
+      moderatedAt: _dateTimeValue(message["deletedAt"]) ?? replay?.moderatedAt,
       parentMessageId: parent?["id"] as String?,
       parentUserId: parentSender?["id"] as String?,
       parentLogin: parentSender?["login"] as String?,

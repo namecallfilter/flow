@@ -1,8 +1,59 @@
+import "package:flow/app/app_settings_store.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  test("timestamp format defaults to 24-hour and persists independently of visibility", () async {
+    final store = _MemoryPreferencesStore();
+    final preferences = SharedPreferencesFlowPreferences(store: store);
+    expect(
+      (await preferences.readChatPreferences()).timestampFormat,
+      ChatTimestampFormat.twentyFourHour,
+    );
+    await preferences.saveChatPreferences(
+      const ChatPreferences(timestampFormat: ChatTimestampFormat.twelveHour),
+    );
+    final restored = await SharedPreferencesFlowPreferences(store: store).readChatPreferences();
+    expect(restored.timestampFormat, ChatTimestampFormat.twelveHour);
+    expect(restored.showTimestamps, isFalse);
+    await preferences.saveChatPreferences(restored.copyWith(showTimestamps: true));
+    expect(
+      (await preferences.readChatPreferences()).timestampFormat,
+      ChatTimestampFormat.twelveHour,
+    );
+    await preferences.saveChatPreferences(
+      restored.copyWith(timestampFormat: ChatTimestampFormat.twentyFourHour),
+    );
+    expect(
+      (await preferences.readChatPreferences()).timestampFormat,
+      ChatTimestampFormat.twentyFourHour,
+    );
+  });
+
+  test("sidechat width survives store recreation and ignores invalid fractions", () async {
+    final storage = _MemoryPreferencesStore();
+    final preferences = SharedPreferencesFlowPreferences(store: storage);
+    final settings = AppSettingsStore(preferences: preferences);
+    await settings.load();
+    expect(settings.landscapeChatWidthFraction, isNull);
+    await settings.setLandscapeChatWidthFraction(0.42);
+    final restored = AppSettingsStore(
+      preferences: SharedPreferencesFlowPreferences(store: storage),
+    );
+    await restored.load();
+    expect(restored.landscapeChatWidthFraction, 0.42);
+    for (final fraction in [double.nan, double.infinity, -0.1, 0.0, 1.0, 1.1]) {
+      await restored.setLandscapeChatWidthFraction(fraction);
+      expect(restored.landscapeChatWidthFraction, 0.42);
+      expect(await preferences.readLandscapeChatWidthFraction(), 0.42);
+    }
+    for (final value in ["NaN", "Infinity", "-1", "0", "1", "broken"]) {
+      storage.strings[SharedPreferencesFlowPreferences.landscapeChatWidthFractionKey] = value;
+      expect(await preferences.readLandscapeChatWidthFraction(), isNull);
+    }
+  });
+
   test(
     "accepted rules survive preferences recreation separately for each viewer and channel",
     () async {

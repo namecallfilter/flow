@@ -9,6 +9,8 @@ abstract interface class FlowPreferences {
   Future<void> savePictureInPictureEnabled({required bool enabled});
   Future<bool> readMiniPlayerEnabled();
   Future<void> saveMiniPlayerEnabled({required bool enabled});
+  Future<double?> readLandscapeChatWidthFraction();
+  Future<void> saveLandscapeChatWidthFraction(double fraction);
   Future<bool> readAdProxyEnabled();
   Future<void> saveAdProxyEnabled({required bool enabled});
   Future<List<String>> readAdProxyUrls();
@@ -34,6 +36,8 @@ abstract interface class FlowPreferences {
   Future<void> saveAcceptedChatRules(String key, List<String> rules);
 }
 
+enum ChatTimestampFormat { twentyFourHour, twelveHour }
+
 class ChatPreferences {
   const ChatPreferences({
     this.fontSize = 14,
@@ -43,6 +47,7 @@ class ChatPreferences {
     this.messageScale = 1,
     this.messageSpacing = 6,
     this.showTimestamps = false,
+    this.timestampFormat = ChatTimestampFormat.twentyFourHour,
     this.showDeletedMessages = false,
     this.autoSyncChat = true,
     this.autoClaimChannelPoints = false,
@@ -76,6 +81,7 @@ class ChatPreferences {
   final double messageScale;
   final double messageSpacing;
   final bool showTimestamps;
+  final ChatTimestampFormat timestampFormat;
   final bool showDeletedMessages;
   final bool autoSyncChat;
   final bool autoClaimChannelPoints;
@@ -109,6 +115,7 @@ class ChatPreferences {
     double? messageScale,
     double? messageSpacing,
     bool? showTimestamps,
+    ChatTimestampFormat? timestampFormat,
     bool? showDeletedMessages,
     bool? autoSyncChat,
     bool? autoClaimChannelPoints,
@@ -141,6 +148,7 @@ class ChatPreferences {
     messageScale: messageScale ?? this.messageScale,
     messageSpacing: messageSpacing ?? this.messageSpacing,
     showTimestamps: showTimestamps ?? this.showTimestamps,
+    timestampFormat: timestampFormat ?? this.timestampFormat,
     showDeletedMessages: showDeletedMessages ?? this.showDeletedMessages,
     autoSyncChat: autoSyncChat ?? this.autoSyncChat,
     autoClaimChannelPoints: autoClaimChannelPoints ?? this.autoClaimChannelPoints,
@@ -216,6 +224,7 @@ class SharedPreferencesFlowPreferences implements FlowPreferences {
   static const themeModeKey = "flow_theme_mode";
   static const pictureInPictureEnabledKey = "picture_in_picture_enabled";
   static const miniPlayerEnabledKey = "mini_player_enabled";
+  static const landscapeChatWidthFractionKey = "landscape_chat_width_fraction";
   static const adProxyEnabledKey = "ad_proxy_enabled";
   static const adProxyUrlsKey = "ad_proxy_urls";
   static const adProxyWhitelistedChannelsKey = "ad_proxy_whitelisted_channels";
@@ -247,6 +256,9 @@ class SharedPreferencesFlowPreferences implements FlowPreferences {
       messageScale: number("message_scale", 1, 0.5, 2),
       messageSpacing: number("message_spacing", 6, 0, 16),
       showTimestamps: values.contains("timestamps"),
+      timestampFormat: values.contains("timestamps_12_hour")
+          ? ChatTimestampFormat.twelveHour
+          : ChatTimestampFormat.twentyFourHour,
       showDeletedMessages: values.contains("deleted_messages"),
       autoSyncChat: !values.contains("manual_sync"),
       autoClaimChannelPoints: values.contains("auto_claim_channel_points"),
@@ -287,6 +299,7 @@ class SharedPreferencesFlowPreferences implements FlowPreferences {
       "manual_delay=${preferences.manualChatDelaySeconds}",
       if (!preferences.emoteAutocomplete) "disable_emote_autocomplete",
       if (preferences.showTimestamps) "timestamps",
+      if (preferences.timestampFormat == ChatTimestampFormat.twelveHour) "timestamps_12_hour",
       if (preferences.showDeletedMessages) "deleted_messages",
       if (!preferences.autoSyncChat) "manual_sync",
       if (preferences.autoClaimChannelPoints) "auto_claim_channel_points",
@@ -373,6 +386,16 @@ class SharedPreferencesFlowPreferences implements FlowPreferences {
   @override
   Future<void> saveMiniPlayerEnabled({required bool enabled}) =>
       _store.setString(miniPlayerEnabledKey, enabled.toString());
+
+  @override
+  Future<double?> readLandscapeChatWidthFraction() async {
+    final fraction = double.tryParse(await _store.getString(landscapeChatWidthFractionKey) ?? "");
+    return fraction != null && fraction.isFinite && fraction > 0 && fraction < 1 ? fraction : null;
+  }
+
+  @override
+  Future<void> saveLandscapeChatWidthFraction(double fraction) =>
+      _store.setString(landscapeChatWidthFractionKey, fraction.toString());
 
   @override
   Future<bool> readAdProxyEnabled() async => await _store.getString(adProxyEnabledKey) == "true";
