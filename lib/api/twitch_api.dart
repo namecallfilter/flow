@@ -1515,6 +1515,7 @@ class TwitchApiClient {
                 "$setId/${_stringValue(badge["version"])}",
           ],
           offsetSeconds: offset.toDouble(),
+          timestamp: _dateTimeValue(node?["createdAt"]),
         ),
       );
     }
@@ -1525,7 +1526,71 @@ class TwitchApiClient {
     if (hasNextPage && (nextCursor == null || nextCursor == normalizedCursor)) {
       throw TwitchApiException("Chat replay pagination did not advance.");
     }
-    return TwitchVodChatPage(messages: messages, cursor: nextCursor, hasNextPage: hasNextPage);
+    return TwitchVodChatPage(
+      messages: await _enrichVodChatMessages(messages),
+      cursor: nextCursor,
+      hasNextPage: hasNextPage,
+    );
+  }
+
+  Future<List<TwitchChatMessage>> _enrichVodChatMessages(List<TwitchChatMessage> messages) async {
+    final enriched = {for (final message in messages) message.id: message};
+    for (final ids in _batches(enriched.keys.toList())) {
+      // Replay fragments omit GIFs and replies; original message IDs retain them.
+      final document = graphql.gql('''
+        query FlowVodChatDetails {
+          ${[for (var index = 0; index < ids.length; index++) 'm$index: message(id: ${jsonEncode(ids[index])}) { ...ReplayMessage }'].join('\n')}
+        }
+        fragment ReplayMessage on Message {
+          id
+          deletedAt
+          content { ...ReplayContent }
+          parentMessage {
+            id
+            sender { id login displayName }
+            content { ...ReplayContent }
+          }
+          threadParentMessage { id sender { login } }
+        }
+        fragment ReplayContent on MessageContent {
+          text
+          fragments {
+            text
+            content {
+              __typename
+              ... on Emote { emoteID: id }
+              ... on GifContent { gifID: id gifURL: url }
+            }
+          }
+        }
+      ''');
+      try {
+        final details = await _query(
+          () => _graphQlClient.query(
+            graphql.QueryOptions<Map<String, dynamic>>(
+              document: document,
+              fetchPolicy: graphql.FetchPolicy.noCache,
+              errorPolicy: graphql.ErrorPolicy.all,
+              parserFn: (data) => data,
+            ),
+          ),
+          "FlowVodChatDetails",
+          allowPartialData: true,
+        ).timeout(const Duration(seconds: 3));
+        for (final value in details.values) {
+          final detail = _mapValue(value);
+          final recorded = enriched[detail?["id"]];
+          if (detail != null &&
+              recorded != null &&
+              _mapValue(detail["content"])?["text"] == recorded.text) {
+            enriched[recorded.id] = _chatMessageFromGraphQl(detail, replay: recorded);
+          }
+        }
+      } on Object {
+        // Older messages may no longer be retained by the live-message service.
+      }
+    }
+    return [for (final message in messages) enriched[message.id]!];
   }
 
   Future<TwitchVodSeekMetadata> fetchVodSeekMetadata(String videoId) async {
@@ -2147,6 +2212,7 @@ class TwitchApiClient {
     Map<String, Object?> message, {
     String? threadRootId,
     String? threadRootLogin,
+    TwitchChatMessage? replay,
   }) {
     final sender = _mapValue(message["sender"]);
     final content = _mapValue(message["content"]);
@@ -2185,22 +2251,27 @@ class TwitchApiClient {
     final thread = _mapValue(message["threadParentMessage"]);
     return TwitchChatMessage(
       id: _stringValue(message["id"]),
-      login: _stringValue(sender?["login"]),
+      login: replay?.login ?? _stringValue(sender?["login"]),
       displayName:
+          replay?.displayName ??
           _nonEmptyValue(sender?["displayName"] as String?) ??
           _nonEmptyValue(sender?["login"] as String?) ??
           "Deleted user",
-      userId: _nonEmptyValue(sender?["id"] as String?),
+      userId: replay?.userId ?? _nonEmptyValue(sender?["id"] as String?),
       text: text,
-      color: message["senderChatColor"] as String? ?? sender?["chatColor"] as String?,
-      badges: [
-        for (final badge in _mapList(message["senderBadges"] ?? sender?["displayBadges"]))
-          if (_nonEmptyValue(badge["setID"] as String?) case final setId?)
-            "$setId/${_stringValue(badge["version"])}",
-      ],
-      emotes: buffer.toString() == text ? emotes : const [],
+      color:
+          replay?.color ?? message["senderChatColor"] as String? ?? sender?["chatColor"] as String?,
+      badges:
+          replay?.badges ??
+          [
+            for (final badge in _mapList(message["senderBadges"] ?? sender?["displayBadges"]))
+              if (_nonEmptyValue(badge["setID"] as String?) case final setId?)
+                "$setId/${_stringValue(badge["version"])}",
+          ],
+      emotes: replay?.emotes ?? (buffer.toString() == text ? emotes : const []),
       gifs: buffer.toString() == text ? gifs : const [],
-      timestamp: _dateTimeValue(message["sentAt"]),
+      timestamp: replay?.timestamp ?? _dateTimeValue(message["sentAt"]),
+      offsetSeconds: replay?.offsetSeconds,
       isDeleted: message["deletedAt"] != null,
       moderation: message["deletedAt"] != null ? TwitchChatModeration.deleted : null,
       moderatedAt: _dateTimeValue(message["deletedAt"]),

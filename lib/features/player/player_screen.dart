@@ -192,7 +192,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   bool _chatOnly = false;
   bool _waitingForLive = false;
   bool _showLandscapeChat = false;
-  double? _landscapeChatWidth;
+  double? _landscapeChatWidthFraction;
   bool _resizingChat = false;
   StreamChannel? _liveChannel;
   StreamChannel get _channel => _liveChannel ?? widget.channel;
@@ -217,6 +217,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         preferences: widget.preferences ?? SharedPreferencesFlowPreferences(),
       ));
   ReactionDisposer? _pipSettingsReaction;
+  ReactionDisposer? _chatWidthReaction;
   bool _pictureInPictureEnabled = true;
   bool _miniPlayerEnabled = true;
 
@@ -347,10 +348,10 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       _startedAt = widget.channel.startedAt;
       _liveChannel = null;
       _showLandscapeChat = false;
-      _streamEnded = _waitingForLive = widget.initiallyOffline && _isLive;
-      if (widget.initiallyOffline || oldWidget.initiallyOffline) {
+      if (widget.initiallyOffline || oldWidget.initiallyOffline || _waitingForLive) {
         _chatOnly = widget.initiallyOffline && _isLive;
       }
+      _streamEnded = _waitingForLive = widget.initiallyOffline && _isLive;
       _viewerRefreshGeneration++;
       _viewerRefreshInFlight = false;
       _errorMessage = null;
@@ -427,6 +428,14 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         );
       }
     }
+    if (_chatWidthReaction == null) {
+      final settings = _chatSettingsStore;
+      _chatWidthReaction = reaction<double?>(
+        (_) => settings.landscapeChatWidthFraction,
+        (fraction) => setState(() => _landscapeChatWidthFraction = fraction),
+        fireImmediately: true,
+      );
+    }
     final mode = presentation?.mode ?? PlaybackMode.expanded;
     if (_mode == PlaybackMode.mini &&
         mode == PlaybackMode.expanded &&
@@ -441,6 +450,9 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       unawaited(_queueDisplayMode(widget.displayModeController.restore));
     }
     _mode = mode;
+    if (_streamEnded && !_chatOnly && mode == PlaybackMode.expanded) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _showOfflineChat());
+    }
   }
 
   @override
@@ -460,6 +472,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     _qualitySettings.dispose();
     _chatLatencyMs.dispose();
     _pipSettingsReaction?.call();
+    _chatWidthReaction?.call();
     unawaited(_queueDisplayMode(widget.displayModeController.restore));
     super.dispose();
   }
@@ -765,7 +778,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     _controlsTimer?.cancel();
     setState(() {
       _streamEnded = true;
-      _waitingForLive = _chatOnly;
+      _waitingForLive = true;
       _isPlaying = false;
       _isBuffering = false;
       _playWhenReady = false;
@@ -776,6 +789,18 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     });
     unawaited(_playerController?.stop());
     unawaited(_playerController?.setPictureInPictureEnabled(enabled: false));
+    _showOfflineChat();
+  }
+
+  void _showOfflineChat() {
+    if (!mounted || !_streamEnded || _chatOnly || _mode != PlaybackMode.expanded) {
+      return;
+    }
+    setState(() {
+      _chatOnly = true;
+      _releasePlayback();
+    });
+    _host?.setChatOnly(enabled: true);
   }
 
   void _handleControllerCreated(
@@ -855,7 +880,13 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
           return;
         }
         final startedPlaying = isPlaying && !isBuffering && (!_isPlaying || _isBuffering);
-        setState(() {
+        final playbackChanged =
+            _isPlaying != isPlaying ||
+            _isBuffering != isBuffering ||
+            _playWhenReady != (playWhenReady && !isEnded);
+        final progressVisible =
+            !_isLive && _controlsVisible && _appIsResumed && !_openingDestination;
+        void updatePlayback() {
           _isPlaying = isPlaying;
           _isBuffering = isBuffering;
           _playWhenReady = playWhenReady && !isEnded;
@@ -863,10 +894,15 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
             _position = position;
           }
           _duration = duration;
-          if (!playWhenReady || isBuffering || isEnded) {
+          if ((playbackChanged && (!playWhenReady || isBuffering)) || isEnded) {
             _controlsVisible = true;
           }
-        });
+        }
+        if (playbackChanged || progressVisible || isEnded) {
+          setState(updatePlayback);
+        } else {
+          updatePlayback();
+        }
         if (duration > Duration.zero && _seekPosition == null && _seekFeedbackSeconds == null) {
           _replay?.updatePosition(position);
         }
@@ -1154,10 +1190,13 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     final maxChatWidth = math.min(480.0, mediaQuery.size.width * 0.6);
     final minChatWidth = math.min(220.0, maxChatWidth);
     final landscapeChatWidth =
-        (_landscapeChatWidth ?? (mediaQuery.size.width * 0.36).clamp(280.0, 360.0)).clamp(
-          minChatWidth,
-          maxChatWidth,
-        );
+        (_landscapeChatWidthFraction == null
+                ? (mediaQuery.size.width * 0.36).clamp(280.0, 360.0)
+                : mediaQuery.size.width * _landscapeChatWidthFraction!)
+            .clamp(
+              minChatWidth,
+              maxChatWidth,
+            );
     final sideChatWidth = isLandscape && _showLandscapeChat ? landscapeChatWidth : 0.0;
     final playbackSessionGeneration = _playbackSessionGeneration;
     final viewport = _PlayerViewport(
@@ -1175,6 +1214,10 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         playbackSessionGeneration,
       ),
       isLandscape: isLandscape,
+      sideChatVisible: sideChatWidth > 0,
+      onToggleSideChat: isLandscape
+          ? () => setState(() => _showLandscapeChat = !_showLandscapeChat)
+          : null,
       compact: compact,
       onRestore: _mode == PlaybackMode.mini ? _host?.restore : null,
       audioOnly: _audioOnly,
@@ -1224,7 +1267,8 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       onSeekTapUp: _isLive
           ? null
           : (details) {
-              _doubleTapOnRight = details.localPosition.dx >= mediaQuery.size.width / 2;
+              _doubleTapOnRight =
+                  details.localPosition.dx >= (mediaQuery.size.width - sideChatWidth) / 2;
               _seekByTenSeconds();
             },
       seekFeedbackSeconds: _seekFeedbackSeconds,
@@ -1359,8 +1403,16 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
                 ),
               ),
             );
-            void resizeChat(double width) =>
-                setState(() => _landscapeChatWidth = width.clamp(minChatWidth, maxChatWidth));
+            void resizeChat(double width) => setState(
+              () => _landscapeChatWidthFraction =
+                  width.clamp(minChatWidth, maxChatWidth) / mediaQuery.size.width,
+            );
+            void saveChatWidth() {
+              if (_landscapeChatWidthFraction case final fraction?) {
+                unawaited(_chatSettingsStore.setLandscapeChatWidthFraction(fraction));
+              }
+            }
+
             final colors = Theme.of(context).colorScheme;
             return Stack(
               children: [
@@ -1382,23 +1434,34 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
                       decreasedValue:
                           "${(landscapeChatWidth - 24).clamp(minChatWidth, maxChatWidth).round()} pixels",
                       onIncrease: landscapeChatWidth < maxChatWidth
-                          ? () => resizeChat(landscapeChatWidth + 24)
+                          ? () {
+                              resizeChat(landscapeChatWidth + 24);
+                              saveChatWidth();
+                            }
                           : null,
                       onDecrease: landscapeChatWidth > minChatWidth
-                          ? () => resizeChat(landscapeChatWidth - 24)
+                          ? () {
+                              resizeChat(landscapeChatWidth - 24);
+                              saveChatWidth();
+                            }
                           : null,
                       child: Listener(
                         onPointerDown: (_) => setState(() => _resizingChat = true),
-                        onPointerUp: (_) => setState(() => _resizingChat = false),
-                        onPointerCancel: (_) => setState(() => _resizingChat = false),
+                        onPointerUp: (_) {
+                          setState(() => _resizingChat = false);
+                          saveChatWidth();
+                        },
+                        onPointerCancel: (_) {
+                          setState(() => _resizingChat = false);
+                          saveChatWidth();
+                        },
                         child: GestureDetector(
                           key: const ValueKey("player_chat_resize_handle"),
                           behavior: HitTestBehavior.opaque,
                           onHorizontalDragUpdate: (details) => resizeChat(
-                            (_landscapeChatWidth ?? landscapeChatWidth).clamp(
-                                  minChatWidth,
-                                  maxChatWidth,
-                                ) -
+                            (_landscapeChatWidthFraction == null
+                                    ? landscapeChatWidth
+                                    : mediaQuery.size.width * _landscapeChatWidthFraction!) -
                                 details.delta.dx,
                           ),
                           child: Center(
@@ -1594,6 +1657,8 @@ class _PlayerViewport extends StatelessWidget {
     required this.playbackUriRefresher,
     required this.onControllerCreated,
     required this.isLandscape,
+    required this.sideChatVisible,
+    required this.onToggleSideChat,
     required this.compact,
     required this.onRestore,
     required this.audioOnly,
@@ -1643,6 +1708,8 @@ class _PlayerViewport extends StatelessWidget {
   final Future<Uri> Function() playbackUriRefresher;
   final ValueChanged<TwitchPlayerController> onControllerCreated;
   final bool isLandscape;
+  final bool sideChatVisible;
+  final VoidCallback? onToggleSideChat;
   final bool compact;
   final VoidCallback? onRestore;
   final bool audioOnly;
@@ -1686,6 +1753,8 @@ class _PlayerViewport extends StatelessWidget {
     final horizontalPadding = isLandscape
         ? math.max(AppSpacing.sm, math.max(viewPadding.left, viewPadding.right))
         : AppSpacing.sm;
+    final leftPadding = sideChatVisible ? AppSpacing.sm : horizontalPadding;
+    final rightPadding = sideChatVisible ? AppSpacing.sm : horizontalPadding;
     final verticalPadding = isLandscape
         ? math.max(AppSpacing.sm, math.max(viewPadding.top, viewPadding.bottom))
         : AppSpacing.sm;
@@ -1801,9 +1870,11 @@ class _PlayerViewport extends StatelessWidget {
                           ignoring: !controlsVisible,
                           child: Padding(
                             key: const ValueKey("player_overlay_padding"),
-                            padding: EdgeInsets.symmetric(
-                              horizontal: horizontalPadding,
-                              vertical: verticalPadding,
+                            padding: EdgeInsets.fromLTRB(
+                              leftPadding,
+                              verticalPadding,
+                              rightPadding,
+                              verticalPadding,
                             ),
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1840,6 +1911,8 @@ class _PlayerViewport extends StatelessWidget {
                                             seeking: seeking,
                                             onChangeEnd: onSeekEnd,
                                             onToggleFullscreen: onToggleLandscape,
+                                            onToggleSideChat: onToggleSideChat,
+                                            sideChatVisible: sideChatVisible,
                                           ),
                                   ),
                               ],
@@ -1898,8 +1971,8 @@ class _PlayerViewport extends StatelessWidget {
               duration: const Duration(milliseconds: 160),
               curve: Curves.easeOutCubic,
               top: verticalPadding + (controlsVisible ? 44 : 4),
-              left: horizontalPadding + 48,
-              right: horizontalPadding + 48,
+              left: leftPadding + 48,
+              right: rightPadding + 48,
               child: IgnorePointer(
                 child: Align(
                   alignment: Alignment.topCenter,
@@ -1949,6 +2022,8 @@ class _PlayerViewport extends StatelessWidget {
       ),
     );
     properties.add(FlagProperty("isLandscape", value: isLandscape, ifTrue: "landscape"));
+    properties.add(DiagnosticsProperty<bool>("sideChatVisible", sideChatVisible));
+    properties.add(ObjectFlagProperty<VoidCallback?>.has("onToggleSideChat", onToggleSideChat));
     properties.add(DiagnosticsProperty<bool>("compact", compact));
     properties.add(ObjectFlagProperty<VoidCallback?>.has("onRestore", onRestore));
     properties.add(DiagnosticsProperty<bool>("audioOnly", audioOnly));

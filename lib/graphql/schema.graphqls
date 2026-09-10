@@ -4602,6 +4602,7 @@ type Video implements OnsiteNotificationContent & ShelfContentEdge_Node & VideoE
 type VideoComment implements OnsiteNotificationContent {
   _empty: String
   commenter: User
+  createdAt: Time
   contentOffsetSeconds: Int
   id: ID
   message: VideoCommentMessage

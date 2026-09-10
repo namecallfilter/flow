@@ -128,12 +128,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     unawaited(_saveSettings(() => _settingsStore.setChatPreferences(settings)));
   }
 
-  Widget _chatSection(String title) => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-    child: Align(
-      alignment: Alignment.centerLeft,
-      child: Text(title, style: Theme.of(context).textTheme.titleSmall),
-    ),
+  Widget _chatSection(String title, String summary, List<Widget> children) => ExpansionTile(
+    key: PageStorageKey("chat_settings_$title"),
+    title: Text(title, style: Theme.of(context).textTheme.titleSmall),
+    subtitle: Text(summary),
+    shape: const Border(),
+    collapsedShape: const Border(),
+    children: children,
   );
 
   Widget _chatSlider({
@@ -384,6 +385,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       ),
                       const SizedBox(height: AppSpacing.md),
                     ],
+                    const SectionHeader(title: "Appearance"),
+                    const SizedBox(height: AppSpacing.sm),
                     _SettingsGroup(
                       key: const ValueKey("settings_theme_group"),
                       children: [
@@ -391,43 +394,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           currentThemeMode: _settingsStore.themeMode,
                           onThemeModeChanged: (themeMode) {
                             unawaited(_saveSettings(() => _changeThemeMode(themeMode)));
-                          },
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: AppSpacing.md),
-                    _SettingsGroup(
-                      key: const ValueKey("settings_ad_proxy_group"),
-                      children: [
-                        _AdProxySettings(
-                          enabled: _settingsStore.adProxyEnabled,
-                          proxyUrls: _settingsStore.adProxyUrls,
-                          whitelistedChannels: _settingsStore.adProxyEffectiveWhitelistedChannels,
-                          manualChannels: _settingsStore.adProxyWhitelistedChannels,
-                          subscriptionChannels: _settingsStore.adProxySubscriptionChannels,
-                          onEnabledChanged: (enabled) {
-                            unawaited(
-                              _saveSettings(
-                                () => _settingsStore.setAdProxyEnabled(enabled: enabled),
-                              ),
-                            );
-                          },
-                          onAddProxy: () => unawaited(_saveSettings(_addProxyUrl)),
-                          onRemoveProxy: (index) {
-                            final urls = _settingsStore.adProxyUrls.toList()..removeAt(index);
-                            unawaited(_saveSettings(() => _settingsStore.setAdProxyUrls(urls)));
-                          },
-                          onReorderProxy: (oldIndex, newIndex) =>
-                              unawaited(_saveSettings(() => _reorderProxy(oldIndex, newIndex))),
-                          onAddChannel: () => unawaited(_saveSettings(_addWhitelistedChannel)),
-                          onRemoveChannel: (channel) {
-                            final channels = _settingsStore.adProxyWhitelistedChannels.toList()
-                              ..remove(channel);
-                            unawaited(
-                              _saveSettings(
-                                () => _settingsStore.setAdProxyWhitelistedChannels(channels),
-                              ),
-                            );
                           },
                         ),
                       ],
@@ -479,261 +445,339 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           type: MaterialType.transparency,
                           child: Column(
                             children: [
-                              _chatSection("Appearance"),
-                              _chatSlider(
-                                id: "chat_font_size",
-                                title: "Font size",
-                                value: _settingsStore.chatPreferences.fontSize,
-                                min: 10,
-                                max: 24,
-                                divisions: 14,
-                                update: (value) =>
-                                    _settingsStore.chatPreferences.copyWith(fontSize: value),
-                              ),
-                              _chatSlider(
-                                id: "chat_message_scale",
-                                title: "Message scale",
-                                value: _settingsStore.chatPreferences.messageScale,
-                                min: 0.5,
-                                max: 2,
-                                divisions: 15,
-                                suffix: "%",
-                                labelMultiplier: 100,
-                                update: (value) =>
-                                    _settingsStore.chatPreferences.copyWith(messageScale: value),
-                              ),
-                              _chatSlider(
-                                id: "chat_message_spacing",
-                                title: "Message spacing",
-                                value: _settingsStore.chatPreferences.messageSpacing,
-                                min: 0,
-                                max: 16,
-                                divisions: 16,
-                                update: (value) =>
-                                    _settingsStore.chatPreferences.copyWith(messageSpacing: value),
-                              ),
-                              SwitchListTile(
-                                title: const Text("Timestamps"),
-                                value: _settingsStore.chatPreferences.showTimestamps,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(showTimestamps: value),
+                              _chatSection("Appearance", "Text size, spacing and timestamps", [
+                                _chatSlider(
+                                  id: "chat_font_size",
+                                  title: "Font size",
+                                  value: _settingsStore.chatPreferences.fontSize,
+                                  min: 10,
+                                  max: 24,
+                                  divisions: 14,
+                                  update: (value) =>
+                                      _settingsStore.chatPreferences.copyWith(fontSize: value),
                                 ),
-                              ),
-                              SwitchListTile(
-                                title: const Text("Show deleted messages"),
-                                value: _settingsStore.chatPreferences.showDeletedMessages,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(
-                                    showDeletedMessages: value,
+                                _chatSlider(
+                                  id: "chat_message_scale",
+                                  title: "Message scale",
+                                  value: _settingsStore.chatPreferences.messageScale,
+                                  min: 0.5,
+                                  max: 2,
+                                  divisions: 15,
+                                  suffix: "%",
+                                  labelMultiplier: 100,
+                                  update: (value) =>
+                                      _settingsStore.chatPreferences.copyWith(messageScale: value),
+                                ),
+                                _chatSlider(
+                                  id: "chat_message_spacing",
+                                  title: "Message spacing",
+                                  value: _settingsStore.chatPreferences.messageSpacing,
+                                  min: 0,
+                                  max: 16,
+                                  divisions: 16,
+                                  update: (value) => _settingsStore.chatPreferences.copyWith(
+                                    messageSpacing: value,
                                   ),
                                 ),
-                              ),
+                                SwitchListTile(
+                                  title: const Text("Timestamps"),
+                                  value: _settingsStore.chatPreferences.showTimestamps,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(showTimestamps: value),
+                                  ),
+                                ),
+                                ListTile(
+                                  title: const Text("Timestamp format"),
+                                  trailing: DropdownButton<ChatTimestampFormat>(
+                                    key: const ValueKey("chat_timestamp_format"),
+                                    value: _settingsStore.chatPreferences.timestampFormat,
+                                    underline: const SizedBox.shrink(),
+                                    items: const [
+                                      DropdownMenuItem(
+                                        value: ChatTimestampFormat.twentyFourHour,
+                                        child: Text("24-hour"),
+                                      ),
+                                      DropdownMenuItem(
+                                        value: ChatTimestampFormat.twelveHour,
+                                        child: Text("12-hour"),
+                                      ),
+                                    ],
+                                    onChanged: (value) {
+                                      if (value != null) {
+                                        _changeChatSettings(
+                                          _settingsStore.chatPreferences.copyWith(
+                                            timestampFormat: value,
+                                          ),
+                                        );
+                                      }
+                                    },
+                                  ),
+                                ),
+                                SwitchListTile(
+                                  title: const Text("Show deleted messages"),
+                                  value: _settingsStore.chatPreferences.showDeletedMessages,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(
+                                      showDeletedMessages: value,
+                                    ),
+                                  ),
+                                ),
+                              ]),
                               const Divider(height: 1),
-                              _chatSection("Badges and paints"),
-                              _chatSlider(
-                                id: "chat_badge_scale",
-                                title: "Badge scale",
-                                value: _settingsStore.chatPreferences.badgeScale,
-                                min: 0.5,
-                                max: 2,
-                                divisions: 15,
-                                suffix: "%",
-                                labelMultiplier: 100,
-                                update: (value) =>
-                                    _settingsStore.chatPreferences.copyWith(badgeScale: value),
-                              ),
-                              SwitchListTile(
-                                title: const Text("Twitch badges"),
-                                value: _settingsStore.chatPreferences.twitchBadges,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(twitchBadges: value),
+                              _chatSection("Timing", "Sync and message delay", [
+                                SwitchListTile(
+                                  title: const Text("Auto-sync chat"),
+                                  subtitle: const Text("Match messages to video playback."),
+                                  value: _settingsStore.chatPreferences.autoSyncChat,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(autoSyncChat: value),
+                                  ),
                                 ),
-                              ),
-                              SwitchListTile(
-                                title: const Text("7TV badges"),
-                                value: _settingsStore.chatPreferences.sevenTvBadges,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(sevenTvBadges: value),
+                                _chatSlider(
+                                  id: "chat_manual_delay",
+                                  title: "Manual chat delay",
+                                  value: _settingsStore.chatPreferences.manualChatDelaySeconds,
+                                  min: 0,
+                                  max: 30,
+                                  divisions: 30,
+                                  suffix: "s",
+                                  enabled: !_settingsStore.chatPreferences.autoSyncChat,
+                                  update: (value) => _settingsStore.chatPreferences.copyWith(
+                                    manualChatDelaySeconds: value,
+                                  ),
                                 ),
-                              ),
-                              SwitchListTile(
-                                title: const Text("7TV paints"),
-                                value: _settingsStore.chatPreferences.sevenTvPaints,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(sevenTvPaints: value),
-                                ),
-                              ),
-                              SwitchListTile(
-                                title: const Text("Animated paints"),
-                                value: _settingsStore.chatPreferences.animatedPaints,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(animatedPaints: value),
-                                ),
-                              ),
-                              SwitchListTile(
-                                title: const Text("BetterTTV badges"),
-                                value: _settingsStore.chatPreferences.bttvBadges,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(bttvBadges: value),
-                                ),
-                              ),
-                              SwitchListTile(
-                                title: const Text("FrankerFaceZ badges"),
-                                value: _settingsStore.chatPreferences.ffzBadges,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(ffzBadges: value),
-                                ),
-                              ),
+                              ]),
                               const Divider(height: 1),
-                              _chatSection("Emotes"),
-                              SwitchListTile(
-                                title: const Text("Emote autocomplete"),
-                                subtitle: const Text("Suggest emotes while typing."),
-                                value: _settingsStore.chatPreferences.emoteAutocomplete,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(emoteAutocomplete: value),
+                              _chatSection("Alerts", "Mentions, channel points and notices", [
+                                SwitchListTile(
+                                  title: const Text("Highlight mentions and replies"),
+                                  value: _settingsStore.chatPreferences.highlightMentions,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(
+                                      highlightMentions: value,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                              _chatSlider(
-                                id: "chat_emote_scale",
-                                title: "Emote scale",
-                                value: _settingsStore.chatPreferences.emoteScale,
-                                min: 0.5,
-                                max: 2,
-                                divisions: 15,
-                                suffix: "%",
-                                labelMultiplier: 100,
-                                update: (value) =>
-                                    _settingsStore.chatPreferences.copyWith(emoteScale: value),
-                              ),
-                              SwitchListTile(
-                                title: const Text("Twitch emotes"),
-                                value: _settingsStore.chatPreferences.twitchEmotes,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(twitchEmotes: value),
+                                SwitchListTile(
+                                  title: const Text("Mention and reply sounds"),
+                                  value: _settingsStore.chatPreferences.mentionSounds,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(mentionSounds: value),
+                                  ),
                                 ),
-                              ),
-                              SwitchListTile(
-                                title: const Text("7TV emotes"),
-                                value: _settingsStore.chatPreferences.sevenTvEmotes,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(sevenTvEmotes: value),
+                                SwitchListTile(
+                                  title: const Text("Auto claim channel points"),
+                                  value: _settingsStore.chatPreferences.autoClaimChannelPoints,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(
+                                      autoClaimChannelPoints: value,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                              SwitchListTile(
-                                title: const Text("BetterTTV emotes"),
-                                value: _settingsStore.chatPreferences.bttvEmotes,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(bttvEmotes: value),
+                                SwitchListTile(
+                                  title: const Text("Watch streak popups"),
+                                  value: _settingsStore.chatPreferences.showWatchStreakPopups,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(
+                                      showWatchStreakPopups: value,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                              SwitchListTile(
-                                title: const Text("FrankerFaceZ emotes"),
-                                value: _settingsStore.chatPreferences.ffzEmotes,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(ffzEmotes: value),
+                                SwitchListTile(
+                                  title: const Text("Highlight first-time chatters"),
+                                  value: _settingsStore.chatPreferences.highlightFirstMessages,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(
+                                      highlightFirstMessages: value,
+                                    ),
+                                  ),
                                 ),
-                              ),
+                                SwitchListTile(
+                                  title: const Text("Subscription notices"),
+                                  value: _settingsStore.chatPreferences.showSubscriptionNotices,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(
+                                      showSubscriptionNotices: value,
+                                    ),
+                                  ),
+                                ),
+                                SwitchListTile(
+                                  title: const Text("Announcements"),
+                                  value: _settingsStore.chatPreferences.showAnnouncements,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(
+                                      showAnnouncements: value,
+                                    ),
+                                  ),
+                                ),
+                                SwitchListTile(
+                                  title: const Text("Raid notices"),
+                                  value: _settingsStore.chatPreferences.showRaidNotices,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(showRaidNotices: value),
+                                  ),
+                                ),
+                                SwitchListTile(
+                                  title: const Text("Timeouts and bans"),
+                                  value: _settingsStore.chatPreferences.showModerationNotices,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(
+                                      showModerationNotices: value,
+                                    ),
+                                  ),
+                                ),
+                              ]),
                               const Divider(height: 1),
-                              _chatSection("Timing"),
-                              SwitchListTile(
-                                title: const Text("Auto-sync chat"),
-                                subtitle: const Text("Match messages to video playback."),
-                                value: _settingsStore.chatPreferences.autoSyncChat,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(autoSyncChat: value),
+                              _chatSection("Emotes", "Size, autocomplete and providers", [
+                                SwitchListTile(
+                                  title: const Text("Emote autocomplete"),
+                                  subtitle: const Text("Suggest emotes while typing."),
+                                  value: _settingsStore.chatPreferences.emoteAutocomplete,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(
+                                      emoteAutocomplete: value,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                              _chatSlider(
-                                id: "chat_manual_delay",
-                                title: "Manual chat delay",
-                                value: _settingsStore.chatPreferences.manualChatDelaySeconds,
-                                min: 0,
-                                max: 30,
-                                divisions: 30,
-                                suffix: "s",
-                                enabled: !_settingsStore.chatPreferences.autoSyncChat,
-                                update: (value) => _settingsStore.chatPreferences.copyWith(
-                                  manualChatDelaySeconds: value,
+                                _chatSlider(
+                                  id: "chat_emote_scale",
+                                  title: "Emote scale",
+                                  value: _settingsStore.chatPreferences.emoteScale,
+                                  min: 0.5,
+                                  max: 2,
+                                  divisions: 15,
+                                  suffix: "%",
+                                  labelMultiplier: 100,
+                                  update: (value) =>
+                                      _settingsStore.chatPreferences.copyWith(emoteScale: value),
                                 ),
-                              ),
+                                SwitchListTile(
+                                  title: const Text("Twitch emotes"),
+                                  value: _settingsStore.chatPreferences.twitchEmotes,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(twitchEmotes: value),
+                                  ),
+                                ),
+                                SwitchListTile(
+                                  title: const Text("7TV emotes"),
+                                  value: _settingsStore.chatPreferences.sevenTvEmotes,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(sevenTvEmotes: value),
+                                  ),
+                                ),
+                                SwitchListTile(
+                                  title: const Text("BetterTTV emotes"),
+                                  value: _settingsStore.chatPreferences.bttvEmotes,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(bttvEmotes: value),
+                                  ),
+                                ),
+                                SwitchListTile(
+                                  title: const Text("FrankerFaceZ emotes"),
+                                  value: _settingsStore.chatPreferences.ffzEmotes,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(ffzEmotes: value),
+                                  ),
+                                ),
+                              ]),
                               const Divider(height: 1),
-                              _chatSection("Alerts"),
-                              SwitchListTile(
-                                title: const Text("Highlight mentions and replies"),
-                                value: _settingsStore.chatPreferences.highlightMentions,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(highlightMentions: value),
+                              _chatSection("Badges and paints", "Size, providers and animations", [
+                                _chatSlider(
+                                  id: "chat_badge_scale",
+                                  title: "Badge scale",
+                                  value: _settingsStore.chatPreferences.badgeScale,
+                                  min: 0.5,
+                                  max: 2,
+                                  divisions: 15,
+                                  suffix: "%",
+                                  labelMultiplier: 100,
+                                  update: (value) =>
+                                      _settingsStore.chatPreferences.copyWith(badgeScale: value),
                                 ),
-                              ),
-                              SwitchListTile(
-                                title: const Text("Mention and reply sounds"),
-                                value: _settingsStore.chatPreferences.mentionSounds,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(mentionSounds: value),
-                                ),
-                              ),
-                              SwitchListTile(
-                                title: const Text("Auto claim channel points"),
-                                value: _settingsStore.chatPreferences.autoClaimChannelPoints,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(
-                                    autoClaimChannelPoints: value,
+                                SwitchListTile(
+                                  title: const Text("Twitch badges"),
+                                  value: _settingsStore.chatPreferences.twitchBadges,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(twitchBadges: value),
                                   ),
                                 ),
-                              ),
-                              SwitchListTile(
-                                title: const Text("Watch streak popups"),
-                                value: _settingsStore.chatPreferences.showWatchStreakPopups,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(
-                                    showWatchStreakPopups: value,
+                                SwitchListTile(
+                                  title: const Text("7TV badges"),
+                                  value: _settingsStore.chatPreferences.sevenTvBadges,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(sevenTvBadges: value),
                                   ),
                                 ),
-                              ),
-                              SwitchListTile(
-                                title: const Text("Highlight first-time chatters"),
-                                value: _settingsStore.chatPreferences.highlightFirstMessages,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(
-                                    highlightFirstMessages: value,
+                                SwitchListTile(
+                                  title: const Text("7TV paints"),
+                                  value: _settingsStore.chatPreferences.sevenTvPaints,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(sevenTvPaints: value),
                                   ),
                                 ),
-                              ),
-                              SwitchListTile(
-                                title: const Text("Subscription notices"),
-                                value: _settingsStore.chatPreferences.showSubscriptionNotices,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(
-                                    showSubscriptionNotices: value,
+                                SwitchListTile(
+                                  title: const Text("Animated paints"),
+                                  value: _settingsStore.chatPreferences.animatedPaints,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(animatedPaints: value),
                                   ),
                                 ),
-                              ),
-                              SwitchListTile(
-                                title: const Text("Announcements"),
-                                value: _settingsStore.chatPreferences.showAnnouncements,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(showAnnouncements: value),
-                                ),
-                              ),
-                              SwitchListTile(
-                                title: const Text("Raid notices"),
-                                value: _settingsStore.chatPreferences.showRaidNotices,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(showRaidNotices: value),
-                                ),
-                              ),
-                              SwitchListTile(
-                                title: const Text("Timeouts and bans"),
-                                value: _settingsStore.chatPreferences.showModerationNotices,
-                                onChanged: (value) => _changeChatSettings(
-                                  _settingsStore.chatPreferences.copyWith(
-                                    showModerationNotices: value,
+                                SwitchListTile(
+                                  title: const Text("BetterTTV badges"),
+                                  value: _settingsStore.chatPreferences.bttvBadges,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(bttvBadges: value),
                                   ),
                                 ),
-                              ),
+                                SwitchListTile(
+                                  title: const Text("FrankerFaceZ badges"),
+                                  value: _settingsStore.chatPreferences.ffzBadges,
+                                  onChanged: (value) => _changeChatSettings(
+                                    _settingsStore.chatPreferences.copyWith(ffzBadges: value),
+                                  ),
+                                ),
+                              ]),
                             ],
                           ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    const SectionHeader(title: "Advanced"),
+                    const SizedBox(height: AppSpacing.sm),
+                    _SettingsGroup(
+                      key: const ValueKey("settings_ad_proxy_group"),
+                      children: [
+                        _AdProxySettings(
+                          enabled: _settingsStore.adProxyEnabled,
+                          proxyUrls: _settingsStore.adProxyUrls,
+                          whitelistedChannels: _settingsStore.adProxyEffectiveWhitelistedChannels,
+                          manualChannels: _settingsStore.adProxyWhitelistedChannels,
+                          subscriptionChannels: _settingsStore.adProxySubscriptionChannels,
+                          onEnabledChanged: (enabled) {
+                            unawaited(
+                              _saveSettings(
+                                () => _settingsStore.setAdProxyEnabled(enabled: enabled),
+                              ),
+                            );
+                          },
+                          onAddProxy: () => unawaited(_saveSettings(_addProxyUrl)),
+                          onRemoveProxy: (index) {
+                            final urls = _settingsStore.adProxyUrls.toList()..removeAt(index);
+                            unawaited(_saveSettings(() => _settingsStore.setAdProxyUrls(urls)));
+                          },
+                          onReorderProxy: (oldIndex, newIndex) =>
+                              unawaited(_saveSettings(() => _reorderProxy(oldIndex, newIndex))),
+                          onAddChannel: () => unawaited(_saveSettings(_addWhitelistedChannel)),
+                          onRemoveChannel: (channel) {
+                            final channels = _settingsStore.adProxyWhitelistedChannels.toList()
+                              ..remove(channel);
+                            unawaited(
+                              _saveSettings(
+                                () => _settingsStore.setAdProxyWhitelistedChannels(channels),
+                              ),
+                            );
+                          },
                         ),
                       ],
                     ),

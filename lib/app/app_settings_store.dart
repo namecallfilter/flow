@@ -42,6 +42,9 @@ abstract class AppSettingsStoreBase with Store {
   bool miniPlayerEnabled = true;
 
   @observable
+  double? landscapeChatWidthFraction;
+
+  @observable
   ChatPreferences chatPreferences = const ChatPreferences();
 
   @observable
@@ -80,7 +83,7 @@ abstract class AppSettingsStoreBase with Store {
         () => adProxySubscriptionChannels = ObservableList.of(channels),
       );
     });
-    final values = await Future.wait<Object>([
+    final values = await Future.wait<Object?>([
       preferences.readThemeMode(),
       preferences.readAdProxyEnabled(),
       preferences.readAdProxyUrls(),
@@ -89,15 +92,17 @@ abstract class AppSettingsStoreBase with Store {
       preferences.readPictureInPictureEnabled(),
       preferences.readMiniPlayerEnabled(),
       preferences.readChatPreferences(),
+      preferences.readLandscapeChatWidthFraction(),
     ]);
     runInAction(() {
-      themeMode = values[0] as ThemeMode;
-      adProxyEnabled = values[1] as bool;
-      adProxyUrls = ObservableList.of(values[2] as List<String>);
-      adProxyWhitelistedChannels = ObservableList.of(values[3] as List<String>);
-      pictureInPictureEnabled = values[5] as bool;
-      miniPlayerEnabled = values[6] as bool;
-      chatPreferences = values[7] as ChatPreferences;
+      themeMode = values[0]! as ThemeMode;
+      adProxyEnabled = values[1]! as bool;
+      adProxyUrls = ObservableList.of(values[2]! as List<String>);
+      adProxyWhitelistedChannels = ObservableList.of(values[3]! as List<String>);
+      pictureInPictureEnabled = values[5]! as bool;
+      miniPlayerEnabled = values[6]! as bool;
+      chatPreferences = values[7]! as ChatPreferences;
+      landscapeChatWidthFraction = values[8] as double?;
       isLoaded = true;
     });
   }
@@ -160,6 +165,18 @@ abstract class AppSettingsStoreBase with Store {
   Future<void> setMiniPlayerEnabled({required bool enabled}) async {
     await preferences.saveMiniPlayerEnabled(enabled: enabled);
     miniPlayerEnabled = enabled;
+  }
+
+  @action
+  Future<void> setLandscapeChatWidthFraction(double fraction) async {
+    if (!fraction.isFinite ||
+        fraction <= 0 ||
+        fraction >= 1 ||
+        landscapeChatWidthFraction == fraction) {
+      return;
+    }
+    await preferences.saveLandscapeChatWidthFraction(fraction);
+    landscapeChatWidthFraction = fraction;
   }
 
   @action

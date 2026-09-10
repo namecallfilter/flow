@@ -186,12 +186,14 @@ void main() {
     addTearDown(replay.dispose);
     await tester.pumpWidget(
       MaterialApp(
-        home: TwitchChatPanel(
-          replayController: replay,
-          chatOnly: false,
-          isLive: false,
-          preferences: MemoryFlowPreferences(),
-          onToggleChatOnly: () {},
+        home: Scaffold(
+          body: TwitchChatPanel(
+            replayController: replay,
+            chatOnly: false,
+            isLive: false,
+            preferences: MemoryFlowPreferences(),
+            onToggleChatOnly: () {},
+          ),
         ),
       ),
     );
@@ -1470,7 +1472,7 @@ void main() {
     expect(find.byTooltip("Reconnect chat"), findsNothing);
   });
 
-  testWidgets("VOD replay has recorded messages, a watch action and no live composer", (
+  testWidgets("VOD replay retains a disabled composer and a watch action", (
     tester,
   ) async {
     final replay = _ReplayController();
@@ -1492,12 +1494,65 @@ void main() {
     expect(find.text("Chat replay"), findsOneWidget);
     expect(find.text("Synced to video"), findsNothing);
     expect(find.textContaining("recorded message", findRichText: true), findsOneWidget);
-    expect(find.byType(TextField), findsNothing);
+    final input = tester.widget<TextField>(find.byKey(const ValueKey("chat_message_input")));
+    expect(input.enabled, isFalse);
+    expect(input.readOnly, isTrue);
+    expect(input.decoration!.hintText, "Chat replay");
+    await tester.tap(find.byType(TextField));
+    await tester.pump();
+    expect(tester.testTextInput.isVisible, isFalse);
     expect(find.byTooltip("Send message"), findsNothing);
     await _openMenu(tester);
     await tester.tap(find.text("Show video"));
     await tester.pumpAndSettle();
     expect(watching, isTrue);
+  });
+
+  testWidgets("timestamps switch between 24-hour and 12-hour clocks", (tester) async {
+    final controller = _ChatController()
+      ..items.addAll([
+        _message(1, timestamp: DateTime(2026, 1, 1, 0, 5)),
+        _message(2, timestamp: DateTime(2026, 1, 1, 12, 5)),
+        _message(3, timestamp: DateTime(2026, 1, 1, 23, 5)),
+      ]);
+    addTearDown(controller.dispose);
+    final store = AppSettingsStore(preferences: MemoryFlowPreferences());
+    await store.load();
+    await store.setChatPreferences(const ChatPreferences(showTimestamps: true));
+    await tester.pumpWidget(panel(controller, settingsStore: store));
+    for (final time in ["00:05", "12:05", "23:05"]) {
+      expect(find.textContaining("$time ", findRichText: true), findsOneWidget);
+    }
+    await store.setChatPreferences(
+      store.chatPreferences.copyWith(timestampFormat: ChatTimestampFormat.twelveHour),
+    );
+    await tester.pump();
+    for (final time in ["12:05 AM", "12:05 PM", "11:05 PM"]) {
+      expect(find.textContaining("$time ", findRichText: true), findsOneWidget);
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets("composer shows the applied chat delay and clears it in offline and chat-only mode", (
+    tester,
+  ) async {
+    final controller = _ChatController();
+    addTearDown(controller.dispose);
+    final store = AppSettingsStore(preferences: MemoryFlowPreferences());
+    await store.load();
+    String? hint() => tester.widget<TextField>(find.byType(TextField)).decoration!.hintText;
+    await tester.pumpWidget(panel(controller, settingsStore: store, latencyMs: 1540));
+    expect(hint(), "Send a message · 1.5s");
+    await store.setChatPreferences(
+      const ChatPreferences(autoSyncChat: false, manualChatDelaySeconds: 3),
+    );
+    await tester.pump();
+    expect(hint(), "Send a message · 3.0s");
+    await tester.pumpWidget(panel(controller, settingsStore: store, chatOnly: true));
+    expect(hint(), "Send a message");
+    await tester.pumpWidget(panel(controller, settingsStore: store, isLive: false));
+    expect(hint(), "Send a message");
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets("keyboard dismissal keeps chat following and preserves an intentional pause", (

@@ -42,6 +42,7 @@ void main() {
     expect(page.messages.map((message) => message.id), ["earlier", "later"]);
     final first = page.messages.first;
     expect(first.offsetSeconds, 10);
+    expect(first.timestamp?.toUtc(), DateTime.utc(2026, 9, 10, 13, 30));
     expect(first.login, "viewer");
     expect(first.displayName, "Viewer");
     expect(first.text, "😀 Kappa hello");
@@ -50,6 +51,111 @@ void main() {
     expect(first.emotes.single.start, 3);
     expect(first.emotes.single.end, 8);
     expect(first.emotes.single.imageUrl, contains("/25/"));
+  });
+
+  test(
+    "enriches replay GIFs and replies in one request while retaining recorded presentation",
+    () async {
+      var detailRequests = 0;
+      final client = _client(
+        _page([
+          _edge(
+            "reply",
+            10,
+            message: {
+              "fragments": [
+                {"text": "😀 [Wave GIF by Friends]"},
+              ],
+              "userColor": "#123456",
+              "userBadges": [
+                {"setID": "subscriber", "version": "12"},
+              ],
+            },
+          ),
+          _edge("unavailable", 11),
+        ]),
+        replayDetails: {
+          "m0": {
+            "id": "reply",
+            "content": {
+              "text": "😀 [Wave GIF by Friends]",
+              "fragments": [
+                {"text": "😀 "},
+                {
+                  "text": "[Wave GIF by Friends]",
+                  "content": {
+                    "__typename": "GifContent",
+                    "gifID": "wave",
+                    "gifURL": "https://media.example/wave.gif?size=small&animated=true",
+                  },
+                },
+              ],
+            },
+            "parentMessage": {
+              "id": "parent",
+              "sender": {"id": "99", "login": "friend", "displayName": "Friend"},
+              "content": {
+                "text": "Kappa",
+                "fragments": [
+                  {
+                    "text": "Kappa",
+                    "content": {"__typename": "Emote", "emoteID": "25"},
+                  },
+                ],
+              },
+            },
+            "threadParentMessage": {
+              "id": "root",
+              "sender": {"login": "rootuser"},
+            },
+          },
+          "m1": null,
+        },
+        onDetailsRequest: (request) {
+          detailRequests++;
+          final query = (jsonDecode(request.body) as Map<String, Object?>)["query"]! as String;
+          expect(query, contains('m0: message(id: "reply")'));
+          expect(query, contains('m1: message(id: "unavailable")'));
+          expect(query, contains("GifContent"));
+        },
+      );
+      final page = await client.fetchVodChatPage("123");
+      final reply = page.messages.first;
+      expect(detailRequests, 1);
+      expect(reply.text, "😀 [Wave GIF by Friends]");
+      expect(reply.displayName, "Viewer");
+      expect(reply.color, "#123456");
+      expect(reply.badges, ["subscriber/12"]);
+      expect(reply.offsetSeconds, 10);
+      expect(reply.gifs.single.start, 3);
+      expect(reply.gifs.single.end, reply.text.length);
+      expect(reply.gifs.single.url, "https://media.example/wave.gif?size=small&animated=true");
+      expect(reply.parentMessageId, "parent");
+      expect(reply.parentUserId, "99");
+      expect(reply.parentDisplayName, "Friend");
+      expect(reply.parentText, "Kappa");
+      expect(reply.parentEmotes.single.id, "25");
+      expect(reply.threadRootId, "root");
+      expect(page.messages.last.text, "hello");
+    },
+  );
+
+  test("missing, changed, or failing detail data leaves recorded chat usable", () async {
+    for (final status in [200, 503]) {
+      final client = _client(
+        _page([_edge("original", 10)]),
+        detailsStatus: status,
+        replayDetails: {
+          "m0": {
+            "id": "original",
+            "content": {"text": "different message"},
+          },
+        },
+      );
+      final page = await client.fetchVodChatPage("123");
+      expect(page.messages.single.text, "hello");
+      expect(page.messages.single.offsetSeconds, 10);
+    }
   });
 
   test("cursor pagination omits an offset and an empty terminal page is valid", () async {
@@ -139,21 +245,35 @@ void main() {
   });
 }
 
-TwitchApiClient _client(Object? video, {void Function(http.Request request)? onRequest}) =>
-    TwitchApiClient(
-      clientId: "test",
-      accessToken: "",
-      httpClient: MockClient((request) async {
-        onRequest?.call(request);
-        return http.Response(
-          jsonEncode({
-            "data": {"video": video},
-          }),
-          200,
-          headers: {"content-type": "application/json"},
-        );
+TwitchApiClient _client(
+  Object? video, {
+  void Function(http.Request request)? onRequest,
+  void Function(http.Request request)? onDetailsRequest,
+  Map<String, Object?> replayDetails = const {},
+  int detailsStatus = 200,
+}) => TwitchApiClient(
+  clientId: "test",
+  accessToken: "",
+  httpClient: MockClient((request) async {
+    final body = jsonDecode(request.body) as Map<String, Object?>;
+    if ((body["query"]! as String).contains("query FlowVodChatDetails")) {
+      onDetailsRequest?.call(request);
+      return http.Response(
+        jsonEncode({"data": replayDetails}),
+        detailsStatus,
+        headers: {"content-type": "application/json"},
+      );
+    }
+    onRequest?.call(request);
+    return http.Response(
+      jsonEncode({
+        "data": {"video": video},
       }),
+      200,
+      headers: {"content-type": "application/json"},
     );
+  }),
+);
 
 Map<String, Object?> _page(List<Map<String, Object?>> edges, {bool hasNextPage = false}) => {
   "comments": {
@@ -166,6 +286,7 @@ Map<String, Object?> _edge(String id, int offset, {Map<String, Object?>? message
   "cursor": "next",
   "node": <String, Object?>{
     "id": id,
+    "createdAt": "2026-09-10T13:30:00Z",
     "contentOffsetSeconds": offset,
     "commenter": {"login": "viewer", "displayName": "Viewer"},
     "message":

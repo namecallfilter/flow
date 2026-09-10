@@ -42,6 +42,9 @@ void main() {
     await tester.pumpAndSettle();
 
     final addProxy = find.byTooltip("Add Proxies");
+    await tester.scrollUntilVisible(addProxy, 300, scrollable: find.byType(Scrollable).first);
+    await Scrollable.ensureVisible(tester.element(addProxy), alignment: 0.5);
+    await tester.pumpAndSettle();
     await tester.longPress(addProxy);
     await tester.pumpAndSettle();
     expect(find.text("Add Proxies"), findsOneWidget);

@@ -6,6 +6,40 @@ import "package:flow/api/twitch_vod_chat.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  test("prefetches the next page without rebuilding unchanged chat", () async {
+    final client = _ReplayClient();
+    final replay = TwitchVodChatController(clientLoader: () async => client, videoId: "123");
+    addTearDown(replay.dispose);
+    var notifications = 0;
+    replay.addListener(() => notifications++);
+    await _flush();
+    client.requests[0].complete(
+      TwitchVodChatPage(
+        messages: [_message(0), _message(5)],
+        cursor: "next",
+        hasNextPage: true,
+      ),
+    );
+    await _flush();
+    expect(notifications, 1);
+    replay.updatePosition(const Duration(seconds: 3));
+    await _flush();
+    expect(client.calls.last.cursor, "next");
+    expect(replay.messages.length, 1);
+    client.requests[1].complete(
+      TwitchVodChatPage(
+        messages: [_message(5), _message(6)],
+        cursor: null,
+        hasNextPage: false,
+      ),
+    );
+    await _flush();
+    expect(notifications, 1);
+    replay.updatePosition(const Duration(seconds: 6));
+    expect(replay.messages.map((message) => message.offsetSeconds), [0, 5, 6]);
+    expect(notifications, 2);
+  });
+
   test("releases recorded messages at playback time and paginates without duplicates", () async {
     final client = _ReplayClient();
     final replay = TwitchVodChatController(clientLoader: () async => client, videoId: "123");

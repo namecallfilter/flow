@@ -17,6 +17,8 @@ class VodPlayerFooter extends StatelessWidget {
     this.onChangeStart,
     this.metadata,
     this.seeking = false,
+    this.onToggleSideChat,
+    this.sideChatVisible = false,
     super.key,
   });
 
@@ -28,6 +30,8 @@ class VodPlayerFooter extends StatelessWidget {
   final VoidCallback onToggleFullscreen;
   final TwitchVodSeekMetadata? metadata;
   final bool seeking;
+  final VoidCallback? onToggleSideChat;
+  final bool sideChatVisible;
 
   @override
   Widget build(BuildContext context) {
@@ -117,6 +121,21 @@ class VodPlayerFooter extends StatelessWidget {
           ),
         ),
         Text(_formatTime(duration), style: const TextStyle(color: Colors.white, fontSize: 12)),
+        if (onToggleSideChat != null)
+          IconButton(
+            key: const ValueKey("player_side_chat_button"),
+            tooltip: sideChatVisible ? "Hide chat" : "Show chat",
+            onPressed: onToggleSideChat,
+            color: Colors.white,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+            style: IconButton.styleFrom(
+              minimumSize: const Size.square(40),
+              maximumSize: const Size.square(40),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            icon: Icon(sideChatVisible ? Icons.chat_bubble : Icons.chat_bubble_outline),
+          ),
         IconButton(
           key: const ValueKey("player_orientation_button"),
           tooltip: "Toggle full screen",
@@ -150,6 +169,8 @@ class VodPlayerFooter extends StatelessWidget {
     properties.add(ObjectFlagProperty<ValueChanged<Duration>>.has("onChangeEnd", onChangeEnd));
     properties.add(ObjectFlagProperty<ValueChanged<Duration>?>.has("onChangeStart", onChangeStart));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onToggleFullscreen", onToggleFullscreen));
+    properties.add(ObjectFlagProperty<VoidCallback?>.has("onToggleSideChat", onToggleSideChat));
+    properties.add(DiagnosticsProperty<bool>("sideChatVisible", sideChatVisible));
   }
 }
 

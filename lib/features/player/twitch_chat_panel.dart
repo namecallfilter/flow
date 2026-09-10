@@ -153,6 +153,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     _draft.addListener(_draftChanged);
     _draftFocus.addListener(_composerFocusChanged);
     _scroll.addListener(_scrolled);
+    _rememberUsers(_history);
     _resetMentionAlerts();
     _scrollToLatest();
   }
@@ -181,6 +182,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
       _pausedMessages = null;
       _replyTo = null;
       _knownChatUsers.clear();
+      _rememberUsers(_history);
       _dismissedPinId = null;
       _minimizedPinId = null;
       _autoCollapsePinId = null;
@@ -301,6 +303,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
   }
 
   void _chatChanged() {
+    _rememberUsers(_history);
     setState(() {});
     if (_following) {
       _scrollToLatest();
@@ -361,6 +364,14 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     }
   }
 
+  Duration get _chatDelay => Duration(
+    milliseconds: widget.controller == null || widget.chatOnly || !widget.isLive
+        ? 0
+        : _settings.autoSyncChat
+        ? _syncedLatencyMs ?? 0
+        : (_settings.manualChatDelaySeconds * 1000).round(),
+  );
+
   List<TwitchChatMessage> _messagesForDisplay() {
     final now = DateTime.now();
     final configuration = (
@@ -381,13 +392,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     if (latency != null) {
       _syncedLatencyMs = latency;
     }
-    final delay = Duration(
-      milliseconds: !configuration.enabled
-          ? 0
-          : configuration.automatic
-          ? _syncedLatencyMs ?? 0
-          : configuration.manualMs,
-    );
+    final delay = _chatDelay;
     if (delay <= Duration.zero) {
       _messageReleaseTimes.removeWhere((_, releaseAt) => releaseAt.isAfter(now));
     }
@@ -1330,7 +1335,6 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
         ),
       ], historical: true);
     }
-    _rememberUsers(_history);
     return _knownChatUsers;
   }
 
@@ -2070,7 +2074,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
         _schedulePinCollapse(pin.id, lines > 2);
       }
       widget.assets?.precacheMessages(context, [
-        ..._presentedMessages,
+        ..._presentedMessages.reversed.take(30),
         ?widget.controller?.pinnedMessage,
       ]);
       unawaited(_loadRulesAcceptance());
@@ -2123,7 +2127,10 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
         replay == null ? "Reconnecting to chat…" : "Reconnecting to chat replay…",
       _ => null,
     };
-    final hint = !connected
+    final delaySeconds = _chatDelay.inMilliseconds / 1000;
+    final hint = replay != null
+        ? "Chat replay"
+        : !connected
         ? status == TwitchChatStatus.connecting
               ? connectionMessage!
               : "Chat disconnected"
@@ -2140,7 +2147,9 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
         : slowModeWait > Duration.zero
         ? "You can chat in ${_chatDuration(slowModeWait)}"
         : _replyTo == null
-        ? "Send a message"
+        ? delaySeconds > 0
+              ? "Send a message · ${delaySeconds.toStringAsFixed(1)}s"
+              : "Send a message"
         : "@${_replyTo!.login}";
     final hasDraft = _draft.text.trim().isNotEmpty;
     final completion = _chatCompletion;
@@ -2465,53 +2474,45 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
                                   child: Row(
                                     children: [
                                       Expanded(
-                                        child: controller == null
-                                            ? Text(
-                                                "Chat replay",
-                                                style: theme.textTheme.bodySmall?.copyWith(
-                                                  color: colors.onSurfaceVariant,
-                                                ),
-                                              )
-                                            : TextField(
-                                                key: const ValueKey("chat_message_input"),
-                                                controller: _draft,
-                                                focusNode: _draftFocus,
-                                                enabled: connected && controller.isSignedIn,
-                                                readOnly: !_canCompose || _showEmotes,
-                                                showCursor: _canCompose && !_showEmotes,
-                                                enableInteractiveSelection: _canCompose,
-                                                textInputAction: TextInputAction.send,
-                                                textCapitalization: TextCapitalization.sentences,
-                                                maxLength: 500,
-                                                decoration: InputDecoration(
-                                                  hintText: hint,
-                                                  counterText: "",
-                                                  suffixIcon: widget.assets == null
-                                                      ? null
-                                                      : IconButton(
-                                                          key: const ValueKey("chat_emote_toggle"),
-                                                          tooltip: _showEmotes
-                                                              ? "Show keyboard"
-                                                              : "Show emotes",
-                                                          onPressed:
-                                                              connected && controller.isSignedIn
-                                                              ? () => unawaited(_toggleEmotes())
-                                                              : null,
-                                                          icon: Icon(
-                                                            _showEmotes
-                                                                ? Icons.keyboard_rounded
-                                                                : Icons
-                                                                      .sentiment_satisfied_alt_rounded,
-                                                          ),
-                                                        ),
-                                                ),
-                                                onTap: () {
-                                                  if (!_canCompose || _showEmotes) {
-                                                    unawaited(_focusComposer());
-                                                  }
-                                                },
-                                                onSubmitted: (_) => unawaited(_send()),
-                                              ),
+                                        child: TextField(
+                                          key: const ValueKey("chat_message_input"),
+                                          controller: _draft,
+                                          focusNode: _draftFocus,
+                                          enabled: connected && controller?.isSignedIn == true,
+                                          readOnly: !_canCompose || _showEmotes,
+                                          showCursor: _canCompose && !_showEmotes,
+                                          enableInteractiveSelection: _canCompose,
+                                          textInputAction: TextInputAction.send,
+                                          textCapitalization: TextCapitalization.sentences,
+                                          maxLength: 500,
+                                          decoration: InputDecoration(
+                                            hintText: hint,
+                                            counterText: "",
+                                            suffixIcon: widget.assets == null && replay == null
+                                                ? null
+                                                : IconButton(
+                                                    key: const ValueKey("chat_emote_toggle"),
+                                                    tooltip: _showEmotes
+                                                        ? "Show keyboard"
+                                                        : "Show emotes",
+                                                    onPressed:
+                                                        connected && controller?.isSignedIn == true
+                                                        ? () => unawaited(_toggleEmotes())
+                                                        : null,
+                                                    icon: Icon(
+                                                      _showEmotes
+                                                          ? Icons.keyboard_rounded
+                                                          : Icons.sentiment_satisfied_alt_rounded,
+                                                    ),
+                                                  ),
+                                          ),
+                                          onTap: () {
+                                            if (!_canCompose || _showEmotes) {
+                                              unawaited(_focusComposer());
+                                            }
+                                          },
+                                          onSubmitted: (_) => unawaited(_send()),
+                                        ),
                                       ),
                                       if (hasDraft && controller != null)
                                         IconButton(
@@ -4063,6 +4064,8 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
         ? "${recordedAt ~/ 60}:${(recordedAt.toInt() % 60).toString().padLeft(2, "0")}"
         : time == null
         ? null
+        : settings.timestampFormat == ChatTimestampFormat.twelveHour
+        ? "${time.hour % 12 == 0 ? 12 : time.hour % 12}:${time.minute.toString().padLeft(2, "0")} ${time.hour < 12 ? MaterialLocalizations.of(context).anteMeridiemAbbreviation : MaterialLocalizations.of(context).postMeridiemAbbreviation}"
         : "${time.hour.toString().padLeft(2, "0")}:${time.minute.toString().padLeft(2, "0")}";
     final firstMessage = settings.highlightFirstMessages && message.isFirstMessage;
     final notice =

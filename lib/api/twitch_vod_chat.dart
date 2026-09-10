@@ -20,6 +20,7 @@ class TwitchVodChatController extends ChangeNotifier {
   final TwitchApiClientLoader clientLoader;
   final String videoId;
   final _messages = <TwitchChatMessage>[];
+  final _messageIds = <String>{};
   final _upcoming = Queue<TwitchChatMessage>();
   Duration _position = Duration.zero;
   TwitchChatStatus _status = TwitchChatStatus.connecting;
@@ -49,6 +50,7 @@ class TwitchVodChatController extends ChangeNotifier {
       _deadline?.cancel();
       _upcoming.clear();
       _messages.clear();
+      _messageIds.clear();
       _cursor = null;
       _hasNextPage = true;
       _loading = false;
@@ -59,23 +61,29 @@ class TwitchVodChatController extends ChangeNotifier {
     _advance();
   }
 
-  void _advance() {
+  void _advance({bool statusChanged = false}) {
     final seconds = _position.inMilliseconds / Duration.millisecondsPerSecond;
-    var changed = false;
+    var changed = statusChanged;
     while (_upcoming.isNotEmpty && _upcoming.first.offsetSeconds! <= seconds) {
       final message = _upcoming.removeFirst();
-      if (!_messages.any((existing) => existing.id == message.id)) {
+      if (_messageIds.add(message.id)) {
         _messages.add(message);
         changed = true;
       }
     }
     if (_messages.length > 300) {
+      for (final message in _messages.take(_messages.length - 300)) {
+        _messageIds.remove(message.id);
+      }
       _messages.removeRange(0, _messages.length - 300);
     }
     if (changed) {
       notifyListeners();
     }
-    if (_upcoming.isEmpty && _hasNextPage && !_loading && _error == null) {
+    if ((_upcoming.isEmpty || _upcoming.last.offsetSeconds! <= seconds + 2) &&
+        _hasNextPage &&
+        !_loading &&
+        _error == null) {
       unawaited(_loadPage());
     }
   }
@@ -109,11 +117,11 @@ class TwitchVodChatController extends ChangeNotifier {
       _deadline?.cancel();
       _hasNextPage = page.hasNextPage && page.cursor != null && page.cursor != cursor;
       _upcoming.addAll(page.messages);
+      final changed = _status != TwitchChatStatus.connected || _error != null;
       _status = TwitchChatStatus.connected;
       _error = null;
       _loading = false;
-      notifyListeners();
-      _advance();
+      _advance(statusChanged: changed);
     } on Object catch (error) {
       _failed(generation, error);
     }

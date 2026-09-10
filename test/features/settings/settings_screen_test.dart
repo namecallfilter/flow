@@ -12,6 +12,42 @@ import "package:flutter_secure_storage/flutter_secure_storage.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  testWidgets("chat categories are compact and timestamp format saves", (tester) async {
+    final preferences = MemoryFlowPreferences();
+    final store = AppSettingsStore(preferences: preferences);
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.dark),
+        home: SettingsScreen(settingsStore: store),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final sections = find.byType(ExpansionTile);
+    await tester.scrollUntilVisible(sections.first, 300);
+    expect(tester.widgetList<ExpansionTile>(sections).map((tile) => (tile.title as Text).data), [
+      "Appearance",
+      "Timing",
+      "Alerts",
+      "Emotes",
+      "Badges and paints",
+    ]);
+    expect(find.byKey(const ValueKey("chat_font_size")), findsNothing);
+    await tester.tap(find.descendant(of: sections.first, matching: find.text("Appearance")));
+    await tester.pumpAndSettle();
+    final format = find.byKey(const ValueKey("chat_timestamp_format"));
+    await Scrollable.ensureVisible(tester.element(format), alignment: 0.5);
+    await tester.pumpAndSettle();
+    await tester.tap(format);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text("12-hour").last);
+    await tester.pumpAndSettle();
+    expect(
+      (await preferences.readChatPreferences()).timestampFormat,
+      ChatTimestampFormat.twelveHour,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets("chat settings load existing values and save appearance and every provider", (
     tester,
   ) async {
@@ -25,6 +61,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await _expandChatSections(tester);
     final slider = find.byKey(const ValueKey("chat_font_size"));
     await tester.scrollUntilVisible(slider, 300);
     await Scrollable.ensureVisible(tester.element(slider), alignment: 0.5);
@@ -113,6 +150,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await _expandChatSections(tester);
     for (final setting in [
       ("chat_message_scale", 0.5, 2.0, 1.5),
       ("chat_badge_scale", 0.5, 2.0, 0.7),
@@ -224,6 +262,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await _showProxySettings(tester);
       final handles = find.byIcon(Icons.drag_indicator);
       final start = tester.getCenter(handles.first);
       final end = tester.getCenter(handles.last);
@@ -308,6 +347,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await _showProxySettings(tester);
     final toggle = tester.widget<Switch>(find.byKey(const ValueKey("settings_ad_proxy_toggle")));
     toggle.onChanged!(true);
     toggle.onChanged!(false);
@@ -350,6 +390,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await _showProxySettings(tester);
     await tester.tap(find.byKey(const ValueKey("settings_ad_proxy_toggle")));
     await tester.pumpAndSettle();
 
@@ -391,19 +432,19 @@ void main() {
     final interactionGate = find.byKey(const ValueKey("settings_content_interaction_gate"));
     expect(tester.widget<AbsorbPointer>(interactionGate).absorbing, isTrue);
     await tester.tap(
-      find.byKey(const ValueKey("settings_ad_proxy_toggle")),
+      find.byKey(const ValueKey("settings_picture_in_picture_toggle")),
       warnIfMissed: false,
     );
-    expect(settingsStore.adProxyEnabled, isFalse);
+    expect(settingsStore.pictureInPictureEnabled, isTrue);
 
     preferencesStore.completeReads();
     await tester.pumpAndSettle();
     expect(tester.widget<AbsorbPointer>(interactionGate).absorbing, isFalse);
 
-    await tester.tap(find.byKey(const ValueKey("settings_ad_proxy_toggle")));
+    await tester.tap(find.byKey(const ValueKey("settings_picture_in_picture_toggle")));
     await tester.pumpAndSettle();
-    expect(settingsStore.adProxyEnabled, isTrue);
-    expect(await settingsStore.preferences.readAdProxyEnabled(), isTrue);
+    expect(settingsStore.pictureInPictureEnabled, isFalse);
+    expect(await settingsStore.preferences.readPictureInPictureEnabled(), isFalse);
   });
 
   testWidgets("offers a retry when settings fail to load", (tester) async {
@@ -441,6 +482,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await _showProxySettings(tester);
     expect(find.text("http://host:8080"), findsOneWidget);
     expect(find.textContaining("user"), findsNothing);
     expect(find.textContaining("password"), findsNothing);
@@ -463,10 +505,18 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await _showProxySettings(tester);
     final handles = find.byIcon(Icons.drag_indicator);
     expect(handles, findsNWidgets(3));
-    expect(find.byIcon(Icons.arrow_upward), findsNothing);
-    expect(find.byIcon(Icons.arrow_downward), findsNothing);
+    final proxyGroup = find.byKey(const ValueKey("settings_ad_proxy_group"));
+    expect(
+      find.descendant(of: proxyGroup, matching: find.byIcon(Icons.arrow_upward)),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: proxyGroup, matching: find.byIcon(Icons.arrow_downward)),
+      findsNothing,
+    );
     expect(tester.getCenter(handles.first).dx, tester.getCenter(find.byTooltip("Add Proxies")).dx);
     expect(
       tester.getCenter(handles.first).dx,
@@ -515,6 +565,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await _showProxySettings(tester);
     final removeChannel = find.byTooltip("Remove channel");
     await tester.ensureVisible(removeChannel);
     expect(removeChannel, findsOneWidget);
@@ -538,6 +589,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await _showProxySettings(tester);
     await tester.tap(find.byTooltip("Add Proxies"));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(TextButton, "Cancel"));
@@ -569,6 +621,30 @@ void main() {
     expect(settingsStore.adProxyWhitelistedChannels, ["creator"]);
     expect(tester.takeException(), isNull);
   });
+}
+
+Future<void> _expandChatSections(WidgetTester tester) async {
+  for (final title in ["Appearance", "Timing", "Alerts", "Emotes", "Badges and paints"]) {
+    final section = find.byKey(PageStorageKey("chat_settings_$title"));
+    await tester.scrollUntilVisible(section, 300);
+    await Scrollable.ensureVisible(tester.element(section), alignment: 0.5);
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(of: section, matching: find.text(title)));
+    await tester.pumpAndSettle();
+  }
+}
+
+Future<void> _showProxySettings(WidgetTester tester) async {
+  final group = find.byKey(const ValueKey("settings_ad_proxy_group"));
+  await tester.scrollUntilVisible(
+    group,
+    300,
+    scrollable: find
+        .descendant(of: find.byType(SettingsScreen), matching: find.byType(Scrollable))
+        .first,
+  );
+  await Scrollable.ensureVisible(tester.element(group), alignment: 0.1);
+  await tester.pumpAndSettle();
 }
 
 class _MemoryPreferencesStore implements FlowPreferencesStore {
