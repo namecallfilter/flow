@@ -18,6 +18,7 @@ import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flow/shared/twitch/twitch_display_models.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
+import "package:flutter/rendering.dart";
 import "package:flutter/services.dart";
 import "package:flutter_test/flutter_test.dart";
 import "package:http/http.dart" as http;
@@ -1547,10 +1548,13 @@ void main() {
       await tester.pump();
       expect(player._seekPositions, [const Duration(seconds: 30)]);
 
+      final settingsButton = find.byKey(const ValueKey("player_settings_button"));
+      expect(settingsButton.hitTestable(), findsNothing);
       for (var extraTap = 1; extraTap <= 3; extraTap++) {
         await tester.pump(const Duration(milliseconds: 100));
-        await tester.tapAt(point);
+        await tester.tapAt(extraTap == 1 ? tester.getCenter(settingsButton) : point);
         await tester.pump();
+        expect(find.byKey(const ValueKey("player_quality_sheet")), findsNothing);
         expect(player._seekPositions, hasLength(extraTap + 1));
         expect(player._seekPositions.last, Duration(seconds: 30 + extraTap * 10));
         expect(find.text("+${10 + extraTap * 10}"), findsOneWidget);
@@ -1563,6 +1567,23 @@ void main() {
       expect(find.byKey(const ValueKey("player_seek_feedback")), findsNothing);
       expect(_controlsOpacity(tester), controlsVisible ? 1 : 0);
       expect(tester.widget<AnimatedOpacity>(footerOpacity).opacity, controlsVisible ? 1 : 0);
+      final headerOpacity = find
+          .ancestor(
+            of: find.byKey(const ValueKey("player_top_row")),
+            matching: find.byType(Opacity),
+          )
+          .first;
+      final headerFade = find
+          .ancestor(of: headerOpacity, matching: find.byType(FadeTransition))
+          .first;
+      for (final milliseconds in [0, 80, 80]) {
+        await tester.pump(Duration(milliseconds: milliseconds));
+        expect(
+          tester.renderObject<RenderOpacity>(headerOpacity).opacity *
+              tester.renderObject<RenderAnimatedOpacity>(headerFade).opacity.value,
+          controlsVisible ? 1 : 0,
+        );
+      }
       expect(player._playCount, 0);
       expect(player._pauseCount, 0);
       expect(player._toggleCount, 0);

@@ -1911,7 +1911,7 @@ class _PlayerViewport extends StatelessWidget {
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Opacity(
-                                  opacity: seekFeedbackSeconds == null ? 1 : 0,
+                                  opacity: controlsVisible ? 1 : 0,
                                   child: _PlayerHeader(
                                     channel: channel,
                                     onBack: onBack,
