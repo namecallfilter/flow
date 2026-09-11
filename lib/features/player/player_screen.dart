@@ -191,7 +191,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   bool _controlsVisible = true;
   bool _viewerRefreshInFlight = false;
   int _viewerRefreshGeneration = 0;
-  bool _appIsResumed = true;
+  AppLifecycleState _appLifecycleState = AppLifecycleState.resumed;
   bool _chatWasBackgrounded = false;
   bool _openingDestination = false;
   bool _playerForcedLandscape = false;
@@ -233,6 +233,8 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   bool _miniPlayerEnabled = true;
 
   bool get _isLive => widget.videoId == null;
+
+  bool get _appIsResumed => _appLifecycleState == AppLifecycleState.resumed;
 
   bool get _playbackSupported =>
       widget.playerSurfaceBuilder != null || Media3PlayerView.isSupported;
@@ -287,16 +289,8 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final wasResumed = _appIsResumed;
-    _appIsResumed = state == AppLifecycleState.resumed;
-    _watchTime?.setPlaying(
-      playing:
-          _appIsResumed &&
-          _isPlaying &&
-          !_isBuffering &&
-          _playWhenReady &&
-          !_streamEnded &&
-          _errorMessage == null,
-    );
+    _appLifecycleState = state;
+    _syncWatchTime();
     if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused) {
       _chatWasBackgrounded = true;
     }
@@ -315,6 +309,23 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       }
       _chatWasBackgrounded = false;
     }
+  }
+
+  void _syncWatchTime() {
+    final playbackAllowed = switch (_appLifecycleState) {
+      AppLifecycleState.resumed || AppLifecycleState.inactive => true,
+      AppLifecycleState.hidden || AppLifecycleState.paused => _audioOnly,
+      AppLifecycleState.detached => false,
+    };
+    _watchTime?.setPlaying(
+      playing:
+          playbackAllowed &&
+          _isPlaying &&
+          !_isBuffering &&
+          _playWhenReady &&
+          !_streamEnded &&
+          _errorMessage == null,
+    );
   }
 
   void _createChat() {
@@ -913,9 +924,6 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
           _markStreamEnded();
           return;
         }
-        _watchTime?.setPlaying(
-          playing: _appIsResumed && isPlaying && !isBuffering && playWhenReady && !isEnded,
-        );
         final startedPlaying = isPlaying && !isBuffering && (!_isPlaying || _isBuffering);
         final playbackChanged =
             _isPlaying != isPlaying ||
@@ -940,6 +948,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         } else {
           updatePlayback();
         }
+        _syncWatchTime();
         if (duration > Duration.zero && _seekPosition == null && _seekFeedbackSeconds == null) {
           _replay?.updatePosition(position);
         }
@@ -959,6 +968,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         unawaited(_refreshViewerCount());
       case TwitchQualitiesEvent(:final qualities, :final selectedId, :final currentLabel):
         setState(() => _audioOnly = selectedId == "audio_only");
+        _syncWatchTime();
         _qualitySettings.value = _QualitySettingsState(
           qualities: List.unmodifiable(qualities),
           selectedId: selectedId,

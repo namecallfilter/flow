@@ -2610,7 +2610,7 @@ void main() {
     }
   }
 
-  testWidgets("watchtime excludes background playback and resumes only active playback", (
+  testWidgets("watchtime counts visible PiP and background audio but excludes suspended video", (
     tester,
   ) async {
     final player = _FakePlayerController();
@@ -2636,23 +2636,46 @@ void main() {
     await tester.pump(const Duration(seconds: 61));
     expect(client.reports, 1);
 
+    player.emit(const TwitchPictureInPictureEvent(active: true));
+    await tester.pump();
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     await tester.pump(const Duration(seconds: 61));
-    expect(client.reports, 1);
-    player.emit(playing);
-    await tester.pump();
-    await tester.pump(const Duration(seconds: 61));
-    expect(client.reports, 1);
+    expect(client.reports, 2);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
     await tester.pump(const Duration(seconds: 61));
-    expect(client.reports, 1);
+    expect(client.reports, 2);
+    player.emit(playing);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 61));
+    expect(client.reports, 2);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    player.emit(const TwitchPictureInPictureEvent(active: false));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 61));
+    expect(client.reports, 3);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    player.emit(const TwitchQualitiesEvent(qualities: [], selectedId: "audio_only"));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 61));
+    expect(client.reports, 4);
+    player.emit(const TwitchQualitiesEvent(qualities: [], selectedId: "auto"));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 61));
+    expect(client.reports, 4);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump(const Duration(seconds: 61));
-    expect(client.reports, 2);
+    expect(client.reports, 5);
 
+    player.emit(const TwitchQualitiesEvent(qualities: [], selectedId: "audio_only"));
+    await tester.pump();
     for (final event in const <TwitchPlayerEvent>[
       TwitchPlaybackStateEvent(isPlaying: false, isBuffering: false, playWhenReady: false),
       TwitchPlaybackStateEvent(isPlaying: true, isBuffering: true, playWhenReady: true),
@@ -2662,11 +2685,17 @@ void main() {
       player.emit(playing);
       await tester.pump();
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
       player.emit(event);
       await tester.pump();
+      await tester.pump(const Duration(seconds: 61));
+      expect(client.reports, 5, reason: "Background audio must stop after $event");
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await tester.pump(const Duration(seconds: 61));
-      expect(client.reports, 2, reason: "Must remain stopped after $event");
+      expect(client.reports, 5, reason: "Must remain stopped after $event");
     }
     expect(player._pauseCount, 0);
     expect(player._playCount, 0);
