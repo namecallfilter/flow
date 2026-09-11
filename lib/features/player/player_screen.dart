@@ -6,6 +6,7 @@ import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_chat.dart";
 import "package:flow/api/twitch_chat_assets.dart";
 import "package:flow/api/twitch_vod_chat.dart";
+import "package:flow/api/twitch_watch_time.dart";
 import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/spacing.dart";
 import "package:flow/app/theme.dart";
@@ -190,7 +191,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   bool _controlsVisible = true;
   bool _viewerRefreshInFlight = false;
   int _viewerRefreshGeneration = 0;
-  bool _appIsResumed = true;
+  AppLifecycleState _appLifecycleState = AppLifecycleState.resumed;
   bool _chatWasBackgrounded = false;
   bool _openingDestination = false;
   bool _playerForcedLandscape = false;
@@ -208,6 +209,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   TwitchChatController? _chat;
   TwitchVodChatController? _replay;
   TwitchChatAssets? _chatAssets;
+  TwitchWatchTime? _watchTime;
   final _chatPanelKey = GlobalKey();
   int _loadGeneration = 0;
   int _playbackSessionGeneration = 0;
@@ -231,6 +233,8 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   bool _miniPlayerEnabled = true;
 
   bool get _isLive => widget.videoId == null;
+
+  bool get _appIsResumed => _appLifecycleState == AppLifecycleState.resumed;
 
   bool get _playbackSupported =>
       widget.playerSurfaceBuilder != null || Media3PlayerView.isSupported;
@@ -285,7 +289,8 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final wasResumed = _appIsResumed;
-    _appIsResumed = state == AppLifecycleState.resumed;
+    _appLifecycleState = state;
+    _syncWatchTime();
     if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused) {
       _chatWasBackgrounded = true;
     }
@@ -306,7 +311,25 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     }
   }
 
+  void _syncWatchTime() {
+    final playbackAllowed = switch (_appLifecycleState) {
+      AppLifecycleState.resumed || AppLifecycleState.inactive => true,
+      AppLifecycleState.hidden || AppLifecycleState.paused => _audioOnly,
+      AppLifecycleState.detached => false,
+    };
+    _watchTime?.setPlaying(
+      playing:
+          playbackAllowed &&
+          _isPlaying &&
+          !_isBuffering &&
+          _playWhenReady &&
+          !_streamEnded &&
+          _errorMessage == null,
+    );
+  }
+
   void _createChat() {
+    _watchTime = _isLive ? TwitchWatchTime(clientLoader: widget.apiCache.clientLoader) : null;
     _chatAssets =
         widget.chatAssetsFactory?.call(widget.channel.login) ??
         TwitchChatAssets(
@@ -347,6 +370,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       _chat?.dispose();
       _replay?.dispose();
       _chatAssets?.dispose();
+      _watchTime?.dispose();
       _chat = null;
       _replay = null;
       _createChat();
@@ -375,6 +399,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   }
 
   void _releasePlayback() {
+    _watchTime?.setPlaying(playing: false);
     _loadGeneration++;
     _playbackSessionGeneration++;
     _controlsTimer?.cancel();
@@ -473,6 +498,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     _chat?.dispose();
     _replay?.dispose();
     _chatAssets?.dispose();
+    _watchTime?.dispose();
     _controlsTimer?.cancel();
     _seekFeedbackTimer?.cancel();
     _uptimeTimer?.cancel();
@@ -558,6 +584,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     if (!_playbackSupported || _chatOnly || _streamEnded) {
       return;
     }
+    _watchTime?.setPlaying(playing: false);
     final generation = ++_loadGeneration;
     if (refresh) {
       _qualitySettings.value = _QualitySettingsState(
@@ -731,6 +758,9 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         }
         viewerCount = stream?.viewerCount;
         startedAt = stream?.startedAt;
+        if (mounted && generation == _viewerRefreshGeneration && stream != null) {
+          _watchTime?.updateStream(stream);
+        }
         if (_waitingForLive && stream != null) {
           liveChannel = streamChannelFromStream(
             stream,
@@ -787,6 +817,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       return;
     }
     _loadGeneration++;
+    _watchTime?.setPlaying(playing: false);
     _controlsTimer?.cancel();
     setState(() {
       _streamEnded = true;
@@ -823,6 +854,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       controller.dispose();
       return;
     }
+    _watchTime?.setPlaying(playing: false);
     unawaited(_playerEvents?.cancel());
     _playerController?.dispose();
     _playerController = controller;
@@ -837,6 +869,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       },
       onError: (Object error) {
         if (mounted && !_streamEnded) {
+          _watchTime?.setPlaying(playing: false);
           setState(() {
             _isBuffering = false;
             _controlsVisible = true;
@@ -915,6 +948,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         } else {
           updatePlayback();
         }
+        _syncWatchTime();
         if (duration > Duration.zero && _seekPosition == null && _seekFeedbackSeconds == null) {
           _replay?.updatePosition(position);
         }
@@ -924,6 +958,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
           _controlsTimer?.cancel();
         }
       case TwitchPlayerErrorEvent(:final message):
+        _watchTime?.setPlaying(playing: false);
         setState(() {
           _isBuffering = false;
           _controlsVisible = true;
@@ -933,6 +968,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         unawaited(_refreshViewerCount());
       case TwitchQualitiesEvent(:final qualities, :final selectedId, :final currentLabel):
         setState(() => _audioOnly = selectedId == "audio_only");
+        _syncWatchTime();
         _qualitySettings.value = _QualitySettingsState(
           qualities: List.unmodifiable(qualities),
           selectedId: selectedId,
@@ -1218,7 +1254,10 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     final compact = _mode == PlaybackMode.mini || _mode == PlaybackMode.pip || _hideChrome;
     final embedded = _mode != PlaybackMode.expanded;
     final isLandscape = !embedded && mediaQuery.size.width > mediaQuery.size.height;
-    final maxChatWidth = math.min(480.0, mediaQuery.size.width * 0.6);
+    final maxChatWidth = math.min(
+      480.0,
+      (mediaQuery.size.width - 320).clamp(0.0, mediaQuery.size.width * 0.6),
+    );
     final minChatWidth = math.min(220.0, maxChatWidth);
     final landscapeChatWidth =
         (_landscapeChatWidthFraction == null
@@ -1781,11 +1820,11 @@ class _PlayerViewport extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final viewPadding = MediaQuery.viewPaddingOf(context);
-    final horizontalPadding = isLandscape
+    final horizontalPadding = isLandscape && !sideChatVisible
         ? math.max(AppSpacing.sm, math.max(viewPadding.left, viewPadding.right))
         : AppSpacing.sm;
     final leftPadding = horizontalPadding;
-    final rightPadding = sideChatVisible ? AppSpacing.sm : horizontalPadding;
+    final rightPadding = horizontalPadding;
     final verticalPadding = isLandscape
         ? math.max(AppSpacing.sm, math.max(viewPadding.top, viewPadding.bottom))
         : AppSpacing.sm;

@@ -112,6 +112,16 @@ void main() {
     expect(find.text("Following"), findsOneWidget);
     client.changeGate = Completer<void>();
     await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(find.text("Unfollow Jason?"), findsOneWidget);
+    expect(client.changes, [true]);
+    await tester.tap(find.text("Cancel"));
+    await tester.pumpAndSettle();
+    expect(find.text("Following"), findsOneWidget);
+    expect(client.changes, [true]);
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, "Unfollow"));
     await tester.pump();
     expect(find.text("Following"), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
@@ -121,35 +131,42 @@ void main() {
     expect(find.text("Follow"), findsOneWidget);
   });
 
-  testWidgets("offline follow loads existing status and retries failures without a mutation", (
-    tester,
-  ) async {
-    final client = _FollowClient(isLive: false)
-      ..following = true
-      ..failStatus = true;
-    await tester.pumpWidget(_followApp(() async => client));
-    await tester.pumpAndSettle();
-    final button = find.byKey(const ValueKey("channel_follow_button"));
-    expect(find.text("Retry follow status"), findsOneWidget);
-    expect(find.byKey(const ValueKey("channel_chat_button")), findsOneWidget);
+  testWidgets(
+    "offline follow retries status failures and preserves following on mutation failure",
+    (
+      tester,
+    ) async {
+      final client = _FollowClient(isLive: false)
+        ..following = true
+        ..failStatus = true;
+      await tester.pumpWidget(_followApp(() async => client));
+      await tester.pumpAndSettle();
+      final button = find.byKey(const ValueKey("channel_follow_button"));
+      expect(find.text("Retry follow status"), findsOneWidget);
+      expect(find.byKey(const ValueKey("channel_chat_button")), findsOneWidget);
 
-    client.failStatus = false;
-    await tester.tap(button);
-    await tester.pumpAndSettle();
-    expect(find.text("Following"), findsOneWidget);
-    expect(client.changes, isEmpty);
+      client.failStatus = false;
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(find.text("Following"), findsOneWidget);
+      expect(client.changes, isEmpty);
 
-    client.failChange = true;
-    await tester.tap(button);
-    await tester.pumpAndSettle();
-    expect(client.following, isTrue);
-    expect(find.text("Could not update follow status. Try again."), findsOneWidget);
-    expect(find.text("Retry follow status"), findsOneWidget);
-    await tester.tap(button);
-    await tester.pumpAndSettle();
-    expect(find.text("Following"), findsOneWidget);
-    expect(client.changes, [false]);
-  });
+      client.failChange = true;
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, "Unfollow"));
+      await tester.pumpAndSettle();
+      expect(client.following, isTrue);
+      expect(find.text("Could not update follow status. Try again."), findsOneWidget);
+      expect(find.text("Following"), findsOneWidget);
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text("Cancel"));
+      await tester.pumpAndSettle();
+      expect(find.text("Following"), findsOneWidget);
+      expect(client.changes, [false]);
+    },
+  );
 
   testWidgets("guest follow uses the existing sign-in guidance", (tester) async {
     final client = _FollowClient(token: null);
@@ -182,6 +199,8 @@ void main() {
 
     second.changeGate = Completer<void>();
     await tester.tap(button);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, "Unfollow"));
     await tester.pump();
     expect(second.changes, [false]);
     current = first;
@@ -198,6 +217,23 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text("Following"), findsOneWidget);
     expect(second.changes, [false]);
+  });
+
+  testWidgets("cancels unfollow if the account changes while confirming", (tester) async {
+    final first = _FollowClient()..following = true;
+    final second = _FollowClient(token: "second")..following = true;
+    var current = first;
+    await tester.pumpWidget(_followApp(() async => current));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey("channel_follow_button")));
+    await tester.pumpAndSettle();
+    current = second;
+    await tester.tap(find.widgetWithText(FilledButton, "Unfollow"));
+    await tester.pumpAndSettle();
+    expect(first.changes, isEmpty);
+    expect(second.changes, isEmpty);
+    expect(find.text("Following"), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets("opens a VOD player page and reuses playback when it is selected again", (

@@ -483,6 +483,50 @@ class TwitchApiClient {
     return _userFromGraphQlUser(user);
   }
 
+  Future<void> reportMinuteWatched({
+    required TwitchFollowedStream stream,
+    required String userId,
+  }) async {
+    final viewerId = int.tryParse(userId);
+    if (_nonEmptyValue(gqlAccessToken) == null ||
+        viewerId == null ||
+        viewerId <= 0 ||
+        !RegExp(r"^\d+$").hasMatch(stream.id) ||
+        !RegExp(r"^\d+$").hasMatch(stream.userId)) {
+      throw TwitchApiException("Signed-in live playback is required to report watch time.");
+    }
+    final response = await _httpClient
+        .post(
+          Uri.https("spade.twitch.tv", "/track"),
+          headers: {"Origin": "https://www.twitch.tv"},
+          body: {
+            "data": base64Encode(
+              utf8.encode(
+                jsonEncode([
+                  {
+                    "event": "minute-watched",
+                    "properties": {
+                      "channel_id": stream.userId,
+                      "broadcast_id": stream.id,
+                      "player": "site",
+                      "user_id": viewerId,
+                      "live": true,
+                      "channel": stream.userLogin,
+                      "game": stream.gameName,
+                      "game_id": stream.gameId,
+                    },
+                  },
+                ]),
+              ),
+            ),
+          },
+        )
+        .timeout(const Duration(seconds: 10));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw TwitchApiException("Twitch watch time report failed (${response.statusCode}).");
+    }
+  }
+
   Future<List<TwitchFollowedStream>> fetchFollowedStreams(String userId) async {
     final streams = <String, TwitchFollowedStream>{};
     final cursors = <String>{};

@@ -29,7 +29,7 @@ class TwitchChatController extends ChangeNotifier {
        _socketConnector = socketConnector ?? _openSocket {
     if (!RegExp(r"^[a-z0-9_]{1,25}$").hasMatch(this.channel)) {
       _status = TwitchChatStatus.disconnected;
-      _error = "This channel has no chat available.";
+      _setError("This channel has no chat available.");
     } else if (autoConnect) {
       unawaited(_connect());
     }
@@ -345,6 +345,13 @@ class TwitchChatController extends ChangeNotifier {
     );
   }
 
+  void _setError(String? error) {
+    if (error != null && error != _error) {
+      addPrivateNotice(id: "private-${_systemMessageCount++}", type: "notice", text: error);
+    }
+    _error = error;
+  }
+
   void setAutoClaimChannelPoints({required bool enabled}) {
     if (_disposed || enabled == _autoClaimChannelPoints) {
       return;
@@ -554,13 +561,15 @@ class TwitchChatController extends ChangeNotifier {
     _chatAccessError = null;
     _isFollowingChannel = false;
     _isCheckingChatAccess = true;
-    _error = _anonymousOnly ? "Chat sign-in expired. Sign in again to send messages." : null;
+    _error = null;
     notifyListeners();
 
     String? token;
     TwitchUser? user;
     var credentials = _sessionCredentials;
-    String? readOnlyReason = _error;
+    String? readOnlyReason = _anonymousOnly
+        ? "Chat sign-in expired. Sign in again to send messages."
+        : null;
     if (!_anonymousOnly) {
       try {
         final client = await clientLoader().timeout(const Duration(seconds: 5));
@@ -752,7 +761,7 @@ class TwitchChatController extends ChangeNotifier {
         _joinTimer?.cancel();
         _attempt = 0;
         _status = TwitchChatStatus.connected;
-        _error = _readOnlyReason;
+        _setError(_readOnlyReason);
         if (!_welcomed) {
           _welcomed = true;
           addSystemMessage("Welcome to $channel's Chat!");
@@ -1096,11 +1105,13 @@ class TwitchChatController extends ChangeNotifier {
       return false;
     }
     if (!canSend || _socket == null) {
-      _error = !isSignedIn
-          ? "Sign in to Twitch to chat."
-          : _status != TwitchChatStatus.connected
-          ? "Wait for chat to reconnect before sending."
-          : null;
+      _setError(
+        !isSignedIn
+            ? "Sign in to Twitch to chat."
+            : _status != TwitchChatStatus.connected
+            ? "Wait for chat to reconnect before sending."
+            : null,
+      );
       notifyListeners();
       return false;
     }
@@ -1108,12 +1119,12 @@ class TwitchChatController extends ChangeNotifier {
       return false;
     }
     if (text.isEmpty || text.runes.length > 500 || RegExp(r"[\x00-\x1f\x7f]").hasMatch(text)) {
-      _error = "Use a message of 1–500 characters on a single line.";
+      _setError("Use a message of 1–500 characters on a single line.");
       notifyListeners();
       return false;
     }
     if (replyTo != null && !RegExp(r"^[a-zA-Z0-9_-]+$").hasMatch(replyTo.id)) {
-      _error = "This message cannot be replied to.";
+      _setError("This message cannot be replied to.");
       notifyListeners();
       return false;
     }
@@ -1123,7 +1134,7 @@ class TwitchChatController extends ChangeNotifier {
     }
     if (_sentAt.length >= 20 ||
         (_sentAt.isNotEmpty && now.difference(_sentAt.last) < const Duration(seconds: 1))) {
-      _error = "You are sending messages too quickly. Try again shortly.";
+      _setError("You are sending messages too quickly. Try again shortly.");
       notifyListeners();
       return false;
     }
@@ -1166,7 +1177,7 @@ class TwitchChatController extends ChangeNotifier {
       _error = null;
       _sendTimer = Timer(const Duration(seconds: 10), () {
         _lost(_generation);
-        _error = "Twitch did not confirm delivery. Your draft has been kept.";
+        _setError("Twitch did not confirm delivery. Your draft has been kept.");
         notifyListeners();
       });
       notifyListeners();

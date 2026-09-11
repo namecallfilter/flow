@@ -716,7 +716,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     if (_chattersKey!.login == null) {
       return;
     }
-    var chatters = _loadChatters();
+    var chatters = _loadChatters(refresh: true);
     var query = "";
     await _showSheet<void>(
       builder: (context) => Padding(
@@ -1143,6 +1143,27 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
                           ? null
                           : () async {
                               if (following) {
+                                final confirmed = await showDialog<bool>(
+                                  context: context,
+                                  builder: (context) => AlertDialog(
+                                    title: Text("Unfollow $channel?"),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(context, false),
+                                        child: const Text("Cancel"),
+                                      ),
+                                      FilledButton(
+                                        onPressed: () => Navigator.pop(context, true),
+                                        child: const Text("Unfollow"),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (confirmed != true ||
+                                    !context.mounted ||
+                                    controller != widget.controller) {
+                                  return;
+                                }
                                 await controller.unfollowChannel();
                               } else {
                                 await controller.followChannel();
@@ -2135,7 +2156,6 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
         .where((message) => message.isPrivate && message.noticeType == "watch-streak")
         .firstOrNull;
     final status = controller?.status ?? replay!.status;
-    final error = controller?.error ?? replay?.error;
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final connected = status == TwitchChatStatus.connected;
@@ -2447,17 +2467,18 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
                                     ),
                                   ),
                                 ),
-                              if (error != null)
-                                Padding(
-                                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
-                                  child: Semantics(
-                                    liveRegion: true,
-                                    child: Text(
-                                      error,
-                                      style: theme.textTheme.bodySmall?.copyWith(
-                                        color: colors.error,
-                                      ),
-                                    ),
+                              if (replay?.error case final error?)
+                                _ChatMessageRow(
+                                  settings: _settings,
+                                  horizontalPadding: 12,
+                                  message: TwitchChatMessage(
+                                    id: "chat-replay-error",
+                                    login: "",
+                                    displayName: "",
+                                    text: "",
+                                    isPrivate: true,
+                                    noticeType: "notice",
+                                    noticeText: error,
                                   ),
                                 ),
                               if (_replyTo case final message?)
@@ -3799,7 +3820,8 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
         RegExp(r"[\u2801-\u28ff]").hasMatch(text) &&
         tokens.every(
           (token) =>
-              token.length == tokens.first.length && RegExp(r"^[\u2800-\u28ff]+$").hasMatch(token),
+              (token.length >= 16 || token.length == tokens.first.length) &&
+              RegExp(r"^[\u2800-\u28ff]+$").hasMatch(token),
         );
     if (braille) {
       content.add(TextSpan(text: tokens.join("\n")));
@@ -3877,7 +3899,7 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
       width: double.infinity,
       child: FittedBox(
         key: ValueKey("chat_message_art-${message.id}"),
-        fit: braille && tokens.first.length >= 16 ? BoxFit.fitWidth : BoxFit.scaleDown,
+        fit: BoxFit.scaleDown,
         alignment: braille ? Alignment.centerLeft : Alignment.center,
         child: Text.rich(
           TextSpan(children: content),
@@ -4089,7 +4111,7 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
       );
       offset = end;
     }
-    _appendText(content, message.text.substring(offset));
+    _appendText(content, message.text.substring(offset).replaceFirst(RegExp(r"[\s\u034f]+$"), ""));
     if (widget.previewPrefix case final prefix?) {
       return IgnorePointer(
         child: Text.rich(

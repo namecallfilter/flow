@@ -156,6 +156,7 @@ class TwitchChatAssets extends ChangeNotifier {
   Completer<void>? _sevenAbort;
   bool _isLoadingUnlocked = false;
   String? _unlockedError;
+  String? _unlockedToken;
   final Set<String> _imageQueue = {};
   final Set<String> _imagesInFlight = {};
   final Map<String, DateTime> _imageRetryAfter = {};
@@ -242,25 +243,40 @@ query($id: String!) {
     }
     _isLoadingUnlocked = true;
     _unlockedError = null;
-    _publish("twitch-unlocked", {});
+    notifyListeners();
     try {
       final client = await clientLoader();
-      final native =
-          _nativeCache[channelLogin]?.assets ??
-          await client.fetchChatAssets(channelLogin).timeout(const Duration(seconds: 15));
-      final namesById = {
-        for (final entry in native.globalEmoteIdsByName.entries) entry.value: entry.key,
-      };
-      final emotes = await client
-          .fetchUnlockedChatEmotes(channelId ?? native.channelId)
-          .timeout(const Duration(seconds: 15));
-      if (!_disposed) {
-        _publish(
-          "twitch-unlocked",
-          _nativeEmotes({
-            for (final entry in emotes.entries) namesById[entry.value] ?? entry.key: entry.value,
-          }),
-        );
+      if (_disposed) {
+        return;
+      }
+      if (_unlockedToken != client.gqlAccessToken) {
+        _unlockedToken = client.gqlAccessToken;
+        _publish("twitch-unlocked", {});
+      }
+      Map<String, ChatAssetEmote>? loaded;
+      try {
+        final native =
+            _nativeCache[channelLogin]?.assets ??
+            await client.fetchChatAssets(channelLogin).timeout(const Duration(seconds: 15));
+        final namesById = {
+          for (final entry in native.globalEmoteIdsByName.entries) entry.value: entry.key,
+        };
+        final emotes = await client
+            .fetchUnlockedChatEmotes(channelId ?? native.channelId)
+            .timeout(const Duration(seconds: 15));
+        loaded = _nativeEmotes({
+          for (final entry in emotes.entries) namesById[entry.value] ?? entry.key: entry.value,
+        });
+      } finally {
+        final current = await clientLoader();
+        if (!_disposed) {
+          if (_unlockedToken != current.gqlAccessToken) {
+            _unlockedToken = current.gqlAccessToken;
+            _publish("twitch-unlocked", {});
+          } else if (loaded != null) {
+            _publish("twitch-unlocked", loaded);
+          }
+        }
       }
     } on Object {
       if (!_disposed) {

@@ -194,7 +194,65 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byTooltip("twitch-channel"), findsNothing);
     expect(find.byTooltip("first-old"), findsNothing);
-    expect(find.byTooltip("second-old"), findsOneWidget);
+    expect(find.byTooltip("second-old"), findsNothing);
+    expect(find.byTooltip("sevenTv-channel\nOriginal name: Original"), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets("recents only show current channel emotes and unlocked Twitch emotes", (
+    tester,
+  ) async {
+    final assets = _Assets()..channelUnlocked = false;
+    final otherChannel = _Assets()
+      ..channelName = "other"
+      ..channelUnlocked = false;
+    final preferences = MemoryFlowPreferences();
+    addTearDown(assets.dispose);
+    addTearDown(otherChannel.dispose);
+    final stored = [
+      for (final (provider, scope) in [
+        (ChatEmoteProvider.sevenTv, ChatEmoteScope.channel),
+        (ChatEmoteProvider.bttv, ChatEmoteScope.global),
+        (ChatEmoteProvider.twitch, ChatEmoteScope.channel),
+        (ChatEmoteProvider.twitch, ChatEmoteScope.global),
+        (ChatEmoteProvider.twitch, ChatEmoteScope.unlocked),
+      ])
+        for (final emote in assets.emotesFor(provider, scope))
+          jsonEncode({
+            "provider": emote.provider.name,
+            "id": emote.id,
+            "name": emote.name,
+            "url": emote.url,
+          }),
+      jsonEncode({
+        "provider": "bttv",
+        "id": "removed-emote-with-reused-name",
+        "name": "bttv-channel",
+        "url": "https://example.com/removed.webp",
+      }),
+    ];
+    await preferences.saveRecentChatEmotes(stored);
+    await tester.pumpWidget(_picker(assets, preferences, height: 400));
+    await tester.pumpAndSettle();
+    expect(assets.unlockedLoads, 1);
+    expect(find.byTooltip("sevenTv-channel\nOriginal name: Original"), findsOneWidget);
+    expect(find.byTooltip("bttv-global"), findsOneWidget);
+    expect(find.byTooltip("twitch-channel"), findsNothing);
+    expect(find.byTooltip("twitch-global"), findsOneWidget);
+    expect(find.byTooltip("twitch-unlocked"), findsOneWidget);
+    expect(find.byTooltip("bttv-channel"), findsNothing);
+
+    await tester.pumpWidget(_picker(otherChannel, preferences, height: 400));
+    await tester.pumpAndSettle();
+    expect(otherChannel.unlockedLoads, 1);
+    expect(find.byTooltip("sevenTv-channel\nOriginal name: Original"), findsNothing);
+    expect(find.byTooltip("bttv-global"), findsOneWidget);
+    expect(find.byTooltip("twitch-unlocked"), findsOneWidget);
+    expect(await preferences.readRecentChatEmotes(), stored);
+
+    await tester.pumpWidget(_picker(assets, preferences, height: 400));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip("sevenTv-channel\nOriginal name: Original"), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -308,6 +366,15 @@ class _Assets extends TwitchChatAssets {
   int unlockedLoads = 0;
   int count = 1;
   bool failed = false;
+  bool channelUnlocked = true;
+  String channelName = "channel";
+
+  @override
+  Map<String, ChatAssetEmote> get emotesByName => {
+    for (final provider in ChatEmoteProvider.values)
+      for (final scope in [ChatEmoteScope.global, ChatEmoteScope.channel])
+        for (final emote in emotesFor(provider, scope)) emote.name: emote,
+  };
 
   @override
   List<String> get errors => failed ? const ["Emotes could not be loaded. Try again."] : const [];
@@ -322,10 +389,15 @@ class _Assets extends TwitchChatAssets {
   List<ChatAssetEmote> emotesFor(ChatEmoteProvider provider, ChatEmoteScope scope) => failed
       ? []
       : [
+          if (provider == ChatEmoteProvider.twitch &&
+              scope == ChatEmoteScope.unlocked &&
+              channelUnlocked)
+            ...emotesFor(provider, ChatEmoteScope.channel),
           for (var index = 0; index < count; index++)
             ChatAssetEmote(
-              name: "${provider.name}-${scope.name}${count == 1 ? "" : "-$index"}",
-              id: "${provider.name}-${scope.name}",
+              name:
+                  "${provider.name}-${scope == ChatEmoteScope.channel ? channelName : scope.name}${count == 1 ? "" : "-$index"}",
+              id: "${provider.name}-${scope == ChatEmoteScope.channel ? channelName : scope.name}",
               provider: provider,
               url: provider == ChatEmoteProvider.twitch
                   ? "https://static-cdn.jtvnw.net/emoticons/v2/${scope.name}/default/dark/2.0"

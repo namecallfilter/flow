@@ -238,7 +238,7 @@ void main() {
       },
       {
         "type": "update-message",
-        "data": {"id": "initial-pin", "ends_at": 1},
+        "data": {"id": "initial-pin", "ends_at": 4102444800},
       },
     ]) {
       final initial = Completer<TwitchPinnedChat?>();
@@ -262,13 +262,13 @@ void main() {
             : null,
       );
       if (change["type"] == "update-message") {
-        expect(pins.pin?.endsAt, DateTime.fromMillisecondsSinceEpoch(1000, isUtc: true));
+        expect(pins.pin?.endsAt, DateTime.utc(2100));
       }
       pins.dispose();
     }
   });
 
-  testWidgets("updates pin timing but waits for Twitch to remove an expired pin", (tester) async {
+  testWidgets("expires pins at Twitch's deadline and applies timing updates", (tester) async {
     final socket = _Socket();
     final pins = TwitchChatPins(
       channelId: "123",
@@ -297,11 +297,13 @@ void main() {
       "ends_at": DateTime.now().add(const Duration(seconds: 2)).millisecondsSinceEpoch / 1000,
     });
     await tester.pump(const Duration(seconds: 2));
-    expect(pins.pin?.id, "current");
+    expect(pins.pin, isNull);
+    socket.event("pin-message", _eventPin("current"));
     socket.event("unpin-message", {"id": "current"});
     expect(pins.pin, isNull);
     socket.event("pin-message", _eventPin("expired", endsAt: 1));
-    expect(pins.pin?.id, "expired");
+    await tester.pump(Duration.zero);
+    expect(pins.pin, isNull);
     socket.event("pin-message", _eventPin("unknown-pinner")..remove("pinned_by"));
     expect(pins.pin?.id, "unknown-pinner");
     expect(pins.pin?.pinnedBy, isNull);
@@ -311,6 +313,28 @@ void main() {
     );
     expect(pins.pin?.id, "missing-pinner-id");
     expect(pins.pin?.pinnedBy, isNull);
+    pins.dispose();
+  });
+
+  testWidgets("expires initial pins while disconnected", (tester) async {
+    final socket = _Socket();
+    final pins = TwitchChatPins(
+      channelId: "123",
+      socketConnector: () async => socket,
+      loadInitial: () async => TwitchPinnedChat(
+        id: _initialPin.id,
+        message: _initialPin.message,
+        endsAt: DateTime.now().add(const Duration(seconds: 2)),
+      ),
+    );
+    await tester.pump();
+    socket.welcome();
+    socket.acknowledge();
+    await tester.pump();
+    expect(pins.pin?.id, "initial-pin");
+    socket.receive({"type": "reconnect"});
+    await tester.pump(const Duration(seconds: 2));
+    expect(pins.pin, isNull);
     pins.dispose();
   });
 

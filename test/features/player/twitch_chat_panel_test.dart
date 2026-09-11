@@ -286,6 +286,18 @@ void main() {
     expect(find.textContaining("you have 1m left."), findsOneWidget);
     await tester.tap(find.widgetWithText(FilledButton, "Unfollow"));
     await tester.pumpAndSettle();
+    expect(find.text("Unfollow Test Channel?"), findsOneWidget);
+    expect(controller.unfollowCalls, 0);
+    await tester.tap(find.text("Cancel"));
+    await tester.pumpAndSettle();
+    expect(controller.unfollowCalls, 0);
+    expect(find.widgetWithText(FilledButton, "Unfollow"), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, "Unfollow"));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(of: find.byType(AlertDialog), matching: find.text("Unfollow")),
+    );
+    await tester.pumpAndSettle();
     expect(controller.unfollowCalls, 1);
     expect(controller.followCalls, 0);
     expect(find.widgetWithText(FilledButton, "Follow"), findsOneWidget);
@@ -1452,9 +1464,21 @@ void main() {
     controller.signedIn = true;
     controller.connectionStatus = TwitchChatStatus.reconnecting;
     controller.notice = "Connection lost. Retrying…";
+    controller.items.add(
+      TwitchChatMessage(
+        id: "connection-error",
+        login: "",
+        displayName: "",
+        text: "",
+        isPrivate: true,
+        noticeType: "notice",
+        noticeText: controller.notice,
+      ),
+    );
     controller.update();
     await tester.pump();
     expect(find.text("Connection lost. Retrying…"), findsOneWidget);
+    expect(find.text("Only visible to you"), findsOneWidget);
     expect(
       tester.widget<TextField>(find.byType(TextField)).decoration!.hintText,
       "Chat disconnected",
@@ -1475,7 +1499,7 @@ void main() {
   testWidgets("VOD replay retains a disabled composer and a watch action", (
     tester,
   ) async {
-    final replay = _ReplayController();
+    final replay = _ReplayController()..notice = "Chat replay is unavailable.";
     addTearDown(replay.dispose);
     var watching = false;
     await tester.pumpWidget(
@@ -1492,6 +1516,13 @@ void main() {
       ),
     );
     expect(find.text("Chat replay"), findsOneWidget);
+    expect(find.text("Chat replay is unavailable."), findsOneWidget);
+    expect(find.text("Only visible to you"), findsOneWidget);
+    replay.notice = null;
+    replay.update();
+    await tester.pump();
+    expect(find.text("Chat replay is unavailable."), findsNothing);
+    expect(find.text("Only visible to you"), findsNothing);
     expect(find.text("Synced to video"), findsNothing);
     expect(find.textContaining("recorded message", findRichText: true), findsOneWidget);
     final input = tester.widget<TextField>(find.byKey(const ValueKey("chat_message_input")));
@@ -2376,7 +2407,7 @@ void main() {
     await _openMenu(tester);
     await tester.tap(find.text("Chatters"));
     await tester.pumpAndSettle();
-    expect(client.calls, 1);
+    expect(client.calls, 2);
     expect(find.text("Chatters · 44000"), findsOneWidget);
     expect(find.text("Showing 1201 names returned by Twitch"), findsOneWidget);
     expect(find.text("Chatbots"), findsOneWidget);
@@ -2400,8 +2431,23 @@ void main() {
     );
     await tester.tap(find.byTooltip("Refresh chatters"));
     await tester.pumpAndSettle();
-    expect(client.calls, 2);
+    expect(client.calls, 3);
     expect(find.text("newlurker1199"), findsOneWidget);
+    tester.view.resetViewInsets();
+    Navigator.of(tester.element(find.byKey(const ValueKey("chatters_search")))).pop();
+    await tester.pumpAndSettle();
+    client.result = const TwitchChatters(
+      count: 1,
+      groups: {
+        "viewers": ["anotherlurker"],
+      },
+    );
+    await _openMenu(tester);
+    await tester.tap(find.text("Chatters"));
+    await tester.pumpAndSettle();
+    expect(client.calls, 4);
+    expect(find.text("anotherlurker"), findsOneWidget);
+    expect(find.text("newlurker1199"), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -2813,6 +2859,13 @@ class _ReplayController extends TwitchVodChatController {
         videoId: "123",
         autoLoad: false,
       );
+
+  String? notice;
+
+  @override
+  String? get error => notice;
+
+  void update() => notifyListeners();
 
   @override
   TwitchChatStatus get status => TwitchChatStatus.connected;

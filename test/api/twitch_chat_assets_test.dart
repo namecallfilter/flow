@@ -139,6 +139,83 @@ void main() {
     );
   });
 
+  test("unlocked refresh keeps the current session's catalogue through a failure", () async {
+    final pending = Completer<Map<String, String>>();
+    var refresh = false;
+    var client = _Client(
+      gqlAccessToken: "first-session",
+      onUnlocked: (_) async => refresh ? pending.future : {"MySubEmote": "mine"},
+    );
+    final assets = TwitchChatAssets(
+      clientLoader: () async => client,
+      channelLogin: "retained_unlocked",
+      autoLoad: false,
+    );
+    addTearDown(assets.dispose);
+    await assets.loadUnlockedEmotes();
+    refresh = true;
+    final refreshing = assets.loadUnlockedEmotes();
+    await Future<void>.delayed(Duration.zero);
+    expect(assets.isLoadingUnlocked, isTrue);
+    expect(assets.emotesByName["MySubEmote"]?.id, "mine");
+    pending.completeError(TwitchApiException("temporary failure"));
+    await refreshing;
+    expect(assets.unlockedError, isNotNull);
+    expect(assets.emotesByName["MySubEmote"]?.id, "mine");
+
+    client = _Client(
+      gqlAccessToken: "second-session",
+      onUnlocked: (_) async => throw TwitchApiException("temporary failure"),
+    );
+    await assets.loadUnlockedEmotes();
+    expect(assets.emotesFor(ChatEmoteProvider.twitch, ChatEmoteScope.unlocked), isEmpty);
+    expect(assets.emotesByName["MySubEmote"], isNull);
+    client = _Client(
+      gqlAccessToken: "second-session",
+      onUnlocked: (_) async => {"OtherSubEmote": "other"},
+    );
+    await assets.loadUnlockedEmotes();
+    expect(assets.emotesByName["OtherSubEmote"]?.id, "other");
+    client = _Client();
+    await assets.loadUnlockedEmotes();
+    expect(assets.emotesFor(ChatEmoteProvider.twitch, ChatEmoteScope.unlocked), isEmpty);
+    expect(assets.emotesByName["OtherSubEmote"], isNull);
+  });
+
+  for (final fails in [false, true]) {
+    test(
+      "unlocked refresh discards a previous account's ${fails ? "failed" : "late"} result",
+      () async {
+        final pending = Completer<Map<String, String>>();
+        var refresh = false;
+        var client = _Client(
+          gqlAccessToken: "first-session",
+          onUnlocked: (_) async => refresh ? pending.future : {"MySubEmote": "mine"},
+        );
+        final assets = TwitchChatAssets(
+          clientLoader: () async => client,
+          channelLogin: "switched_unlocked",
+          autoLoad: false,
+        );
+        addTearDown(assets.dispose);
+        await assets.loadUnlockedEmotes();
+        refresh = true;
+        final refreshing = assets.loadUnlockedEmotes();
+        await Future<void>.delayed(Duration.zero);
+        client = _Client(gqlAccessToken: "second-session");
+        if (fails) {
+          pending.completeError(TwitchApiException("temporary failure"));
+        } else {
+          pending.complete({"LateSubEmote": "late"});
+        }
+        await refreshing;
+        expect(assets.emotesFor(ChatEmoteProvider.twitch, ChatEmoteScope.unlocked), isEmpty);
+        expect(assets.emotesByName["MySubEmote"], isNull);
+        expect(assets.emotesByName["LateSubEmote"], isNull);
+      },
+    );
+  }
+
   testWidgets("precaches only sent images and reuses decoded images with the current theme", (
     tester,
   ) async {
@@ -671,7 +748,8 @@ const _native = TwitchNativeChatAssets(
 );
 
 class _Client extends TwitchApiClient {
-  _Client({this.onLoad, this.onUnlocked}) : super(clientId: "test", accessToken: "");
+  _Client({this.onLoad, this.onUnlocked, super.gqlAccessToken})
+    : super(clientId: "test", accessToken: "");
   final Future<TwitchNativeChatAssets> Function()? onLoad;
   final Future<Map<String, String>> Function(String channelId)? onUnlocked;
   @override

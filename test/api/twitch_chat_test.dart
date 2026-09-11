@@ -850,6 +850,8 @@ void main() {
     await server.join(chat);
     expect(await chat.send("hello\r\nJOIN #other"), isFalse);
     expect(await chat.send("a" * 501), isFalse);
+    expect(chat.messages.where((message) => message.isPrivate), hasLength(1));
+    expect(chat.messages.last.noticeText, "Use a message of 1–500 characters on a single line.");
     expect(server.commands.where((command) => command.startsWith("PRIVMSG")), isEmpty);
 
     var immediatelyDisplayed = false;
@@ -915,6 +917,8 @@ void main() {
     expect(chat.error, isNull);
     expect(await chat.send("too fast"), isFalse);
     expect(chat.error, contains("too quickly"));
+    expect(chat.messages.last.isPrivate, isTrue);
+    expect(chat.messages.last.noticeText, chat.error);
 
     await Future<void>.delayed(const Duration(milliseconds: 1050));
     final interrupted = chat.send("pending message");
@@ -1134,6 +1138,8 @@ void main() {
     expect(chat.canSend, isFalse);
     expect(chat.isSignedIn, isFalse);
     expect(await chat.send("cannot send"), isFalse);
+    expect(chat.messages.last.isPrivate, isTrue);
+    expect(chat.messages.last.noticeText, "Sign in to Twitch to chat.");
     server.send("@id=one :person!p@tmi PRIVMSG #channel :before loss\r\n");
     await _waitFor(() => chat.conversation.isNotEmpty);
     unawaited(server.sockets.last.close());
@@ -1158,6 +1164,8 @@ void main() {
       await server.join(chat, connection: 2);
       expect(chat.canSend, isFalse);
       expect(chat.error, contains("Sign in again"));
+      expect(chat.messages.where((message) => message.isPrivate), hasLength(1));
+      expect(chat.messages.singleWhere((message) => message.isPrivate).noticeText, chat.error);
       expect(server.commands.where((command) => command.startsWith("PASS")).length, 1);
       chat.reconnect();
       await server.join(chat, connection: 3);
@@ -1326,6 +1334,24 @@ void main() {
     expect(chat.messages.singleWhere((message) => message.id == notice.id).isDeleted, isFalse);
     expect(server.commands, sent);
   });
+
+  test(
+    "a rejected send has one private notice and preserves its error without a public row",
+    () async {
+      final chat = controller();
+      await server.join(chat);
+      const reason = "Your message is identical to the previous one you sent.";
+      server.send(
+        "@id=rejection;msg-id=msg_duplicate :tmi.twitch.tv NOTICE #channel :$reason\r\n"
+        "@id=rejection;msg-id=msg_duplicate :tmi.twitch.tv NOTICE #channel :$reason\r\n",
+      );
+      await _waitFor(() => chat.error == reason);
+      expect(chat.messages.where((message) => message.isPrivate), hasLength(1));
+      expect(chat.messages.last.noticeText, reason);
+      expect(chat.conversation, isEmpty);
+      expect(chat.receivedMessageCount, 0);
+    },
+  );
 
   testWidgets("auto claim stays off by default and requires a signed-in connected viewer", (
     tester,

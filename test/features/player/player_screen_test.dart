@@ -285,7 +285,7 @@ void main() {
         final overlayPadding = tester.widget<Padding>(
           find.byKey(const ValueKey("player_overlay_padding")),
         );
-        expect(overlayPadding.padding, const EdgeInsets.fromLTRB(44, 8, 8, 8));
+        expect(overlayPadding.padding, const EdgeInsets.all(8));
         expect(
           tester.getTopLeft(find.byKey(const ValueKey("chat_message_input"))).dx,
           chatRect.left + 12,
@@ -2173,43 +2173,70 @@ void main() {
     expect(currentPlayer._toggleCount, 1);
   });
 
-  testWidgets("fills landscape and mirrors the largest cutout inset", (tester) async {
-    tester.view.physicalSize = const Size(800, 400);
-    tester.view.devicePixelRatio = 1;
-    tester.view.viewPadding = const FakeViewPadding(
-      left: 44,
-      right: 8,
-      top: 3,
-      bottom: 20,
-    );
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    addTearDown(tester.view.resetViewPadding);
+  for (final width in [640.0, 800.0, 1000.0]) {
+    testWidgets("landscape controls stay even at $width pixels with resizable chat", (
+      tester,
+    ) async {
+      tester.view.physicalSize = Size(width, 360);
+      tester.view.devicePixelRatio = 1;
+      tester.view.viewPadding = const FakeViewPadding(
+        left: 44,
+        right: 8,
+        top: 3,
+        bottom: 20,
+      );
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetViewPadding);
 
-    final player = _FakePlayerController();
-    await tester.pumpWidget(_playerApp(player: player));
-    await tester.pump();
-    player.emit(
-      const TwitchPlaybackStateEvent(
-        isPlaying: false,
-        isBuffering: false,
-        playWhenReady: false,
-      ),
-    );
-    await tester.pump();
+      final player = _FakePlayerController();
+      await tester.pumpWidget(_playerApp(player: player));
+      await tester.pump();
+      player.emit(
+        const TwitchPlaybackStateEvent(
+          isPlaying: false,
+          isBuffering: false,
+          playWhenReady: false,
+        ),
+      );
+      await tester.pump();
 
-    final viewport = tester.getRect(find.byKey(const ValueKey("player_viewport")));
-    final topRow = tester.getRect(find.byKey(const ValueKey("player_top_row")));
-    final bottomRow = tester.getRect(find.byKey(const ValueKey("player_bottom_row")));
+      void expectEvenControls(double horizontalPadding) {
+        final viewport = tester.getRect(find.byKey(const ValueKey("player_viewport")));
+        final topRow = tester.getRect(find.byKey(const ValueKey("player_top_row")));
+        final bottomRow = tester.getRect(find.byKey(const ValueKey("player_bottom_row")));
+        expect(topRow.left - viewport.left, horizontalPadding);
+        expect(viewport.right - topRow.right, horizontalPadding);
+        expect(bottomRow.left, topRow.left);
+        expect(bottomRow.right, topRow.right);
+        expect(topRow.top - viewport.top, 20);
+        expect(viewport.bottom - bottomRow.bottom, 20);
+        expect(
+          tester.getCenter(find.byKey(const ValueKey("player_center_control"))),
+          viewport.center,
+        );
+        expect(tester.takeException(), isNull);
+      }
 
-    expect(viewport, const Rect.fromLTWH(0, 0, 800, 400));
-    expect(topRow.left, 44);
-    expect(topRow.right, 756);
-    expect(bottomRow.left, 44);
-    expect(bottomRow.right, 756);
-    expect(topRow.top, 20);
-    expect(bottomRow.bottom, 380);
-  });
+      expect(tester.getSize(find.byKey(const ValueKey("player_viewport"))), Size(width, 360));
+      expectEvenControls(44);
+      final point = Offset(width * .8, 180);
+      await tester.tapAt(point);
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tapAt(point);
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.byType(TwitchChatPanel).hitTestable(), findsOneWidget);
+      expectEvenControls(8);
+      for (final delta in [-2000.0, 2000.0]) {
+        await tester.drag(
+          find.byKey(const ValueKey("player_chat_resize_handle")),
+          Offset(delta, 0),
+        );
+        await tester.pump();
+        expectEvenControls(8);
+      }
+    });
+  }
 
   testWidgets("rotating preserves the platform player and playback session", (tester) async {
     tester.view.physicalSize = const Size(400, 800);
@@ -2582,6 +2609,98 @@ void main() {
       );
     }
   }
+
+  testWidgets("watchtime counts visible PiP and background audio but excludes suspended video", (
+    tester,
+  ) async {
+    final player = _FakePlayerController();
+    final client = _WatchTimeClient();
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        useApiViewerLoader: true,
+        apiCache: _StreamStatusApiCache(
+          (_) async => _streamStatusPage(online: true),
+          clientLoader: () async => client,
+        ),
+      ),
+    );
+    await tester.pump();
+    const playing = TwitchPlaybackStateEvent(
+      isPlaying: true,
+      isBuffering: false,
+      playWhenReady: true,
+    );
+    player.emit(playing);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 61));
+    expect(client.reports, 1);
+
+    player.emit(const TwitchPictureInPictureEvent(active: true));
+    await tester.pump();
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump(const Duration(seconds: 61));
+    expect(client.reports, 2);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump(const Duration(seconds: 61));
+    expect(client.reports, 2);
+    player.emit(playing);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 61));
+    expect(client.reports, 2);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    player.emit(const TwitchPictureInPictureEvent(active: false));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 61));
+    expect(client.reports, 3);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    player.emit(const TwitchQualitiesEvent(qualities: [], selectedId: "audio_only"));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 61));
+    expect(client.reports, 4);
+    player.emit(const TwitchQualitiesEvent(qualities: [], selectedId: "auto"));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 61));
+    expect(client.reports, 4);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump(const Duration(seconds: 61));
+    expect(client.reports, 5);
+
+    player.emit(const TwitchQualitiesEvent(qualities: [], selectedId: "audio_only"));
+    await tester.pump();
+    for (final event in const <TwitchPlayerEvent>[
+      TwitchPlaybackStateEvent(isPlaying: false, isBuffering: false, playWhenReady: false),
+      TwitchPlaybackStateEvent(isPlaying: true, isBuffering: true, playWhenReady: true),
+      TwitchPlaybackStateEvent(isPlaying: true, isBuffering: false, playWhenReady: false),
+      TwitchPlayerErrorEvent("Playback failed"),
+    ]) {
+      player.emit(playing);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      player.emit(event);
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 61));
+      expect(client.reports, 5, reason: "Background audio must stop after $event");
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump(const Duration(seconds: 61));
+      expect(client.reports, 5, reason: "Must remain stopped after $event");
+    }
+    expect(player._pauseCount, 0);
+    expect(player._playCount, 0);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   testWidgets("leaves background playback and automatic PiP to the native player", (tester) async {
     final player = _FakePlayerController();
@@ -3183,8 +3302,11 @@ Widget _playerApp({
 }
 
 class _StreamStatusApiCache extends TwitchApiCache {
-  _StreamStatusApiCache(this._load, {this.detailsLoader})
-    : super(clientLoader: () async => throw StateError("Only stream status is available"));
+  _StreamStatusApiCache(this._load, {this.detailsLoader, TwitchApiClientLoader? clientLoader})
+    : super(
+        clientLoader:
+            clientLoader ?? () async => throw StateError("Only stream status is available"),
+      );
 
   final Future<TwitchPage<TwitchFollowedStream>> Function(String login) _load;
   final Future<TwitchChannelDetails> Function(String login)? detailsLoader;
@@ -3445,6 +3567,22 @@ class _TrackedChatController extends TwitchChatController {
     disposed = true;
     super.dispose();
   }
+}
+
+class _WatchTimeClient extends TwitchApiClient {
+  _WatchTimeClient() : super(clientId: "test", accessToken: "", gqlAccessToken: "token");
+
+  int reports = 0;
+
+  @override
+  Future<TwitchUser> fetchCurrentUser() async =>
+      const TwitchUser(id: "123", login: "viewer", displayName: "Viewer");
+
+  @override
+  Future<void> reportMinuteWatched({
+    required TwitchFollowedStream stream,
+    required String userId,
+  }) async => reports++;
 }
 
 class _FakePlayerController implements TwitchPlayerController {
