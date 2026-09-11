@@ -288,6 +288,15 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final wasResumed = _appIsResumed;
     _appIsResumed = state == AppLifecycleState.resumed;
+    _watchTime?.setPlaying(
+      playing:
+          _appIsResumed &&
+          _isPlaying &&
+          !_isBuffering &&
+          _playWhenReady &&
+          !_streamEnded &&
+          _errorMessage == null,
+    );
     if (state == AppLifecycleState.hidden || state == AppLifecycleState.paused) {
       _chatWasBackgrounded = true;
     }
@@ -904,7 +913,9 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
           _markStreamEnded();
           return;
         }
-        _watchTime?.setPlaying(playing: isPlaying && !isBuffering && playWhenReady && !isEnded);
+        _watchTime?.setPlaying(
+          playing: _appIsResumed && isPlaying && !isBuffering && playWhenReady && !isEnded,
+        );
         final startedPlaying = isPlaying && !isBuffering && (!_isPlaying || _isBuffering);
         final playbackChanged =
             _isPlaying != isPlaying ||

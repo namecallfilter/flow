@@ -2610,6 +2610,69 @@ void main() {
     }
   }
 
+  testWidgets("watchtime excludes background playback and resumes only active playback", (
+    tester,
+  ) async {
+    final player = _FakePlayerController();
+    final client = _WatchTimeClient();
+    await tester.pumpWidget(
+      _playerApp(
+        player: player,
+        useApiViewerLoader: true,
+        apiCache: _StreamStatusApiCache(
+          (_) async => _streamStatusPage(online: true),
+          clientLoader: () async => client,
+        ),
+      ),
+    );
+    await tester.pump();
+    const playing = TwitchPlaybackStateEvent(
+      isPlaying: true,
+      isBuffering: false,
+      playWhenReady: true,
+    );
+    player.emit(playing);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 61));
+    expect(client.reports, 1);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pump(const Duration(seconds: 61));
+    expect(client.reports, 1);
+    player.emit(playing);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 61));
+    expect(client.reports, 1);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump(const Duration(seconds: 61));
+    expect(client.reports, 1);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump(const Duration(seconds: 61));
+    expect(client.reports, 2);
+
+    for (final event in const <TwitchPlayerEvent>[
+      TwitchPlaybackStateEvent(isPlaying: false, isBuffering: false, playWhenReady: false),
+      TwitchPlaybackStateEvent(isPlaying: true, isBuffering: true, playWhenReady: true),
+      TwitchPlaybackStateEvent(isPlaying: true, isBuffering: false, playWhenReady: false),
+      TwitchPlayerErrorEvent("Playback failed"),
+    ]) {
+      player.emit(playing);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      player.emit(event);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump(const Duration(seconds: 61));
+      expect(client.reports, 2, reason: "Must remain stopped after $event");
+    }
+    expect(player._pauseCount, 0);
+    expect(player._playCount, 0);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets("leaves background playback and automatic PiP to the native player", (tester) async {
     final player = _FakePlayerController();
     await tester.pumpWidget(_playerApp(player: player));
@@ -3210,8 +3273,11 @@ Widget _playerApp({
 }
 
 class _StreamStatusApiCache extends TwitchApiCache {
-  _StreamStatusApiCache(this._load, {this.detailsLoader})
-    : super(clientLoader: () async => throw StateError("Only stream status is available"));
+  _StreamStatusApiCache(this._load, {this.detailsLoader, TwitchApiClientLoader? clientLoader})
+    : super(
+        clientLoader:
+            clientLoader ?? () async => throw StateError("Only stream status is available"),
+      );
 
   final Future<TwitchPage<TwitchFollowedStream>> Function(String login) _load;
   final Future<TwitchChannelDetails> Function(String login)? detailsLoader;
@@ -3472,6 +3538,22 @@ class _TrackedChatController extends TwitchChatController {
     disposed = true;
     super.dispose();
   }
+}
+
+class _WatchTimeClient extends TwitchApiClient {
+  _WatchTimeClient() : super(clientId: "test", accessToken: "", gqlAccessToken: "token");
+
+  int reports = 0;
+
+  @override
+  Future<TwitchUser> fetchCurrentUser() async =>
+      const TwitchUser(id: "123", login: "viewer", displayName: "Viewer");
+
+  @override
+  Future<void> reportMinuteWatched({
+    required TwitchFollowedStream stream,
+    required String userId,
+  }) async => reports++;
 }
 
 class _FakePlayerController implements TwitchPlayerController {
