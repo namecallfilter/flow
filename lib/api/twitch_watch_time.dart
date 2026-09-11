@@ -69,12 +69,11 @@ class TwitchWatchTime {
 
   Future<void> _prepare() async {
     _inFlight = true;
-    final generation = _generation;
     try {
       final client = await clientLoader().timeout(const Duration(seconds: 5));
       if (client.gqlAccessToken?.trim().isNotEmpty == true) {
         final user = await client.fetchCurrentUser().timeout(const Duration(seconds: 10));
-        if (!_disposed && generation == _generation) {
+        if (!_disposed) {
           _client = client;
           _userId = user.id;
         }

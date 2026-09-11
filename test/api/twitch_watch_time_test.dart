@@ -180,6 +180,40 @@ void main() {
     tracker.dispose();
   });
 
+  for (final loading in ["client", "user"]) {
+    testWidgets("retains preparation when the broadcast changes during $loading loading", (
+      tester,
+    ) async {
+      final client = _Client("first");
+      final pendingClient = Completer<TwitchApiClient>();
+      final pendingUser = Completer<void>();
+      if (loading == "user") {
+        client.pendingUser = pendingUser;
+        pendingClient.complete(client);
+      }
+      final tracker = TwitchWatchTime(
+        clientLoader: () => pendingClient.future,
+        stopwatch: tester.binding.clock.stopwatch(),
+      );
+      tracker.updateStream(_stream());
+      tracker.setPlaying(playing: true);
+      await tester.pump(const Duration(seconds: 2));
+      tracker.updateStream(_stream(id: "101"));
+      await tester.pump(const Duration(seconds: 1));
+      if (loading == "client") {
+        pendingClient.complete(client);
+      } else {
+        pendingUser.complete();
+      }
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 58));
+      expect(client.reports, isEmpty);
+      await tester.pump(const Duration(seconds: 1));
+      expect(client.reports, ["first:101"]);
+      tracker.dispose();
+    });
+  }
+
   for (final signedOut in [true, false]) {
     testWidgets("discards preparation and retry time when signedOut=$signedOut", (tester) async {
       final unavailable = _Client(signedOut ? "" : "first")..failUser = !signedOut;
@@ -252,23 +286,29 @@ void main() {
     tracker.dispose();
   });
 
-  testWidgets("an in-flight session read cannot send after the player closes", (tester) async {
-    final client = _Client("first");
-    Completer<TwitchApiClient>? pending;
-    final tracker = TwitchWatchTime(
-      clientLoader: () async => pending?.future ?? client,
-      stopwatch: tester.binding.clock.stopwatch(),
-    );
-    tracker.updateStream(_stream());
-    tracker.setPlaying(playing: true);
-    await tester.pump();
-    pending = Completer<TwitchApiClient>();
-    await tester.pump(const Duration(minutes: 1));
-    tracker.dispose();
-    pending.complete(client);
-    await tester.pump();
-    expect(client.reports, isEmpty);
-  });
+  for (final stage in ["preparation", "session read"]) {
+    testWidgets("an in-flight $stage cannot send after the player closes", (tester) async {
+      final client = _Client("first");
+      Completer<TwitchApiClient>? pending = stage == "preparation"
+          ? Completer<TwitchApiClient>()
+          : null;
+      final tracker = TwitchWatchTime(
+        clientLoader: () async => pending?.future ?? client,
+        stopwatch: tester.binding.clock.stopwatch(),
+      );
+      tracker.updateStream(_stream());
+      tracker.setPlaying(playing: true);
+      await tester.pump();
+      if (stage == "session read") {
+        pending = Completer<TwitchApiClient>();
+        await tester.pump(const Duration(minutes: 1));
+      }
+      tracker.dispose();
+      pending!.complete(client);
+      await tester.pump(const Duration(minutes: 2));
+      expect(client.reports, isEmpty);
+    });
+  }
 }
 
 TwitchFollowedStream _stream({String id = "100"}) => TwitchFollowedStream(
