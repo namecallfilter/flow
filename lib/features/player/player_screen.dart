@@ -309,9 +309,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   }
 
   void _createChat() {
-    _watchTime = _isLive
-        ? TwitchWatchTime(clientLoader: widget.apiCache.clientLoader, clock: widget.clock)
-        : null;
+    _watchTime = _isLive ? TwitchWatchTime(clientLoader: widget.apiCache.clientLoader) : null;
     _chatAssets =
         widget.chatAssetsFactory?.call(widget.channel.login) ??
         TwitchChatAssets(

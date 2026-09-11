@@ -5,16 +5,15 @@ import "package:flow/api/twitch_api_cache.dart";
 import "package:flutter/foundation.dart";
 
 class TwitchWatchTime {
-  TwitchWatchTime({required this.clientLoader, this.clock = DateTime.now});
+  TwitchWatchTime({required this.clientLoader, Stopwatch? stopwatch})
+    : _watched = stopwatch ?? Stopwatch();
 
   final TwitchApiClientLoader clientLoader;
-  final DateTime Function() clock;
+  final Stopwatch _watched;
   TwitchFollowedStream? _stream;
   TwitchApiClient? _client;
   String? _userId;
   Timer? _timer;
-  DateTime? _startedAt;
-  Duration _watched = Duration.zero;
   bool _playing = false;
   bool _disposed = false;
   bool _inFlight = false;
@@ -23,7 +22,7 @@ class TwitchWatchTime {
   void updateStream(TwitchFollowedStream stream) {
     if (_stream?.id != stream.id || _stream?.userId != stream.userId) {
       _stopTimer();
-      _watched = Duration.zero;
+      _watched.reset();
       _generation++;
     }
     _stream = stream;
@@ -42,21 +41,14 @@ class TwitchWatchTime {
   void _stopTimer() {
     _timer?.cancel();
     _timer = null;
-    if (_startedAt case final startedAt?) {
-      final elapsed = clock().difference(startedAt);
-      if (!elapsed.isNegative) {
-        _watched += elapsed;
-      }
-    }
-    _startedAt = null;
+    _watched.stop();
   }
 
   void _schedule() {
     if (_disposed || !_playing || _stream == null || _timer != null) {
       return;
     }
-    final now = clock();
-    _startedAt ??= now;
+    _watched.start();
     if (_client == null) {
       if (!_inFlight) {
         unawaited(_prepare());
@@ -66,12 +58,10 @@ class TwitchWatchTime {
     if (_inFlight) {
       return;
     }
-    final elapsed = now.difference(_startedAt!);
-    final watched = _watched + (elapsed.isNegative ? Duration.zero : elapsed);
-    _timer = Timer(const Duration(minutes: 1) - watched, () {
+    _timer = Timer(const Duration(minutes: 1) - _watched.elapsed, () {
       _stopTimer();
       // Report at most one real minute; never replay time after a delayed callback.
-      _watched = Duration.zero;
+      _watched.reset();
       unawaited(_report());
       _schedule();
     });
@@ -95,7 +85,7 @@ class TwitchWatchTime {
       _inFlight = false;
       if (_client == null) {
         _stopTimer();
-        _watched = Duration.zero;
+        _watched.reset();
       }
       if (!_disposed && _playing && _client == null) {
         _timer = Timer(const Duration(minutes: 1), () {
@@ -121,7 +111,7 @@ class TwitchWatchTime {
         _stopTimer();
         _client = null;
         _userId = null;
-        _watched = Duration.zero;
+        _watched.reset();
         return;
       }
       await current.reportMinuteWatched(stream: stream, userId: _userId!);

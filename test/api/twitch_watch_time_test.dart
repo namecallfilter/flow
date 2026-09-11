@@ -54,10 +54,11 @@ void main() {
 
   testWidgets("counts only played time and resets for a new broadcast or disposal", (tester) async {
     final client = _Client("first");
-    var now = DateTime(2026);
-    final tracker = TwitchWatchTime(clientLoader: () async => client, clock: () => now);
+    final tracker = TwitchWatchTime(
+      clientLoader: () async => client,
+      stopwatch: tester.binding.clock.stopwatch(),
+    );
     Future<void> advance(int seconds) async {
-      now = now.add(Duration(seconds: seconds));
       await tester.pump(Duration(seconds: seconds));
     }
 
@@ -94,10 +95,11 @@ void main() {
     final client = _Client("first");
     final pendingReport = Completer<void>();
     client.pendingReport = pendingReport;
-    var now = DateTime(2026);
-    final tracker = TwitchWatchTime(clientLoader: () async => client, clock: () => now);
+    final tracker = TwitchWatchTime(
+      clientLoader: () async => client,
+      stopwatch: tester.binding.clock.stopwatch(),
+    );
     Future<void> advance(int seconds) async {
-      now = now.add(Duration(seconds: seconds));
       await tester.pump(Duration(seconds: seconds));
     }
 
@@ -121,18 +123,40 @@ void main() {
     tracker.dispose();
   });
 
+  testWidgets("reports elapsed playback minutes and retains partial time across a long pause", (
+    tester,
+  ) async {
+    final client = _Client("first");
+    final tracker = TwitchWatchTime(
+      clientLoader: () async => client,
+      stopwatch: tester.binding.clock.stopwatch(),
+    );
+    tracker.updateStream(_stream());
+    tracker.setPlaying(playing: true);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 150));
+    expect(client.reports, ["first:100", "first:100"]);
+    tracker.setPlaying(playing: false);
+    await tester.pump(const Duration(days: 1));
+    expect(client.reports, hasLength(2));
+    tracker.setPlaying(playing: true);
+    await tester.pump(const Duration(seconds: 29));
+    expect(client.reports, hasLength(2));
+    await tester.pump(const Duration(seconds: 1));
+    expect(client.reports, hasLength(3));
+    tracker.dispose();
+  });
+
   testWidgets("counts playback during initial client and user loading, excluding pauses", (
     tester,
   ) async {
     final client = _Client("first")..pendingUser = Completer<void>();
     Completer<TwitchApiClient>? pendingClient = Completer<TwitchApiClient>();
-    var now = DateTime(2026);
     final tracker = TwitchWatchTime(
       clientLoader: () async => pendingClient?.future ?? client,
-      clock: () => now,
+      stopwatch: tester.binding.clock.stopwatch(),
     );
     Future<void> advance(int seconds) async {
-      now = now.add(Duration(seconds: seconds));
       await tester.pump(Duration(seconds: seconds));
     }
 
@@ -162,13 +186,11 @@ void main() {
       final signedIn = _Client("second");
       var client = unavailable;
       Completer<TwitchApiClient>? pendingClient = Completer<TwitchApiClient>();
-      var now = DateTime(2026);
       final tracker = TwitchWatchTime(
         clientLoader: () async => pendingClient?.future ?? client,
-        clock: () => now,
+        stopwatch: tester.binding.clock.stopwatch(),
       );
       Future<void> advance(int seconds) async {
-        now = now.add(Duration(seconds: seconds));
         await tester.pump(Duration(seconds: seconds));
       }
 
@@ -201,10 +223,11 @@ void main() {
     final first = _Client("first");
     final second = _Client("second");
     var client = first;
-    var now = DateTime(2026);
-    final tracker = TwitchWatchTime(clientLoader: () async => client, clock: () => now);
+    final tracker = TwitchWatchTime(
+      clientLoader: () async => client,
+      stopwatch: tester.binding.clock.stopwatch(),
+    );
     Future<void> advance() async {
-      now = now.add(const Duration(minutes: 1));
       await tester.pump(const Duration(minutes: 1));
     }
 
@@ -231,17 +254,15 @@ void main() {
 
   testWidgets("an in-flight session read cannot send after the player closes", (tester) async {
     final client = _Client("first");
-    var now = DateTime(2026);
     Completer<TwitchApiClient>? pending;
     final tracker = TwitchWatchTime(
       clientLoader: () async => pending?.future ?? client,
-      clock: () => now,
+      stopwatch: tester.binding.clock.stopwatch(),
     );
     tracker.updateStream(_stream());
     tracker.setPlaying(playing: true);
     await tester.pump();
     pending = Completer<TwitchApiClient>();
-    now = now.add(const Duration(minutes: 1));
     await tester.pump(const Duration(minutes: 1));
     tracker.dispose();
     pending.complete(client);
