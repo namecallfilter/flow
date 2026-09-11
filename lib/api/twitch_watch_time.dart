@@ -55,14 +55,14 @@ class TwitchWatchTime {
     if (_disposed || !_playing || _stream == null || _timer != null) {
       return;
     }
+    final now = clock();
+    _startedAt ??= now;
     if (_client == null) {
       if (!_inFlight) {
         unawaited(_prepare());
       }
       return;
     }
-    final now = clock();
-    _startedAt ??= now;
     if (_inFlight) {
       return;
     }
@@ -93,6 +93,10 @@ class TwitchWatchTime {
       // Watch reporting must not interrupt playback; try again next minute.
     } finally {
       _inFlight = false;
+      if (_client == null) {
+        _stopTimer();
+        _watched = Duration.zero;
+      }
       if (!_disposed && _playing && _client == null) {
         _timer = Timer(const Duration(minutes: 1), () {
           _timer = null;

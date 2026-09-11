@@ -121,6 +121,80 @@ void main() {
     tracker.dispose();
   });
 
+  testWidgets("counts playback during initial client and user loading, excluding pauses", (
+    tester,
+  ) async {
+    final client = _Client("first")..pendingUser = Completer<void>();
+    Completer<TwitchApiClient>? pendingClient = Completer<TwitchApiClient>();
+    var now = DateTime(2026);
+    final tracker = TwitchWatchTime(
+      clientLoader: () async => pendingClient?.future ?? client,
+      clock: () => now,
+    );
+    Future<void> advance(int seconds) async {
+      now = now.add(Duration(seconds: seconds));
+      await tester.pump(Duration(seconds: seconds));
+    }
+
+    tracker.updateStream(_stream());
+    tracker.setPlaying(playing: true);
+    await advance(2);
+    tracker.setPlaying(playing: false);
+    await advance(1);
+    pendingClient.complete(client);
+    pendingClient = null;
+    await tester.pump();
+    await advance(2);
+    tracker.setPlaying(playing: true);
+    await advance(3);
+    client.pendingUser!.complete();
+    await tester.pump();
+    await advance(54);
+    expect(client.reports, isEmpty);
+    await advance(1);
+    expect(client.reports, ["first:100"]);
+    tracker.dispose();
+  });
+
+  for (final signedOut in [true, false]) {
+    testWidgets("discards preparation and retry time when signedOut=$signedOut", (tester) async {
+      final unavailable = _Client(signedOut ? "" : "first")..failUser = !signedOut;
+      final signedIn = _Client("second");
+      var client = unavailable;
+      Completer<TwitchApiClient>? pendingClient = Completer<TwitchApiClient>();
+      var now = DateTime(2026);
+      final tracker = TwitchWatchTime(
+        clientLoader: () async => pendingClient?.future ?? client,
+        clock: () => now,
+      );
+      Future<void> advance(int seconds) async {
+        now = now.add(Duration(seconds: seconds));
+        await tester.pump(Duration(seconds: seconds));
+      }
+
+      tracker.updateStream(_stream());
+      tracker.setPlaying(playing: true);
+      await advance(3);
+      tracker.setPlaying(playing: false);
+      pendingClient.complete(unavailable);
+      pendingClient = null;
+      await tester.pump();
+      await advance(120);
+      tracker.setPlaying(playing: true);
+      await tester.pump();
+      await advance(59);
+      client = signedIn;
+      await advance(1);
+      expect(unavailable.reports, isEmpty);
+      expect(signedIn.reports, isEmpty);
+      await advance(59);
+      expect(signedIn.reports, isEmpty);
+      await advance(1);
+      expect(signedIn.reports, ["second:100"]);
+      tracker.dispose();
+    });
+  }
+
   testWidgets("sign-out and account changes discard minutes attributed to the previous session", (
     tester,
   ) async {
@@ -192,10 +266,17 @@ class _Client extends TwitchApiClient {
 
   final List<String> reports = [];
   Completer<void>? pendingReport;
+  Completer<void>? pendingUser;
+  bool failUser = false;
 
   @override
-  Future<TwitchUser> fetchCurrentUser() async =>
-      TwitchUser(id: "123", login: gqlAccessToken!, displayName: "Viewer");
+  Future<TwitchUser> fetchCurrentUser() async {
+    await pendingUser?.future;
+    if (failUser) {
+      throw TwitchApiException("User unavailable");
+    }
+    return TwitchUser(id: "123", login: gqlAccessToken!, displayName: "Viewer");
+  }
 
   @override
   Future<void> reportMinuteWatched({
