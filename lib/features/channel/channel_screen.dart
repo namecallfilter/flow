@@ -128,6 +128,30 @@ class _ChannelScreenState extends State<ChannelScreen> {
         );
       } else if (toggle && session == _followSession && follow != null) {
         if (follow.isFollowing) {
+          final confirmed = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: Text("Unfollow ${widget.initialChannel.displayName}?"),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text("Cancel"),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text("Unfollow"),
+                ),
+              ],
+            ),
+          );
+          if (confirmed != true || !mounted) {
+            return;
+          }
+          final currentClient = await widget.apiCache.clientLoader();
+          if (!mounted || session != (currentClient.accessToken, currentClient.gqlAccessToken)) {
+            reload = true;
+            return;
+          }
           await client.unfollowChannel(follow.channelId);
         } else {
           await client.followChannel(follow.channelId);

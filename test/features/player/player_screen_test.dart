@@ -285,7 +285,7 @@ void main() {
         final overlayPadding = tester.widget<Padding>(
           find.byKey(const ValueKey("player_overlay_padding")),
         );
-        expect(overlayPadding.padding, const EdgeInsets.fromLTRB(44, 8, 8, 8));
+        expect(overlayPadding.padding, const EdgeInsets.all(8));
         expect(
           tester.getTopLeft(find.byKey(const ValueKey("chat_message_input"))).dx,
           chatRect.left + 12,
@@ -2173,43 +2173,70 @@ void main() {
     expect(currentPlayer._toggleCount, 1);
   });
 
-  testWidgets("fills landscape and mirrors the largest cutout inset", (tester) async {
-    tester.view.physicalSize = const Size(800, 400);
-    tester.view.devicePixelRatio = 1;
-    tester.view.viewPadding = const FakeViewPadding(
-      left: 44,
-      right: 8,
-      top: 3,
-      bottom: 20,
-    );
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    addTearDown(tester.view.resetViewPadding);
+  for (final width in [640.0, 800.0, 1000.0]) {
+    testWidgets("landscape controls stay even at $width pixels with resizable chat", (
+      tester,
+    ) async {
+      tester.view.physicalSize = Size(width, 360);
+      tester.view.devicePixelRatio = 1;
+      tester.view.viewPadding = const FakeViewPadding(
+        left: 44,
+        right: 8,
+        top: 3,
+        bottom: 20,
+      );
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetViewPadding);
 
-    final player = _FakePlayerController();
-    await tester.pumpWidget(_playerApp(player: player));
-    await tester.pump();
-    player.emit(
-      const TwitchPlaybackStateEvent(
-        isPlaying: false,
-        isBuffering: false,
-        playWhenReady: false,
-      ),
-    );
-    await tester.pump();
+      final player = _FakePlayerController();
+      await tester.pumpWidget(_playerApp(player: player));
+      await tester.pump();
+      player.emit(
+        const TwitchPlaybackStateEvent(
+          isPlaying: false,
+          isBuffering: false,
+          playWhenReady: false,
+        ),
+      );
+      await tester.pump();
 
-    final viewport = tester.getRect(find.byKey(const ValueKey("player_viewport")));
-    final topRow = tester.getRect(find.byKey(const ValueKey("player_top_row")));
-    final bottomRow = tester.getRect(find.byKey(const ValueKey("player_bottom_row")));
+      void expectEvenControls(double horizontalPadding) {
+        final viewport = tester.getRect(find.byKey(const ValueKey("player_viewport")));
+        final topRow = tester.getRect(find.byKey(const ValueKey("player_top_row")));
+        final bottomRow = tester.getRect(find.byKey(const ValueKey("player_bottom_row")));
+        expect(topRow.left - viewport.left, horizontalPadding);
+        expect(viewport.right - topRow.right, horizontalPadding);
+        expect(bottomRow.left, topRow.left);
+        expect(bottomRow.right, topRow.right);
+        expect(topRow.top - viewport.top, 20);
+        expect(viewport.bottom - bottomRow.bottom, 20);
+        expect(
+          tester.getCenter(find.byKey(const ValueKey("player_center_control"))),
+          viewport.center,
+        );
+        expect(tester.takeException(), isNull);
+      }
 
-    expect(viewport, const Rect.fromLTWH(0, 0, 800, 400));
-    expect(topRow.left, 44);
-    expect(topRow.right, 756);
-    expect(bottomRow.left, 44);
-    expect(bottomRow.right, 756);
-    expect(topRow.top, 20);
-    expect(bottomRow.bottom, 380);
-  });
+      expect(tester.getSize(find.byKey(const ValueKey("player_viewport"))), Size(width, 360));
+      expectEvenControls(44);
+      final point = Offset(width * .8, 180);
+      await tester.tapAt(point);
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.tapAt(point);
+      await tester.pump(const Duration(milliseconds: 350));
+      expect(find.byType(TwitchChatPanel).hitTestable(), findsOneWidget);
+      expectEvenControls(8);
+      for (final delta in [-2000.0, 2000.0]) {
+        await tester.drag(
+          find.byKey(const ValueKey("player_chat_resize_handle")),
+          Offset(delta, 0),
+        );
+        await tester.pump();
+        expectEvenControls(8);
+      }
+    });
+  }
 
   testWidgets("rotating preserves the platform player and playback session", (tester) async {
     tester.view.physicalSize = const Size(400, 800);

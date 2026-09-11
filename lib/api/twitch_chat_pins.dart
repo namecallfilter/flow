@@ -24,6 +24,7 @@ class TwitchChatPins extends ChangeNotifier {
   Timer? _readyDeadline;
   Timer? _initialDeadline;
   Timer? _retry;
+  Timer? _expiry;
   TwitchPinnedChat? _pin;
   Map<String, Map<String, Object?>>? _initialChanges;
   String _subscriptionId = "";
@@ -214,7 +215,12 @@ class TwitchChatPins extends ChangeNotifier {
   }
 
   void _setPin(TwitchPinnedChat? pin) {
+    _expiry?.cancel();
     _pin = pin;
+    final endsAt = pin?.endsAt;
+    if (endsAt != null) {
+      _expiry = Timer(endsAt.difference(DateTime.now()), () => _setPin(null));
+    }
     if (!_disposed) {
       notifyListeners();
     }
@@ -251,6 +257,7 @@ class TwitchChatPins extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     ++_generation;
+    _expiry?.cancel();
     _closeSocket();
     super.dispose();
   }

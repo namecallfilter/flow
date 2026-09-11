@@ -52,6 +52,8 @@ class _TwitchEmotePickerState extends State<TwitchEmotePicker> {
       widget.assets.addListener(_changed);
       if (_scope == ChatEmoteScope.unlocked) {
         unawaited(widget.assets.loadUnlockedEmotes());
+      } else {
+        _loadRecentTwitchEmotes();
       }
     }
     if (oldWidget.preferences != widget.preferences) {
@@ -77,6 +79,7 @@ class _TwitchEmotePickerState extends State<TwitchEmotePicker> {
       ].where((emote) => seen.add(_key(emote))).take(40).toList();
       if (mounted) {
         setState(() {});
+        _loadRecentTwitchEmotes();
       }
       return loaded;
     } on Object {
@@ -86,6 +89,23 @@ class _TwitchEmotePickerState extends State<TwitchEmotePicker> {
   }
 
   static String _key(ChatAssetEmote emote) => "${emote.provider.name}:${emote.id}:${emote.name}";
+
+  void _loadRecentTwitchEmotes() {
+    if (_recent.any((emote) => emote.provider == ChatEmoteProvider.twitch)) {
+      unawaited(widget.assets.loadUnlockedEmotes());
+    }
+  }
+
+  List<ChatAssetEmote> get _availableRecent {
+    final available = {
+      for (final emote in widget.assets.emotesByName.values)
+        if (emote.provider != ChatEmoteProvider.twitch) _key(emote): emote,
+      for (final scope in [ChatEmoteScope.global, ChatEmoteScope.unlocked])
+        for (final emote in widget.assets.emotesFor(ChatEmoteProvider.twitch, scope))
+          _key(emote): emote,
+    };
+    return [for (final emote in _recent) ?available[_key(emote)]];
+  }
 
   static ChatAssetEmote? _decode(String encoded) {
     try {
@@ -159,7 +179,7 @@ class _TwitchEmotePickerState extends State<TwitchEmotePicker> {
     final unlocked = provider == ChatEmoteProvider.twitch && _scope == ChatEmoteScope.unlocked;
     final loading = unlocked ? widget.assets.isLoadingUnlocked : widget.assets.isLoading;
     final error = unlocked ? widget.assets.unlockedError : widget.assets.errors.firstOrNull;
-    final emotes = provider == null ? _recent : widget.assets.emotesFor(provider, _scope);
+    final emotes = provider == null ? _availableRecent : widget.assets.emotesFor(provider, _scope);
     final bottomPadding = MediaQuery.viewPaddingOf(context).bottom;
     return ColoredBox(
       color: theme.colorScheme.surfaceContainerLow,
@@ -186,10 +206,15 @@ class _TwitchEmotePickerState extends State<TwitchEmotePicker> {
                         padding: const EdgeInsets.symmetric(horizontal: 8),
                         selected: provider == entry.key,
                         showCheckmark: false,
-                        onSelected: (_) => setState(() {
-                          _provider = entry.key;
-                          _scope = ChatEmoteScope.channel;
-                        }),
+                        onSelected: (_) {
+                          setState(() {
+                            _provider = entry.key;
+                            _scope = ChatEmoteScope.channel;
+                          });
+                          if (entry.key == null) {
+                            _loadRecentTwitchEmotes();
+                          }
+                        },
                       ),
                     ),
                 ],

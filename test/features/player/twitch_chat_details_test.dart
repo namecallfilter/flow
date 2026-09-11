@@ -23,21 +23,22 @@ const _twitchEmoteUrl = "https://static-cdn.jtvnw.net/emoticons/v2/25/default/da
 const _emotePyramid =
     "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀ ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀ sadE ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀ sadE sadE ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀ sadE sadE sadE ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀ sadE sadE sadE sadE ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀ sadE sadE sadE sadE sadE ͏";
 const _brailleArtRows = [
-  "⠄⢀⣀⣀⣀⣀⡀⢀⣀⡀⠄⠄⣀⡀⠄⠄⢀⣀⣀⡀⠄⠄⣀⣀⠄⠄⣀⣀⡀⠄",
-  "⠄⢸⣿⡟⠛⠛⠃⢸⣿⡇⠄⠄⣿⡇⠄⣼⣿⠟⠻⣿⣆⠄⣿⣿⢠⣾⣿⠋⠄⠄",
-  "⠄⢸⣿⣷⣶⣶⠄⢸⣿⡇⠄⠄⣿⡇⠄⣿⡏⠄⠄⠄⠄⠄⣿⣿⣿⣿⣇⠄⠄⠄",
-  "⠄⢸⣿⡇⠄⠄⠄⠘⣿⣧⣀⣰⣿⡇⠄⢿⣿⣀⣠⣿⡶⠄⣿⣿⠃⢹⣿⣆⠄⠄",
-  "⠄⠘⠛⠃⠄⠄⠄⠄⠘⠛⠛⠛⠋⠄⠄⠈⠛⠛⠛⠛⠁⠄⠛⠛⠄⠄⠛⠛⠃⠄",
-  "⠄⠄⠄⠄⢠⣤⡄⠄⠄⣤⣤⠄⢀⣠⣤⣄⡀⠄⢠⣤⡄⠄⠄⣤⣤⠄⠄⠄⠄⠄",
-  "⠄⠄⠄⠄⠄⢻⣿⣄⣼⣿⠃⣰⣿⠟⠛⢿⣿⡄⢸⣿⡇⠄⠄⣿⣿⠄⠄⠄⠄⠄",
-  "⠄⠄⠄⠄⠄⠄⠻⣿⡿⠁⠄⣿⣿⠄⠄⢸⣿⡇⢸⣿⡇⠄⠄⣿⣿⠄⠄⠄⠄⠄",
-  "⠄⠄⠄⠄⠄⠄⠄⣿⡇⠄⠄⠹⣿⣦⣤⣼⣿⠃⠄⣿⣷⣤⣴⣿⡏⠄⠄⠄⠄⠄",
-  "⠄⠄⠄⠄⠄⠄⠄⠛⠃⠄⠄⠄⠈⠛⠛⠋⠁⠄⠄⠈⠙⠛⠛⠉⠄⠄⠄⠄⠄⠄",
-  "⠄⠄⢀⣠⣤⣤⣄⡀⠄⣤⣤⠄⠄⣤⣤⠄⠄⠄⣤⣤⡄⠄⣤⣤⣤⣤⣤⣤⠄⠄",
-  "⠄⠄⣾⣿⠋⠙⠿⠗⠄⣿⣿⣀⣀⣿⣿⠄⠄⣸⣿⢿⣷⠄⠛⠛⣿⣿⠛⠛⠄⠄",
-  "⠄⠄⣿⣿⠄⠄⣀⠄⠄⣿⣿⠿⠿⣿⣿⠄⢠⣿⣏⣸⣿⡆⠄⠄⣿⣿⠄⠄⠄⠄",
-  "⠄⠄⠻⣿⣦⣴⣿⡟⠄⣿⣿⠄⠄⣿⣿⠄⣼⣿⠿⠿⢿⣿⡀⠄⣿⣿⠄⠄⠄⠄",
-  "⠄⠄⠄⠈⠉⠉⠉⠄⠄⠉⠉⠄⠄⠉⠉⠄⠉⠉⠄⠄⠈⠉⠁⠄⠉⠉⠄⠄⠄⠄",
+  "⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡿⠿⠉⠈⡻⡽⠛⡧⠁⠀⠀⠀⠠⢿⠿⣿⣿",
+  "⣿⣿⣿⠟⠉⣀⠙⢿⣿⣿⣿⣿⣿⣧⣤⡀⠂⠈⢳⠈⠀⡀⣄⣲⣦⣾⣿⣷⡈⢿",
+  "⣿⣿⡇⠀⣤⣤⣤⠀⣿⣿⣿⣿⠿⠛⠛⢉⡀⡄⢠⣶⣤⡀⣛⠓⢿⣿⣿⣿⡇⢘",
+  "⣿⣿⡇⡂⣿⣿⣿⠈⣿⠏⠁⠀⣴⣾⣿⡿⢀⣾⣿⣿⣿⣿⣿⠁⠀⠈⢿⣿⡗⢸",
+  "⣿⣿⡇⢸⣿⣿⣿⢇⠹⢀⣦⣤⣿⣿⣿⡇⢺⣿⣿⣿⣿⣿⣿⣿⣿⣇⢸⣿⣟⢸",
+  "⠿⣿⣿⡀⢸⣿⣿⣿⡀⢸⣿⣿⣿⣿⣿⢿⣄⡙⠻⢿⣿⣿⣿⣿⣿⡟⡰⠟⠉⢸",
+  "⣄⠈⠋⢷⡄⢳⣿⣿⣿⠀⠻⣿⡿⠟⣵⣿⣿⣿⡿⡶⢢⠈⠁⣀⡭⠀⢠⣴⣶⣿",
+  "⣿⣿⡆⣄⠀⠁⡙⠟⣿⣿⠀⠗⢀⣴⣷⣿⣿⡿⠃⡅⠀⡄⠨⠉⡠⢨⣿⣿⣿⣿",
+  "⣿⣿⣇⢸⣿⣇⠙⣆⢻⣿⣤⠘⢿⣿⢻⣿⣟⣡⣾⠂⠄⠀⣝⣜⡇⢸⣿⣿⣿⣿",
+  "⣿⣿⣿⢸⣿⣿⣧⡈⢧⠹⠿⢁⠘⣿⣿⣿⢿⣿⣟⠑⣸⣾⣿⣿⣠⣿⣿⣿⣿⣿",
+  "⣿⣿⡿⢸⣿⣿⣿⣿⣄⠳⣌⣘⢀⢿⡟⣱⣾⣿⣿⠋⠏⣽⣏⣵⣿⣿⣿⣿⣿⣿",
+  "⠻⣿⢃⣿⣿⣿⣿⡿⠛⣀⢘⣁⢠⢸⣿⣿⣿⣿⣿⣷⡆⠿⣿⡿⣿⣿⣿⣿⣿⣿",
+  "⣦⣐⠉⠛⠿⠿⠏⣰⣿⠟⢻⣿⢻⡈⢿⣿⣿⣿⣿⣿⣷⣶⣬⠉⣿⣿⣿⠿⢋⡁",
+  "⣈⣙⠻⢶⣶⣾⡄⠛⠟⢰⣿⣿⣿⣇⠈⠻⣿⣿⣿⣿⡿⠛⣁⣸⣿⠏⢡⣦⣿",
+  "⣿⣿⣿⣶⣤⣍⣀⠰⣶⣀⠛⠛⠿⢁⣼⣆⣀⡈⠉⠉⡀⡀⢻⣿⡅⢾⣿⣿⣿",
+  "⣿⣿⣿⣿⣿⣿⣿⢀⣿⣿⢀⣷⣾⣿⣿⣿⣿⣿⣿⣿⣿⣧⡄⢸⣿⣷⠘⣿⣿⣿",
 ];
 
 void main() {
@@ -394,7 +395,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets("Braille art preserves complete rows and fits narrow or enlarged chat", (
+  testWidgets("Braille art preserves ragged rows without wrapping or enlarging", (
     tester,
   ) async {
     tester.view.devicePixelRatio = 1;
@@ -424,10 +425,11 @@ void main() {
       final lines = paragraph.getBoxesForSelection(
         TextSelection(baseOffset: 0, extentOffset: paragraph.text.toPlainText().length),
       );
-      expect(lines.map((box) => box.top).toSet(), hasLength(15));
+      expect(lines.map((box) => box.top).toSet(), hasLength(_brailleArtRows.length));
       final bounds = _paintedBounds(tester, rich);
       expect(bounds.left, closeTo(12, 0.01));
-      expect(bounds.right, closeTo(width - 12, 0.01));
+      expect(bounds.right, lessThanOrEqualTo(width - 12 + 0.01));
+      expect(bounds.width, closeTo((width - 24).clamp(0, paragraph.size.width), 0.01));
       expect(bounds.width / bounds.height, closeTo(paragraph.size.aspectRatio, 0.001));
       expect(_log(find.byKey(const ValueKey("art")), "Viewer: "), findsOneWidget);
       expect(controller.items.single.text, _brailleArtRows.join(" "));
@@ -456,6 +458,62 @@ void main() {
     expect(bounds.height, closeTo(paragraph.size.height, 0.01));
     expect(paragraph.text.toPlainText(), "⣿⠄⣿\n⠄⣿⠄\n⣿⠄⣿");
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets("invisible chat suffixes do not leave blank lines after resizing", (tester) async {
+    tester.view.physicalSize = const Size(392, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await _cacheImages(tester);
+    final client = _Client();
+    final controller = _Controller(client)
+      ..items.addAll([
+        const TwitchChatMessage(
+          id: "resize-painted",
+          login: "viewer",
+          displayName: "Dirttrac",
+          text: "watch deuce alexander vs Louisville bro is crazy fast \u034f",
+          badges: ["moderator/1", "moderator/1", "moderator/1"],
+        ),
+        const TwitchChatMessage(
+          id: "resize-next",
+          login: "next",
+          displayName: "lukelemon13",
+          text: "CHARLIE BECK IS HIM",
+        ),
+      ]);
+    final assets = _PaintAssets(client);
+    addTearDown(controller.dispose);
+    addTearDown(assets.dispose);
+    await tester.pumpWidget(_panel(controller, assets: assets));
+    for (final width in [392, 270, 269, 240, 392]) {
+      tester.view.physicalSize = Size(width.toDouble(), 1000);
+      await tester.pumpAndSettle();
+      final row = find.byKey(const ValueKey("resize-painted"));
+      final rich = _log(row, "watch deuce");
+      final paragraph = tester.renderObject<RenderParagraph>(rich);
+      final plain = paragraph.text.toPlainText();
+      expect(plain, endsWith("fast"));
+      final last = paragraph
+          .getBoxesForSelection(
+            TextSelection(
+              baseOffset: plain.indexOf("fast"),
+              extentOffset: plain.indexOf("fast") + 4,
+            ),
+            boxHeightStyle: ui.BoxHeightStyle.max,
+          )
+          .single;
+      expect(paragraph.size.height - last.bottom, lessThan(1), reason: "width $width");
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey("resize-next"))).dy -
+            tester.getBottomLeft(rich).dy,
+        closeTo(3, 0.01),
+        reason: "width $width",
+      );
+      expect(tester.takeException(), isNull);
+    }
+    expect(controller.items.first.text, endsWith("fast \u034f"));
   });
 
   for (final name in ["sadE", "dancer", "Kappa"]) {
