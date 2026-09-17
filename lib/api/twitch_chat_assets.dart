@@ -1,6 +1,7 @@
 import "dart:async";
 import "dart:collection";
 import "dart:convert";
+import "dart:io";
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
@@ -121,7 +122,10 @@ class TwitchChatAssets extends ChangeNotifier {
     this.channelId,
     http.Client? httpClient,
     bool autoLoad = true,
+    this.liveUpdates = true,
+    Future<WebSocket> Function(String url)? socketConnector,
   }) : channelLogin = channelLogin.trim().toLowerCase(),
+       _socketConnector = socketConnector ?? WebSocket.connect,
        _httpClient = httpClient ?? http.Client(),
        _ownsHttpClient = httpClient == null {
     if (autoLoad) {
@@ -134,11 +138,24 @@ class TwitchChatAssets extends ChangeNotifier {
   final String? channelId;
   final http.Client _httpClient;
   final bool _ownsHttpClient;
+  final bool liveUpdates;
+  final Future<WebSocket> Function(String url) _socketConnector;
+  _LiveEmoteSocket? _sevenSocket;
+  _LiveEmoteSocket? _bttvSocket;
+  _LiveEmoteSocket? _ffzSocket;
+  final Map<String, String> _sevenSetIds = {};
+  String? _sevenUserId;
+  String? _liveChannelId;
+  final Set<String> _liveReloads = {};
+  final Set<String> _liveReloadAgain = {};
+  final Set<Completer<void>> _liveAborts = {};
   final Map<String, Map<String, ChatAssetEmote>> _sources = {};
   Map<String, ChatAssetEmote> _emotesByName = const {};
   Map<String, String> _badgeUrls = const {};
   Map<String, ChatAssetBadge> _badgesById = const {};
   TwitchUser? _broadcaster;
+  final Map<String, TwitchUser> _sharedChannels = {};
+  final Set<String> _sharedChannelAttempts = {};
   final Map<ChatEmoteProvider, Map<String, List<ChatAssetBadge>>> _providerBadges = {};
   Map<String, List<ChatAssetBadge>> _userBadgesByLogin = const {};
   final Map<String, ChatAssetPaint> _userPaintsByLogin = {};
@@ -162,8 +179,11 @@ class TwitchChatAssets extends ChangeNotifier {
   final Map<String, DateTime> _imageRetryAfter = {};
   bool _precaching = false;
 
-  static final Map<String, ({DateTime expires, Map<String, ChatAssetEmote> emotes})> _emoteCache =
-      {};
+  static final Map<
+    String,
+    ({DateTime expires, Map<String, ChatAssetEmote> emotes, String? setId, String? userId})
+  >
+  _emoteCache = {};
   static final Map<String, ({DateTime expires, TwitchNativeChatAssets assets})> _nativeCache = {};
   static final Map<ChatEmoteProvider, ({DateTime expires, Map<String, List<ChatAssetBadge>> users})>
   _badgeCache = {};
@@ -175,7 +195,7 @@ query($id: String!) {
   users {
     userByConnection(platform: TWITCH, platformId: $id) {
       style {
-        activeBadge { id name images { url mime scale } }
+        activeBadge { id name images { url mime scale frameCount } }
         activePaint {
           id name
           data {
@@ -218,6 +238,7 @@ query($id: String!) {
   Map<String, String> get badgeUrls => _badgeUrls;
   Map<String, ChatAssetBadge> get badgesById => _badgesById;
   TwitchUser? get broadcaster => _broadcaster;
+  Map<String, TwitchUser> get sharedChannels => UnmodifiableMapView(_sharedChannels);
   Map<String, List<ChatAssetBadge>> get userBadgesByLogin => _userBadgesByLogin;
   Map<String, ChatAssetPaint> get userPaintsByLogin => UnmodifiableMapView(_userPaintsByLogin);
   bool get isLoading => _isLoading;
@@ -366,6 +387,12 @@ query($id: String!) {
       return;
     }
     _cancel();
+    _sevenSocket?.dispose();
+    _bttvSocket?.dispose();
+    _ffzSocket?.dispose();
+    _sevenSocket = null;
+    _bttvSocket = null;
+    _ffzSocket = null;
     final generation = ++_generation;
     final abort = Completer<void>();
     _abort = abort;
@@ -390,6 +417,7 @@ query($id: String!) {
         _isLoading = false;
         _errors.add("Some chat images could not be loaded. Retry to load them.");
         notifyListeners();
+        _startLiveUpdates();
       }
     });
     notifyListeners();
@@ -450,6 +478,7 @@ query($id: String!) {
         if (!_isCurrent(generation) || id == null) {
           return;
         }
+        _liveChannelId = id;
         await Future.wait([
           _load(
             "7tv-channel",
@@ -478,6 +507,7 @@ query($id: String!) {
       _deadline?.cancel();
       _isLoading = false;
       notifyListeners();
+      _startLiveUpdates();
     }
   }
 
@@ -506,6 +536,9 @@ query($id: String!) {
         _nativeCache.remove(_nativeCache.keys.first);
       }
       _broadcaster = assets.broadcaster;
+      if (_broadcaster case final broadcaster?) {
+        _sharedChannels[broadcaster.id] = broadcaster;
+      }
       _badgeUrls = Map.unmodifiable({
         for (final entry in assets.badgeUrls.entries) entry.key: ?_httpsUrl(entry.value),
       });
@@ -552,29 +585,54 @@ query($id: String!) {
     try {
       final cached = _emoteCache[url];
       final Map<String, ChatAssetEmote> emotes;
-      final useCached = !force && cached != null && cached.expires.isAfter(DateTime.now());
+      String? setId;
+      String? userId;
+      final useCached =
+          !force && !liveUpdates && cached != null && cached.expires.isAfter(DateTime.now());
       if (useCached) {
         emotes = cached.emotes;
+        setId = cached.setId;
+        userId = cached.userId;
       } else {
         final data = await _fetchJson(url, abort, allowMissing: source.endsWith("-channel"));
         emotes = data == null ? {} : parse(data);
+        if (source.startsWith("7tv-")) {
+          final document = _map(data);
+          final set = source == "7tv-channel" ? _map(document?["emote_set"]) : document;
+          setId = set?["id"] as String?;
+          userId = _map(document?["user"])?["id"] as String?;
+        }
       }
-      if (!_isCurrent(generation)) {
+      if (!_isCurrent(generation) || abort.isCompleted) {
         return;
       }
       _emoteCache[url] = (
         expires: useCached ? cached.expires : DateTime.now().add(const Duration(minutes: 10)),
         emotes: emotes,
+        setId: setId,
+        userId: userId,
       );
       if (_emoteCache.length > 32) {
         _emoteCache.remove(_emoteCache.keys.first);
       }
+      if (source.startsWith("7tv-")) {
+        if (setId == null) {
+          _sevenSetIds.remove(source);
+        } else {
+          _sevenSetIds[source] = setId;
+        }
+        if (source == "7tv-channel") {
+          _sevenUserId = userId;
+        }
+      }
       _publish(source, emotes);
     } on Object {
-      if (_isCurrent(generation)) {
-        _errors.add(
-          "${source.split("-").first.toUpperCase()} ${source.endsWith("global") ? "global" : "channel"} emotes could not be loaded.",
-        );
+      if (_isCurrent(generation) && !abort.isCompleted) {
+        final error =
+            "${source.split("-").first.toUpperCase()} ${source.endsWith("global") ? "global" : "channel"} emotes could not be loaded.";
+        if (!_errors.contains(error)) {
+          _errors.add(error);
+        }
         notifyListeners();
       }
     }
@@ -593,6 +651,150 @@ query($id: String!) {
       throw http.ClientException("Chat image request failed (${response.statusCode}).");
     }
     return jsonDecode(response.body);
+  }
+
+  void _startLiveUpdates() {
+    if (_disposed || !liveUpdates) {
+      return;
+    }
+    if (_sevenSetIds.isNotEmpty || _sevenUserId != null) {
+      _sevenSocket ??= _LiveEmoteSocket(
+        url: "wss://events.7tv.io/v3",
+        connect: _socketConnector,
+        onReconnect: () {
+          for (final source in ["7tv-global", if (_liveChannelId != null) "7tv-channel"]) {
+            unawaited(_reloadLiveSource(source));
+          }
+        },
+        onMessage: (event) {
+          final data = _map(event["d"]);
+          if (event["op"] == 1) {
+            for (final id in _sevenSetIds.values.toSet()) {
+              _subscribeSeven("emote_set.update", id);
+            }
+            if (_sevenUserId case final id?) {
+              _subscribeSeven("user.update", id);
+            }
+          } else if (event["op"] == 0 && data?["type"] == "user.update") {
+            if (_sevenUserId != null && _map(data?["body"])?["id"] == _sevenUserId) {
+              unawaited(_reloadLiveSource("7tv-channel"));
+            }
+          } else if (event["op"] == 0 && data?["type"] == "emote_set.update") {
+            final body = _map(data?["body"]);
+            for (final source in _sevenSetIds.entries.where((e) => e.value == body?["id"])) {
+              unawaited(_reloadLiveSource(source.key));
+            }
+          } else if (event["op"] == 4 || event["op"] == 7) {
+            _sevenSocket?.reconnect();
+          }
+        },
+      );
+    }
+    if (_liveChannelId case final id?) {
+      _bttvSocket ??= _LiveEmoteSocket(
+        url: "wss://sockets.betterttv.net/ws",
+        connect: _socketConnector,
+        onOpen: (socket) => socket.send({
+          "name": "join_channel",
+          "data": {"name": "twitch:$id"},
+        }),
+        onReconnect: () => unawaited(_reloadLiveSource("bttv-channel")),
+        onMessage: (event) {
+          final data = _map(event["data"]);
+          if (data?["channel"] != "twitch:$id" ||
+              !const ["emote_create", "emote_update", "emote_delete"].contains(event["name"])) {
+            return;
+          }
+          unawaited(_reloadLiveSource("bttv-channel"));
+        },
+      );
+      _ffzSocket ??= _LiveEmoteSocket(
+        url: "wss://pubsub.workers.frankerfacez.com/ws?t=global&t=twitch/$id",
+        connect: _socketConnector,
+        onReconnect: () {
+          unawaited(_reloadLiveSource("ffz-global"));
+          unawaited(_reloadLiveSource("ffz-channel"));
+        },
+        onMessage: (event) {
+          final topic = event["topic"];
+          final command = _map(event["data"])?["cmd"];
+          if ((topic == "global" || topic == "twitch/$id") &&
+              const ["add_emote", "remove_emote", "follow_sets"].contains(command)) {
+            unawaited(_reloadLiveSource(topic == "global" ? "ffz-global" : "ffz-channel"));
+          }
+        },
+      );
+    }
+  }
+
+  void _subscribeSeven(String type, String id) => _sevenSocket?.send({
+    "op": 35,
+    "d": {
+      "type": type,
+      "condition": {"object_id": id},
+    },
+  });
+
+  String _liveSourceUrl(String source) => switch (source) {
+    "7tv-global" => "https://7tv.io/v3/emote-sets/global",
+    "7tv-channel" => "https://7tv.io/v3/users/twitch/$_liveChannelId",
+    "ffz-global" => "https://api.frankerfacez.com/v1/set/global",
+    "ffz-channel" => "https://api.frankerfacez.com/v1/room/$channelLogin",
+    _ => "https://api.betterttv.net/3/cached/users/twitch/$_liveChannelId",
+  };
+
+  Future<void> _reloadLiveSource(String source) async {
+    if (_disposed) {
+      return;
+    }
+    if (!_liveReloads.add(source)) {
+      _liveReloadAgain.add(source);
+      return;
+    }
+    final generation = _generation;
+    final abort = Completer<void>();
+    _liveAborts.add(abort);
+    final timeout = Timer(const Duration(seconds: 10), abort.complete);
+    final previousSet = _sevenSetIds[source];
+    try {
+      await Future.any<void>([
+        _load(
+          source,
+          _liveSourceUrl(source),
+          (data) {
+            if (source.startsWith("ffz-")) {
+              return _ffz(data, global: source == "ffz-global");
+            }
+            if (source == "7tv-global") {
+              return _sevenTv(data);
+            }
+            if (source == "7tv-channel") {
+              return _map(data)?["emote_set"] == null ? {} : _sevenTv(_map(data)?["emote_set"]);
+            }
+            return _bttv([
+              ..._list(_map(data)?["channelEmotes"]),
+              ..._list(_map(data)?["sharedEmotes"]),
+            ]);
+          },
+          generation,
+          abort,
+          force: true,
+        ),
+        abort.future,
+      ]);
+      if (_isCurrent(generation) && previousSet != _sevenSetIds[source]) {
+        _sevenSocket?.dispose();
+        _sevenSocket = null;
+        _startLiveUpdates();
+      }
+    } finally {
+      timeout.cancel();
+      _liveAborts.remove(abort);
+      _liveReloads.remove(source);
+      if (_liveReloadAgain.remove(source)) {
+        unawaited(_reloadLiveSource(source));
+      }
+    }
   }
 
   Future<void> _loadBadges(
@@ -646,13 +848,49 @@ query($id: String!) {
       return;
     }
     _observedSenders.clear();
+    final sourceIds = <String>{};
     for (final message in messages) {
+      final sourceId = message.sourceRoomId;
+      if (sourceId != null &&
+          RegExp(r"^\d+$").hasMatch(sourceId) &&
+          !_sharedChannels.containsKey(sourceId) &&
+          _sharedChannelAttempts.add(sourceId)) {
+        sourceIds.add(sourceId);
+      }
       final id = message.userId;
       if (id != null && RegExp(r"^\d+$").hasMatch(id)) {
         _observedSenders[id] = message.login.toLowerCase();
       }
     }
+    if (sourceIds.isNotEmpty) {
+      unawaited(_loadSharedChannels(sourceIds.toList(), _generation));
+    }
     _queueSevenUsers();
+  }
+
+  Future<void> _loadSharedChannels(List<String> ids, int generation) async {
+    try {
+      final client = await clientLoader();
+      if (!_isCurrent(generation)) {
+        return;
+      }
+      final users = await client.fetchUsersByIds(ids).timeout(const Duration(seconds: 10));
+      if (!_isCurrent(generation)) {
+        return;
+      }
+      for (final id in ids) {
+        if (users[id] case final user? when user.id == id) {
+          _sharedChannels[id] = user;
+        }
+      }
+      notifyListeners();
+    } on Object {
+      // ponytail: retry failed portraits next chat session, avoiding per-message requests.
+    } finally {
+      if (!_isCurrent(generation)) {
+        _sharedChannelAttempts.removeAll(ids);
+      }
+    }
   }
 
   void _queueSevenUsers() {
@@ -748,7 +986,17 @@ query($id: String!) {
         final style = _map(user?["style"]);
         final badge = _map(style?["activeBadge"]);
         final images = _maps(badge == null ? const [] : _list(badge["images"]));
+        final animated = images.where(
+          (item) =>
+              _int(item["frameCount"]) > 1 &&
+              const ["image/webp", "image/gif"].contains(item["mime"]),
+        );
         final image =
+            animated
+                .where((item) => item["mime"] == "image/webp" && item["scale"] == 2)
+                .firstOrNull ??
+            animated.where((item) => item["scale"] == 2).firstOrNull ??
+            animated.firstOrNull ??
             images
                 .where((item) => item["mime"] == "image/webp" && item["scale"] == 2)
                 .firstOrNull ??
@@ -1080,6 +1328,11 @@ query($id: String!) {
 
   void _cancel() {
     _deadline?.cancel();
+    for (final pending in _liveAborts) {
+      if (!pending.isCompleted) {
+        pending.complete();
+      }
+    }
     final abort = _abort;
     _abort = null;
     if (abort != null && !abort.isCompleted) {
@@ -1090,6 +1343,9 @@ query($id: String!) {
   @override
   void dispose() {
     _disposed = true;
+    _sevenSocket?.dispose();
+    _bttvSocket?.dispose();
+    _ffzSocket?.dispose();
     _imageQueue.clear();
     ++_generation;
     _cancel();
@@ -1103,5 +1359,106 @@ query($id: String!) {
       _httpClient.close();
     }
     super.dispose();
+  }
+}
+
+class _LiveEmoteSocket {
+  _LiveEmoteSocket({
+    required this.url,
+    required this.connect,
+    required this.onMessage,
+    required this.onReconnect,
+    this.onOpen,
+  }) {
+    unawaited(_open());
+  }
+
+  final String url;
+  final Future<WebSocket> Function(String url) connect;
+  final void Function(Map<String, Object?> event) onMessage;
+  final void Function() onReconnect;
+  final void Function(_LiveEmoteSocket socket)? onOpen;
+  WebSocket? _socket;
+  StreamSubscription<Object?>? _subscription;
+  Timer? _retry;
+  bool _disposed = false;
+  bool _connectedBefore = false;
+  int _generation = 0;
+  int _backoff = 1;
+
+  Future<void> _open() async {
+    final generation = ++_generation;
+    try {
+      final socket = await connect(url)
+          .then((socket) {
+            if (_disposed || generation != _generation) {
+              unawaited(socket.close());
+            }
+            return socket;
+          })
+          .timeout(const Duration(seconds: 10));
+      if (_disposed || generation != _generation) {
+        return;
+      }
+      _socket = socket;
+      socket.pingInterval = const Duration(seconds: 30);
+      _subscription = socket.listen(
+        (raw) {
+          if (_disposed || generation != _generation || raw is! String) {
+            return;
+          }
+          try {
+            final event = jsonDecode(raw);
+            if (event is Map<String, Object?>) {
+              onMessage(event);
+            }
+          } on FormatException {
+            // Ignore malformed provider frames without disconnecting chat.
+          }
+        },
+        onDone: () {
+          if (generation == _generation) {
+            reconnect();
+          }
+        },
+        onError: (_) {
+          if (generation == _generation) {
+            reconnect();
+          }
+        },
+      );
+      onOpen?.call(this);
+      if (_connectedBefore) {
+        onReconnect();
+      }
+      _connectedBefore = true;
+      _backoff = 1;
+    } on Object {
+      if (!_disposed && generation == _generation) {
+        reconnect();
+      }
+    }
+  }
+
+  void send(Map<String, Object?> event) => _socket?.add(jsonEncode(event));
+
+  void reconnect() {
+    if (_disposed || _retry?.isActive == true) {
+      return;
+    }
+    ++_generation;
+    unawaited(_subscription?.cancel());
+    unawaited(_socket?.close());
+    _socket = null;
+    _retry = Timer(Duration(seconds: _backoff), () => unawaited(_open()));
+    _backoff = (_backoff * 2).clamp(1, 30);
+  }
+
+  void dispose() {
+    _disposed = true;
+    ++_generation;
+    _retry?.cancel();
+    unawaited(_subscription?.cancel());
+    unawaited(_socket?.close());
   }
 }

@@ -3720,6 +3720,9 @@ class _Assets extends TwitchChatAssets {
     : super(clientLoader: () async => client, channelLogin: "channel", autoLoad: false);
 
   @override
+  void observeMessages(Iterable<TwitchChatMessage> messages) {}
+
+  @override
   Map<String, ChatAssetEmote> get emotesByName => const {
     "Party": ChatAssetEmote(
       name: "Party",

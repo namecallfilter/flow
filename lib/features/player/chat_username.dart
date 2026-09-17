@@ -2,8 +2,8 @@ import "dart:math" as math;
 import "dart:ui" as ui;
 
 import "package:flow/api/twitch_chat_assets.dart";
-import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
+import "package:flutter/rendering.dart";
 
 class ChatUsername extends StatelessWidget {
   const ChatUsername({
@@ -19,9 +19,13 @@ class ChatUsername extends StatelessWidget {
   final ChatAssetPaint paint;
   final bool animated;
 
-  Widget _text([Color? color]) => Text(
+  Widget _text() => Text(
     name,
-    style: color == null ? style : style.copyWith(color: color),
+    style: style.copyWith(fontFamily: "FlowChatInter", color: Colors.white),
+    textHeightBehavior: const TextHeightBehavior(
+      applyHeightToFirstAscent: false,
+      applyHeightToLastDescent: false,
+    ),
     maxLines: 1,
     softWrap: false,
     overflow: TextOverflow.clip,
@@ -33,39 +37,61 @@ class ChatUsername extends StatelessWidget {
         animated &&
         !MediaQuery.disableAnimationsOf(context) &&
         TickerMode.valuesOf(context).enabled;
-    final layers = <Widget>[];
-    for (final layer in paint.layers) {
+    final baseColor =
+        paint.layers
+            .where((layer) => layer.type == ChatPaintLayerType.color && layer.color != null)
+            .firstOrNull
+            ?.color ??
+        style.color ??
+        DefaultTextStyle.of(context).style.color ??
+        Colors.black;
+    final layers = <Widget>[
+      Positioned.fill(child: ColoredBox(color: baseColor)),
+    ];
+    for (final layer in paint.layers.reversed) {
       Widget content;
       if (layer.type == ChatPaintLayerType.image) {
-        final useAnimation = animate && layer.images.any((image) => image.frameCount > 1);
-        final images = layer.images.where((image) => (image.frameCount > 1) == useAnimation);
-        final image =
-            images.where((image) => image.scale == 1).firstOrNull ??
-            images.firstOrNull ??
-            layer.images.firstOrNull;
-        content = image == null
-            ? _text()
-            : _PaintImage(image.url, _text(), _text(), animated: animate);
+        final supported = layer.images.where(
+          (image) =>
+              const ["image/webp", "image/gif", "image/png", "image/jpeg"].contains(image.mime),
+        );
+        final candidates = supported.isEmpty ? layer.images : supported;
+        final useAnimation = animate && candidates.any((image) => image.frameCount > 1);
+        final images = candidates.where((image) => (image.frameCount > 1) == useAnimation).toList();
+        if (images.isEmpty) {
+          images.addAll(candidates);
+        }
+        if (images.isEmpty) {
+          continue;
+        }
+        images.sort((left, right) => left.scale.compareTo(right.scale));
+        final density = MediaQuery.devicePixelRatioOf(context);
+        final image = images.where((image) => image.scale >= density).firstOrNull ?? images.last;
+        content = _PaintImage(
+          image.url,
+          const ColoredBox(color: Colors.white),
+          animated: animate,
+        );
       } else {
         content = ShaderMask(
-          blendMode: layer.type == ChatPaintLayerType.color ? BlendMode.srcIn : BlendMode.srcATop,
+          blendMode: BlendMode.srcIn,
           shaderCallback: (bounds) => _shader(layer, bounds),
-          child: _text(),
+          child: const ColoredBox(color: Colors.white),
         );
       }
-      layers.add(
-        Opacity(
-          opacity: layer.opacity,
-          child: layers.isEmpty ? _withShadows(content, paint.shadows) : content,
-        ),
-      );
+      layers.add(Positioned.fill(child: content));
     }
+    layers.add(_TextPaintMask(child: _text()));
     return Semantics(
       label: name,
       child: ExcludeSemantics(
-        child: layers.isEmpty
-            ? _withShadows(_text(), paint.shadows)
-            : Stack(clipBehavior: Clip.none, children: layers),
+        child: _withShadows(
+          ClipRect(
+            clipBehavior: Clip.antiAliasWithSaveLayer,
+            child: Stack(clipBehavior: Clip.none, children: layers),
+          ),
+          paint.shadows,
+        ),
       ),
     );
   }
@@ -80,30 +106,96 @@ class ChatUsername extends StatelessWidget {
   }
 }
 
-Widget _withShadows(Widget child, List<Shadow> shadows) => shadows.isEmpty
-    ? child
-    : Stack(
-        clipBehavior: Clip.none,
-        children: [
-          for (final shadow in shadows)
-            Positioned.fill(
-              child: Transform.translate(
-                offset: shadow.offset,
-                child: ImageFiltered(
-                  imageFilter: ui.ImageFilter.blur(
-                    sigmaX: shadow.blurRadius,
-                    sigmaY: shadow.blurRadius,
-                  ),
-                  child: ColorFiltered(
-                    colorFilter: ColorFilter.mode(shadow.color, BlendMode.srcIn),
-                    child: child,
-                  ),
+class _TextPaintMask extends SingleChildRenderObjectWidget {
+  const _TextPaintMask({required super.child});
+
+  @override
+  RenderObject createRenderObject(BuildContext context) => _RenderTextPaintMask();
+}
+
+class _RenderTextPaintMask extends RenderProxyBox {
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    context.canvas.saveLayer(offset & size, Paint()..blendMode = BlendMode.dstIn);
+    super.paint(context, offset);
+    context.canvas.restore();
+  }
+}
+
+// Android image paints lose shadow tint through ColorFiltered. The shader mask
+// preserves it and includes earlier shadows outside the text's layout bounds.
+class _ShadowMask extends ShaderMask {
+  const _ShadowMask({
+    required this._overflow,
+    required super.shaderCallback,
+    required super.child,
+  }) : super(blendMode: BlendMode.srcIn);
+
+  final double _overflow;
+
+  @override
+  RenderShaderMask createRenderObject(BuildContext context) => _RenderShadowMask(
+    overflow: _overflow,
+    shaderCallback: shaderCallback,
+  );
+
+  @override
+  void updateRenderObject(BuildContext context, covariant _RenderShadowMask renderObject) {
+    super.updateRenderObject(context, renderObject);
+    renderObject._overflow = _overflow;
+    renderObject.markNeedsPaint();
+  }
+}
+
+class _RenderShadowMask extends RenderShaderMask {
+  _RenderShadowMask({required this._overflow, required super.shaderCallback})
+    : super(blendMode: BlendMode.srcIn);
+
+  double _overflow;
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    super.paint(context, offset);
+    layer?.maskRect = (offset & size).inflate(_overflow);
+  }
+}
+
+Widget _withShadows(Widget child, List<Shadow> shadows) {
+  var result = child;
+  var overflow = 0.0;
+  // ponytail: two shadows render four copies; use retained textures for deeper paint chains.
+  for (final shadow in shadows) {
+    result = Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Positioned.fill(
+          child: Transform.translate(
+            offset: shadow.offset,
+            child: ImageFiltered(
+              imageFilter: ui.ImageFilter.blur(
+                sigmaX: shadow.blurRadius,
+                sigmaY: shadow.blurRadius,
+                tileMode: TileMode.decal,
+              ),
+              child: _ShadowMask(
+                overflow: overflow,
+                shaderCallback: (_) => ui.Gradient.linear(
+                  Offset.zero,
+                  const Offset(1, 0),
+                  [shadow.color, shadow.color],
                 ),
+                child: result,
               ),
             ),
-          child,
-        ],
-      );
+          ),
+        ),
+        result,
+      ],
+    );
+    overflow += math.max(shadow.offset.dx.abs(), shadow.offset.dy.abs()) + 3 * shadow.blurRadius;
+  }
+  return result;
+}
 
 ui.Shader _shader(ChatPaintLayer layer, Rect bounds) {
   if (layer.type == ChatPaintLayerType.color || layer.stops.length < 2) {
@@ -172,12 +264,11 @@ ui.Shader _shader(ChatPaintLayer layer, Rect bounds) {
 }
 
 class _PaintImage extends StatefulWidget {
-  const _PaintImage(this._url, this._child, this._fallback, {required this._animated});
+  const _PaintImage(this._url, this._child, {required this._animated});
 
   final String _url;
   final bool _animated;
   final Widget _child;
-  final Widget _fallback;
 
   @override
   State<_PaintImage> createState() => _PaintImageState();
@@ -235,9 +326,9 @@ class _PaintImageState extends State<_PaintImage> {
   Widget build(BuildContext context) {
     final image = _frame?.image;
     return image == null
-        ? widget._fallback
+        ? const SizedBox.shrink()
         : ShaderMask(
-            blendMode: BlendMode.srcATop,
+            blendMode: BlendMode.srcIn,
             shaderCallback: (bounds) => ui.ImageShader(
               image,
               TileMode.clamp,
@@ -246,6 +337,7 @@ class _PaintImageState extends State<_PaintImage> {
                     ..translateByDouble(bounds.left, bounds.top, 0, 1)
                     ..scaleByDouble(bounds.width / image.width, bounds.height / image.height, 1, 1))
                   .storage,
+              filterQuality: FilterQuality.low,
             ),
             child: widget._child,
           );

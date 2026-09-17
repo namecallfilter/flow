@@ -31,3 +31,8 @@ dev_dependencies:
 
 flutter:
     uses-material-design: true
+    fonts:
+        - family: FlowChatInter
+          fonts:
+              - asset: assets/fonts/FlowChatInter-Bold.ttf
+                weight: 700

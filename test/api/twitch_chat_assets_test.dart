@@ -1,5 +1,6 @@
 import "dart:async";
 import "dart:convert";
+import "dart:io";
 import "dart:ui" as ui;
 
 import "package:flow/api/twitch_api.dart";
@@ -12,6 +13,215 @@ import "package:http/testing.dart";
 
 void main() {
   _AssetTestBinding();
+  testWidgets("live provider events update catalogues and ignore other channels", (tester) async {
+    final sockets = <String, _EmoteSocket>{};
+    final responses = <String, http.Response>{};
+    final requests = <String>[];
+    final assets = _assets(
+      liveUpdates: true,
+      socketConnector: (url) async => sockets[Uri.parse(url).host] = _EmoteSocket(),
+      httpClient: MockClient((request) async {
+        requests.add(request.url.toString());
+        return responses[request.url.toString()] ?? _response(request.url);
+      }),
+    );
+    await assets.refresh();
+    await tester.pump();
+    final seven = sockets["events.7tv.io"]!;
+    seven.receive({
+      "op": 1,
+      "d": {"heartbeat_interval": 25000},
+    });
+    expect(seven.sent.map((event) => (event["d"]! as Map)["condition"]), [
+      {"object_id": "global-set"},
+      {"object_id": "channel-set"},
+      {"object_id": "seven-user"},
+    ]);
+    expect(sockets["sockets.betterttv.net"]!.sent.single, {
+      "name": "join_channel",
+      "data": {"name": "twitch:123"},
+    });
+    requests.clear();
+    const sevenUrl = "https://7tv.io/v3/users/twitch/123";
+    responses[sevenUrl] = _json({
+      "user": {"id": "seven-user"},
+      "emote_set": {
+        "id": "channel-set",
+        "emotes": [_seven("NewAlias", "new-emote")],
+      },
+    });
+    seven.receive({
+      "op": 0,
+      "d": {
+        "type": "emote_set.update",
+        "body": {"id": "other-set"},
+      },
+    });
+    await tester.pump();
+    expect(requests, isEmpty);
+    seven.receive({
+      "op": 0,
+      "d": {
+        "type": "emote_set.update",
+        "body": {"id": "channel-set"},
+      },
+    });
+    await tester.pump();
+    expect(requests, [sevenUrl]);
+    expect(assets.emotesByName["NewAlias"]?.id, "new-emote");
+    expect(assets.emotesByName["Alias"], isNull);
+    expect(assets.emotesByName["Same"]?.id, "bttv-channel");
+    expect(
+      assets.emotesFor(ChatEmoteProvider.sevenTv, ChatEmoteScope.channel).single.name,
+      "NewAlias",
+    );
+
+    const bttvUrl = "https://api.betterttv.net/3/cached/users/twitch/123";
+    responses[bttvUrl] = _json({
+      "channelEmotes": <Object?>[],
+      "sharedEmotes": [
+        {"code": "NewBTTV", "id": "new-bttv"},
+      ],
+    });
+    final bttv = sockets["sockets.betterttv.net"]!;
+    bttv.receive({
+      "name": "emote_create",
+      "data": {"channel": "twitch:other"},
+    });
+    await tester.pump();
+    expect(requests, [sevenUrl]);
+    bttv.receive({
+      "name": "emote_update",
+      "data": {"channel": "twitch:123"},
+    });
+    await tester.pump();
+    expect(assets.emotesByName["NewBTTV"]?.id, "new-bttv");
+    expect(assets.emotesByName["BTTVShared"], isNull);
+    expect(assets.emotesByName["Same"]?.id, "seven-global");
+
+    responses["https://api.frankerfacez.com/v1/room/creator"] = _json({
+      "sets": {
+        "3": {
+          "emoticons": [_ffz("NewFFZ", 42)],
+        },
+      },
+    });
+    final ffz = sockets["pubsub.workers.frankerfacez.com"]!;
+    ffz.receive({
+      "topic": "twitch/123",
+      "data": {
+        "cmd": "add_emote",
+        "data": {"set_id": 3},
+      },
+    });
+    await tester.pump();
+    expect(assets.emotesByName["NewFFZ"]?.id, "42");
+    expect(assets.emotesByName["FFZChannel"], isNull);
+    responses["https://api.frankerfacez.com/v1/set/global"] = _json({
+      "default_sets": [1],
+      "sets": {
+        "1": {"emoticons": <Object?>[]},
+      },
+    });
+    ffz.receive({
+      "topic": "global",
+      "data": {
+        "cmd": "remove_emote",
+        "data": {"set_id": 1},
+      },
+    });
+    await tester.pump();
+    expect(assets.emotesByName["FFZGlobal"], isNull);
+    assets.dispose();
+    await tester.pump();
+    expect(sockets.values.every((socket) => socket.closed), isTrue);
+  });
+
+  testWidgets("live sockets resubscribe after set changes and recover missed updates", (
+    tester,
+  ) async {
+    final sockets = <String, List<_EmoteSocket>>{};
+    var setId = "channel-set";
+    var emoteName = "Initial";
+    final delayedGlobal = Completer<http.Response>();
+    final assets = _assets(
+      liveUpdates: true,
+      socketConnector: (url) async {
+        final socket = _EmoteSocket();
+        sockets.putIfAbsent(Uri.parse(url).host, () => []).add(socket);
+        return socket;
+      },
+      httpClient: MockClient((request) async {
+        if (request.url.host == "api.frankerfacez.com" &&
+            request.url.path.endsWith("global") &&
+            !delayedGlobal.isCompleted) {
+          return delayedGlobal.future;
+        }
+        if (request.url.host == "7tv.io" && request.url.path.contains("users")) {
+          return _json({
+            "user": {"id": "seven-user"},
+            "emote_set": {
+              "id": setId,
+              "emotes": [_seven(emoteName, "emote")],
+            },
+          });
+        }
+        return _response(request.url);
+      }),
+    );
+    final initialRefresh = assets.refresh();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 15));
+    await initialRefresh;
+    expect(assets.errors, contains("Some chat images could not be loaded. Retry to load them."));
+    expect(sockets.length, 3);
+    delayedGlobal.complete(_response(Uri.parse("https://api.frankerfacez.com/v1/set/global")));
+    await tester.pump();
+    var socket = sockets["events.7tv.io"]!.last;
+    setId = "replacement-set";
+    emoteName = "Replacement";
+    socket.receive({
+      "op": 0,
+      "d": {
+        "type": "user.update",
+        "body": {"id": "seven-user"},
+      },
+    });
+    await tester.pump();
+    expect(socket.closed, isTrue);
+    socket = sockets["events.7tv.io"]!.last;
+    socket.receive({
+      "op": 1,
+      "d": {"heartbeat_interval": 25000},
+    });
+    expect(
+      socket.sent.any((event) => ((event["d"]! as Map)["condition"] as Map)["object_id"] == setId),
+      isTrue,
+    );
+    expect(assets.emotesByName["Replacement"], isNotNull);
+    setId = "manual-refresh-set";
+    emoteName = "ManualRefresh";
+    await assets.refresh(force: false);
+    await tester.pump();
+    expect(socket.closed, isTrue);
+    socket = sockets["events.7tv.io"]!.last;
+    socket.receive({
+      "op": 1,
+      "d": {"heartbeat_interval": 25000},
+    });
+    expect(
+      socket.sent.any((event) => ((event["d"]! as Map)["condition"] as Map)["object_id"] == setId),
+      isTrue,
+    );
+    expect(assets.emotesByName["ManualRefresh"], isNotNull);
+    emoteName = "DuringDisconnect";
+    await socket.close();
+    await tester.pump(const Duration(seconds: 1));
+    expect(assets.emotesByName["DuringDisconnect"], isNotNull);
+    assets.dispose();
+    await tester.pump(const Duration(seconds: 31));
+    expect(sockets.values.expand((group) => group).every((socket) => socket.closed), isTrue);
+  });
   test("loads provider globals and channel aliases, native badges and emote names", () async {
     final requests = <Uri>[];
     final assets = _assets(
@@ -378,6 +588,63 @@ void main() {
     expect(assets.badgeUrls, isEmpty);
   });
 
+  testWidgets("7TV badges prefer animated images over their static previews", (tester) async {
+    const static = {
+      "url": "https://cdn.7tv.app/badge/test/2x_static.webp",
+      "mime": "image/webp",
+      "scale": 2,
+      "frameCount": 1,
+    };
+    const animatedWebp = {
+      "url": "https://cdn.7tv.app/badge/test/2x.webp",
+      "mime": "image/webp",
+      "scale": 2,
+      "frameCount": 100,
+    };
+    const animatedGif = {
+      "url": "https://cdn.7tv.app/badge/test/2x.gif",
+      "mime": "image/gif",
+      "scale": 2,
+      "frameCount": 100,
+    };
+    final requests = <http.Request>[];
+    final assets = _assets(
+      httpClient: MockClient((request) async {
+        requests.add(request);
+        return _json([
+          _sevenBadgeResult(true, badgeImages: [static, animatedGif, animatedWebp]),
+          _sevenBadgeResult(true, badgeImages: [static, animatedGif]),
+          _sevenBadgeResult(true, badgeImages: [static]),
+        ]);
+      }),
+    );
+    addTearDown(assets.dispose);
+    assets.observeMessages([
+      for (var index = 0; index < 3; index++)
+        TwitchChatMessage(
+          id: "badge-$index",
+          login: "badge$index",
+          displayName: "Badge$index",
+          text: "hello",
+          userId: "${99700000 + index}",
+        ),
+    ]);
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    expect(requests, hasLength(1));
+    expect(
+      (jsonDecode(requests.single.body) as List<Object?>).first,
+      containsPair(
+        "query",
+        contains("activeBadge { id name images { url mime scale frameCount } }"),
+      ),
+    );
+    expect(assets.errors, isEmpty);
+    expect(assets.userBadgesByLogin["badge0"]!.single.url, animatedWebp["url"]);
+    expect(assets.userBadgesByLogin["badge1"]!.single.url, animatedGif["url"]);
+    expect(assets.userBadgesByLogin["badge2"]!.single.url, static["url"]);
+  });
+
   testWidgets("7TV styles batch sender IDs and cache badges, full paints, and empty results", (
     tester,
   ) async {
@@ -666,6 +933,7 @@ void main() {
             },
           });
         }
+        expect(query, contains("profileImageURL(width: 70)"));
         return _json({
           "data": {
             "badges": [
@@ -685,6 +953,7 @@ void main() {
               "id": "123",
               "login": "creator",
               "displayName": "Creator",
+              "profileImageURL": "https://example.com/creator.png",
               "chatColor": "#000000",
               "broadcastBadges": [
                 {
@@ -720,6 +989,7 @@ void main() {
     expect(data.broadcaster?.id, "123");
     expect(data.broadcaster?.login, "creator");
     expect(data.broadcaster?.displayName, "Creator");
+    expect(data.broadcaster?.profileImageUrl, "https://example.com/creator.png");
     expect(data.broadcaster?.chatColor, "#000000");
     expect(data.badgeUrls["subscriber/1"], "https://example.com/channel.png");
     expect(data.badgeTitles["subscriber/1"], "One-month subscriber");
@@ -729,6 +999,67 @@ void main() {
     expect(chatters.groups["broadcasters"], ["creator"]);
     expect(chatters.groups["moderators"], ["moderator"]);
     expect(chatters.groups["viewers"], ["viewer"]);
+  });
+
+  testWidgets("shared channel portraits are batched, cached, and ignored after disposal", (
+    tester,
+  ) async {
+    var response = Completer<Map<String, TwitchUser>>();
+    final batches = <List<String>>[];
+    final client = _Client(
+      onUsers: (ids) {
+        batches.add(ids);
+        return response.future;
+      },
+    );
+    final assets = TwitchChatAssets(
+      clientLoader: () async => client,
+      channelLogin: "creator",
+      httpClient: MockClient((request) async => _response(request.url)),
+      autoLoad: false,
+      liveUpdates: false,
+    );
+    await assets.refresh();
+    TwitchChatMessage source(String id) => TwitchChatMessage(
+      id: id,
+      login: "viewer",
+      displayName: "Viewer",
+      text: "hello",
+      sourceRoomId: id,
+    );
+    final messages = [source("123"), source("456"), source("456"), source("invalid")];
+    assets.observeMessages(messages);
+    assets.observeMessages(messages);
+    await tester.pump();
+    expect(batches, [
+      ["456"],
+    ]);
+    const other = TwitchUser(id: "456", login: "other", displayName: "Other");
+    response.complete({"456": other});
+    await tester.pump();
+    expect(assets.sharedChannels["123"], same(assets.broadcaster));
+    expect(assets.sharedChannels["456"], same(other));
+    expect(() => assets.sharedChannels.clear(), throwsUnsupportedError);
+    assets.observeMessages(messages);
+    await tester.pump();
+    expect(batches, hasLength(1));
+
+    response = Completer();
+    assets.observeMessages([source("789")]);
+    await tester.pump();
+    response.completeError(StateError("unavailable"));
+    await tester.pump();
+    assets.observeMessages([source("789")]);
+    await tester.pump();
+    expect(batches, hasLength(2));
+
+    response = Completer();
+    assets.observeMessages([source("999")]);
+    await tester.pump();
+    assets.dispose();
+    response.complete({"999": const TwitchUser(id: "999", login: "late", displayName: "Late")});
+    await tester.pump();
+    expect(assets.sharedChannels["999"], isNull);
   });
 }
 
@@ -748,10 +1079,14 @@ const _native = TwitchNativeChatAssets(
 );
 
 class _Client extends TwitchApiClient {
-  _Client({this.onLoad, this.onUnlocked, super.gqlAccessToken})
+  _Client({this.onLoad, this.onUnlocked, this.onUsers, super.gqlAccessToken})
     : super(clientId: "test", accessToken: "");
   final Future<TwitchNativeChatAssets> Function()? onLoad;
   final Future<Map<String, String>> Function(String channelId)? onUnlocked;
+  final Future<Map<String, TwitchUser>> Function(List<String> ids)? onUsers;
+  @override
+  Future<Map<String, TwitchUser>> fetchUsersByIds(List<String> ids) async =>
+      onUsers == null ? const {} : onUsers!(ids);
   @override
   Future<TwitchNativeChatAssets> fetchChatAssets(String login) async =>
       onLoad == null ? _native : onLoad!();
@@ -764,11 +1099,15 @@ TwitchChatAssets _assets({
   String channelLogin = "creator",
   _Client? client,
   required http.Client httpClient,
+  bool liveUpdates = false,
+  Future<WebSocket> Function(String url)? socketConnector,
 }) => TwitchChatAssets(
   clientLoader: () async => client ?? _Client(),
   channelLogin: channelLogin,
   httpClient: httpClient,
   autoLoad: false,
+  liveUpdates: liveUpdates,
+  socketConnector: socketConnector,
 );
 
 http.Response _response(Uri uri) {
@@ -802,12 +1141,15 @@ http.Response _response(Uri uri) {
   if (uri.host == "7tv.io") {
     if (uri.path.contains("users")) {
       return _json({
+        "user": {"id": "seven-user"},
         "emote_set": {
+          "id": "channel-set",
           "emotes": [_seven("Same", "seven-channel"), _seven("Alias", "seven-alias", flags: 1)],
         },
       });
     }
     return _json({
+      "id": "global-set",
       "emotes": [_seven("Same", "seven-global")],
     });
   }
@@ -869,10 +1211,51 @@ Map<String, Object?> _ffz(String name, int id) => {
   "name": name,
   "urls": {"2": "//cdn.frankerfacez.com/emote/$id/2"},
 };
+
+class _EmoteSocket extends Stream<Object?> implements WebSocket {
+  final _incoming = StreamController<Object?>.broadcast(sync: true);
+  final sent = <Map<String, Object?>>[];
+  bool closed = false;
+  @override
+  Duration? pingInterval;
+
+  void receive(Map<String, Object?> event) => _incoming.add(jsonEncode(event));
+  @override
+  void add(Object? data) => sent.add(jsonDecode(data! as String) as Map<String, Object?>);
+  @override
+  Future<void> close([int? code, String? reason]) async {
+    if (closed) {
+      return;
+    }
+    closed = true;
+    await _incoming.close();
+  }
+
+  @override
+  StreamSubscription<Object?> listen(
+    void Function(Object?)? onData, {
+    Function? onError,
+    void Function()? onDone,
+    bool? cancelOnError,
+  }) => _incoming.stream.listen(
+    onData,
+    onError: onError,
+    onDone: onDone,
+    cancelOnError: cancelOnError,
+  );
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 http.Response _json(Object? data) =>
     http.Response(jsonEncode(data), 200, headers: {"content-type": "application/json"});
 
-Map<String, Object?> _sevenBadgeResult(bool hasBadge, {Object? paint}) => {
+Map<String, Object?> _sevenBadgeResult(
+  bool hasBadge, {
+  Object? paint,
+  List<Map<String, Object?>>? badgeImages,
+}) => {
   "data": {
     "users": {
       "userByConnection": {
@@ -882,13 +1265,15 @@ Map<String, Object?> _sevenBadgeResult(bool hasBadge, {Object? paint}) => {
               ? {
                   "id": "badge-id",
                   "name": "7TV Supporter",
-                  "images": [
-                    {
-                      "url": "https://cdn.7tv.app/badge/test/2x.webp",
-                      "mime": "image/webp",
-                      "scale": 2,
-                    },
-                  ],
+                  "images":
+                      badgeImages ??
+                      [
+                        {
+                          "url": "https://cdn.7tv.app/badge/test/2x.webp",
+                          "mime": "image/webp",
+                          "scale": 2,
+                        },
+                      ],
                 }
               : null,
         },

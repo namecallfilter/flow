@@ -19,6 +19,7 @@ void main() {
           final payload = jsonDecode(request.body) as Map<String, dynamic>;
           expect(payload["variables"], {"messageID": "root"});
           expect(payload["query"], contains("... on GifContent"));
+          expect(payload["query"], contains("sourceChannel"));
           expect(request.headers["authorization"], isNull);
           return http.Response(
             jsonEncode({
@@ -28,6 +29,7 @@ void main() {
                   "sentAt": "2026-09-07T20:00:00Z",
                   "sender": {"id": "1", "login": "alice", "displayName": "Alice"},
                   "senderChatColor": "#123456",
+                  "sourceChannel": {"id": "3"},
                   "senderBadges": [
                     {"setID": "moderator", "version": "1"},
                   ],
@@ -97,6 +99,8 @@ void main() {
       final messages = await client.fetchChatReplyThread("root");
       expect(messages.map((message) => message.id), ["root", "reply"]);
       expect(messages.first.color, "#123456");
+      expect(messages.first.sourceRoomId, "3");
+      expect(messages.last.sourceRoomId, isNull);
       expect(messages.first.badges, ["moderator/1"]);
       expect(messages.first.emotes.single.start, 3);
       expect(messages.first.emotes.single.end, 8);

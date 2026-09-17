@@ -54,7 +54,7 @@ class TwitchChatController extends ChangeNotifier {
   final Set<String> _historyOnlyIds = {};
   List<TwitchChatMessage Function(TwitchChatMessage)>? _historyModeration;
   final Map<String, String> _roomState = {};
-  static final Queue<DateTime> _sentAt = Queue<DateTime>();
+  String? _sharedChatRoomId;
   WebSocket? _socket;
   StreamSubscription<Object?>? _subscription;
   Timer? _retryTimer;
@@ -97,6 +97,7 @@ class TwitchChatController extends ChangeNotifier {
   int _accessRevision = 0;
   String? _userColor;
   String? _error;
+  String? _sendRateLimitMessage;
   String? _readOnlyReason;
   String _buffer = "";
   TwitchChatStatus _status = TwitchChatStatus.connecting;
@@ -114,6 +115,7 @@ class TwitchChatController extends ChangeNotifier {
   DateTime? get pinnedUntil => _pins?.pin?.endsAt;
   TwitchChatStatus get status => _status;
   String? get error => _error;
+  String? get sendRateLimitMessage => _sendRateLimitMessage;
   bool get isSignedIn => _user != null;
   String? get currentUserId => _user?.id;
   String? get currentUserLogin => _user?.login.toLowerCase();
@@ -925,6 +927,8 @@ class TwitchChatController extends ChangeNotifier {
             moderatedAt: moderated?.moderatedAt,
             timestamp: local?.timestamp ?? existing?.timestamp ?? DateTime.now(),
             userId: _user!.id,
+            roomId: local?.roomId ?? existing?.roomId,
+            sourceRoomId: local?.sourceRoomId ?? existing?.sourceRoomId,
             parentMessageId: pending.replyTo?.id,
             parentUserId: pending.replyTo?.userId,
             parentLogin: pending.replyTo?.login,
@@ -959,6 +963,11 @@ class TwitchChatController extends ChangeNotifier {
         final historyOnly = _historyOnlyIds.remove(id);
         if (previous != null && !historyOnly) {
           return;
+        }
+        final roomId = message.tags["room-id"].nullIfEmpty;
+        final sourceRoomId = message.tags["source-room-id"].nullIfEmpty;
+        if (!isNotice || sourceRoomId != null) {
+          _sharedChatRoomId = sourceRoomId == null ? null : roomId;
         }
         final isAction =
             message.text.startsWith("\u0001ACTION ") && message.text.endsWith("\u0001");
@@ -1002,6 +1011,8 @@ class TwitchChatController extends ChangeNotifier {
           isOwn: login.toLowerCase() == _user?.login.toLowerCase(),
           isHistorical: previous?.isHistorical ?? false,
           userId: message.tags["user-id"].nullIfEmpty,
+          roomId: roomId,
+          sourceRoomId: sourceRoomId,
           isFirstMessage: message.tags["first-msg"] == "1",
           isHighlighted: message.tags["msg-id"] == "highlighted-message",
           isPrimeSubscription: isSubscription && message.tags["msg-param-sub-plan"] == "Prime",
@@ -1155,11 +1166,16 @@ class TwitchChatController extends ChangeNotifier {
         }
         _scheduleNotify();
       case "NOTICE":
-        addPrivateNotice(
-          id: message.tags["id"] ?? "private-${_systemMessageCount++}",
-          type: "notice",
-          text: message.text,
-        );
+        final rateLimited = message.tags["msg-id"] == "msg_ratelimit";
+        if (rateLimited) {
+          _sendRateLimitMessage = message.text;
+        } else {
+          addPrivateNotice(
+            id: message.tags["id"] ?? "private-${_systemMessageCount++}",
+            type: "notice",
+            text: message.text,
+          );
+        }
         final followersOnlyRejection = (message.tags["msg-id"] ?? "").startsWith(
           "msg_followersonly",
         );
@@ -1177,7 +1193,9 @@ class TwitchChatController extends ChangeNotifier {
           );
           _scheduleSlowMode();
         }
-        _error = followersOnlyRejection || subscribersOnlyRejection ? null : message.text;
+        _error = rateLimited || followersOnlyRejection || subscribersOnlyRejection
+            ? null
+            : message.text;
         if ((message.tags["msg-id"] ?? "").startsWith("msg_") ||
             message.tags["msg-id"] == "unrecognized_cmd") {
           _failSend();
@@ -1225,15 +1243,6 @@ class TwitchChatController extends ChangeNotifier {
       return false;
     }
     final now = DateTime.now();
-    while (_sentAt.isNotEmpty && now.difference(_sentAt.first) >= const Duration(seconds: 30)) {
-      _sentAt.removeFirst();
-    }
-    if (_sentAt.length >= 20 ||
-        (_sentAt.isNotEmpty && now.difference(_sentAt.last) < const Duration(seconds: 1))) {
-      _setError("You are sending messages too quickly. Try again shortly.");
-      notifyListeners();
-      return false;
-    }
     try {
       final pending = (
         text: text,
@@ -1255,6 +1264,8 @@ class TwitchChatController extends ChangeNotifier {
           isOwn: true,
           timestamp: now,
           userId: _user!.id,
+          roomId: _sharedChatRoomId ?? _roomState["room-id"].nullIfEmpty,
+          sourceRoomId: _sharedChatRoomId,
           parentMessageId: replyTo?.id,
           parentUserId: replyTo?.userId,
           parentLogin: replyTo?.login,
@@ -1267,7 +1278,7 @@ class TwitchChatController extends ChangeNotifier {
         ),
         countReceived: false,
       );
-      _sentAt.addLast(now);
+      _sendRateLimitMessage = null;
       _slowModeRejectedUntil = null;
       _scheduleSlowMode();
       _error = null;
@@ -1335,6 +1346,8 @@ class TwitchChatController extends ChangeNotifier {
   }
 
   void _closeSocket() {
+    _sharedChatRoomId = null;
+    _sendRateLimitMessage = null;
     _failSend();
     _historyModeration = null;
     _retryTimer?.cancel();

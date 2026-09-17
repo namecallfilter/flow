@@ -21,6 +21,7 @@ void main() {
         expect(request.headers["authorization"], "OAuth website-token");
         expect(body["query"], contains("senderBadges(channelID:"));
         expect(body["query"], contains("... on GifContent"));
+        expect(body["query"], contains("sourceChannel"));
         return _response({
           "id": "1",
           "recentChatMessages": [
@@ -30,6 +31,7 @@ void main() {
               "deletedAt": "2026-09-08T12:00:01Z",
               "sender": {"id": "77", "login": "alice", "displayName": "Alice"},
               "senderChatColor": "#123456",
+              "sourceChannel": {"id": "2"},
               "senderBadges": [
                 {"setID": "moderator", "version": "1"},
                 {"setID": "subscriber", "version": "12"},
@@ -85,6 +87,8 @@ void main() {
     expect(message.isDeleted, isTrue);
     expect(message.moderation, TwitchChatModeration.deleted);
     expect(message.userId, "77");
+    expect(message.roomId, "1");
+    expect(message.sourceRoomId, "2");
     expect(message.login, "alice");
     expect(message.displayName, "Alice");
     expect(message.badges, ["moderator/1", "subscriber/12"]);

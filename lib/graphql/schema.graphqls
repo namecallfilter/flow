@@ -2848,6 +2848,7 @@ type Message {
   deletedAt: Time
   sender: User
   senderChatColor: String
+  sourceChannel: Channel
   senderBadges(channelID: ID): [Badge]
   content: MessageContent
   replies: MessageReplyConnection

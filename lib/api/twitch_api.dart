@@ -1411,7 +1411,7 @@ class TwitchApiClient {
     final pinnerId = _nonEmptyValue(pinner?["id"] as String?);
     return TwitchPinnedChat(
       id: id,
-      message: _chatMessageFromGraphQl(message),
+      message: _chatMessageFromGraphQl(message, roomId: channelId),
       startsAt: _dateTimeValue(pin?["startsAt"]),
       endsAt: _dateTimeValue(pin?["endsAt"]),
       pinnedBy: pinnerId == null
@@ -1449,7 +1449,7 @@ class TwitchApiClient {
     if (channel?["id"] != id || messages is! List) {
       throw TwitchApiException("Recent chat is unavailable for this channel.");
     }
-    return [for (final message in _mapList(messages)) _chatMessageFromGraphQl(message)];
+    return [for (final message in _mapList(messages)) _chatMessageFromGraphQl(message, roomId: id)];
   }
 
   Future<List<TwitchChatMessage>> fetchChatReplyThread(String messageId) async {
@@ -1638,6 +1638,7 @@ class TwitchApiClient {
         fragment ReplayMessage on Message {
           id
           deletedAt
+          sourceChannel { id }
           content { ...ReplayContent }
           parentMessage {
             id
@@ -2408,6 +2409,7 @@ class TwitchApiClient {
 
   static TwitchChatMessage _chatMessageFromGraphQl(
     Map<String, Object?> message, {
+    String? roomId,
     String? threadRootId,
     String? threadRootLogin,
     TwitchChatMessage? replay,
@@ -2456,6 +2458,10 @@ class TwitchApiClient {
           _nonEmptyValue(sender?["login"] as String?) ??
           "Deleted user",
       userId: replay?.userId ?? _nonEmptyValue(sender?["id"] as String?),
+      roomId: roomId ?? replay?.roomId,
+      sourceRoomId:
+          _nonEmptyValue(_mapValue(message["sourceChannel"])?["id"] as String?) ??
+          replay?.sourceRoomId,
       text: text,
       color:
           replay?.color ?? message["senderChatColor"] as String? ?? sender?["chatColor"] as String?,

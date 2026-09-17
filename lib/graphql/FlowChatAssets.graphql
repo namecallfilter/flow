@@ -5,6 +5,7 @@ query FlowChatAssets($login: String!) {
     id
     login
     displayName
+    profileImageURL(width: 70)
     chatColor
     broadcastBadges { setID version title imageURL(size: DOUBLE) }
     subscriptionProducts { emotes { id token } }

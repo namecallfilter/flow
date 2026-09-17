@@ -56,6 +56,8 @@ class TwitchChatMessage {
     this.offsetSeconds,
     this.timestamp,
     this.userId,
+    this.roomId,
+    this.sourceRoomId,
     this.isDeleted = false,
     this.isFirstMessage = false,
     this.isHighlighted = false,
@@ -92,6 +94,8 @@ class TwitchChatMessage {
   final double? offsetSeconds;
   final DateTime? timestamp;
   final String? userId;
+  final String? roomId;
+  final String? sourceRoomId;
   final bool isDeleted;
   final bool isFirstMessage;
   final bool isHighlighted;
@@ -137,6 +141,8 @@ class TwitchChatMessage {
     offsetSeconds: offsetSeconds ?? this.offsetSeconds,
     timestamp: timestamp,
     userId: userId,
+    roomId: roomId,
+    sourceRoomId: sourceRoomId,
     isDeleted: isDeleted ?? this.isDeleted,
     isFirstMessage: isFirstMessage,
     isHighlighted: isHighlighted,

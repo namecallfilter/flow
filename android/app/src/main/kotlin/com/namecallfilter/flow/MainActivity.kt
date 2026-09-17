@@ -136,6 +136,10 @@ class MainActivity : FlutterActivity() {
                         playChatMention(result)
                     }
                     "requestPermission" -> result.success(requestChatNotificationPermission())
+                    "setKeepScreenOn" -> {
+                        window.decorView.keepScreenOn = call.argument<Boolean>("enabled") == true
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
             }

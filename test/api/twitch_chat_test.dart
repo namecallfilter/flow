@@ -414,6 +414,50 @@ void main() {
     chat.dispose();
   });
 
+  test("preserves local and relayed shared-chat source rooms through moderation", () async {
+    final chat = controller();
+    await server.join(chat);
+    server.send(
+      "@id=ordinary;room-id=1 :viewer!v@tmi PRIVMSG #channel :Ordinary chat\r\n"
+      "@id=local;room-id=1;source-room-id=1;source-id=local :viewer!v@tmi PRIVMSG #channel :Shared local chat\r\n"
+      "@id=remote;room-id=1;source-room-id=2;source-id=original :other!o@tmi PRIVMSG #channel :Shared remote chat\r\n"
+      "@id=notice;room-id=1;source-room-id=2;source-id=original-notice;msg-id=sharedchatnotice;source-msg-id=sub;system-msg=Shared\\snotice "
+      ":tmi.twitch.tv USERNOTICE #channel\r\n",
+    );
+    await _waitFor(() => chat.conversation.length == 4);
+    expect(chat.conversation.map((message) => message.roomId), ["1", "1", "1", "1"]);
+    expect(chat.conversation.map((message) => message.sourceRoomId), [null, "1", "2", "2"]);
+    final historical = chat.conversation[2].copyWith(isHistorical: true);
+    expect(historical.roomId, "1");
+    expect(historical.sourceRoomId, "2");
+    server.send("@target-msg-id=remote :tmi.twitch.tv CLEARMSG #channel :Shared remote chat\r\n");
+    await _waitFor(() => chat.conversation[2].isDeleted);
+    expect(chat.conversation[2].roomId, "1");
+    expect(chat.conversation[2].sourceRoomId, "2");
+    expect(chat.conversationHistory[2].sourceRoomId, "2");
+
+    final sharedSend = chat.send("my shared message");
+    expect(chat.conversation.last.roomId, "1");
+    expect(chat.conversation.last.sourceRoomId, "1");
+    await _waitFor(() => server.commands.contains("PRIVMSG #channel :my shared message\r\n"));
+    server.send(
+      "@id=after-shared;room-id=1 :other!o@tmi PRIVMSG #channel :Ordinary again\r\n"
+      "@id=shared-send :tmi.twitch.tv USERSTATE #channel\r\n",
+    );
+    expect(await sharedSend, isTrue);
+    expect(
+      chat.conversation.singleWhere((message) => message.id == "shared-send").sourceRoomId,
+      "1",
+    );
+
+    final ordinarySend = chat.send("my ordinary message");
+    expect(chat.conversation.last.sourceRoomId, isNull);
+    await _waitFor(() => server.commands.contains("PRIVMSG #channel :my ordinary message\r\n"));
+    server.send("@id=ordinary-send :tmi.twitch.tv USERSTATE #channel\r\n");
+    expect(await ordinarySend, isTrue);
+    expect(chat.conversation.last.sourceRoomId, isNull);
+  });
+
   test("retains highlighted chat and identifies only watch-streak milestone notices", () async {
     final chat = controller();
     await server.join(chat);
@@ -1046,13 +1090,21 @@ void main() {
     expect(chat.receivedMessageCount, 1);
     expect(chat.recentHistory.any((message) => message.id == localId), isFalse);
     expect(chat.error, isNull);
-    expect(await chat.send("too fast"), isFalse);
-    expect(chat.error, contains("too quickly"));
-    expect(chat.messages.last.isPrivate, isTrue);
-    expect(chat.messages.last.noticeText, chat.error);
+    final tooFast = chat.send("too fast");
+    await _waitFor(() => server.commands.contains("PRIVMSG #channel :too fast\r\n"));
+    const rateLimit = "Your message was not sent because you are sending messages too quickly.";
+    server.send("@msg-id=msg_ratelimit :tmi.twitch.tv NOTICE #channel :$rateLimit\r\n");
+    expect(await tooFast, isFalse);
+    expect(chat.sendRateLimitMessage, rateLimit);
+    expect(chat.error, isNull);
+    expect(chat.canSend, isTrue);
+    expect(chat.slowModeWaitRemaining, Duration.zero);
+    expect(chat.messages.any((message) => message.noticeText == rateLimit), isFalse);
+    expect(chat.conversation.any((message) => message.text == "too fast"), isFalse);
 
     await Future<void>.delayed(const Duration(milliseconds: 1050));
     final interrupted = chat.send("pending message");
+    expect(chat.sendRateLimitMessage, isNull);
     await _waitFor(() => server.commands.contains("PRIVMSG #channel :pending message\r\n"));
     unawaited(server.sockets.last.close());
     expect(await interrupted, isFalse);

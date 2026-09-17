@@ -151,6 +151,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
   String? _mentionUserId;
   AppLifecycleState _appLifecycleState = AppLifecycleState.resumed;
   bool _notificationPermissionRequested = false;
+  bool _keepingScreenOn = false;
 
   bool get _chatIsVisible => widget.isVisible && _appLifecycleState == AppLifecycleState.resumed;
 
@@ -175,6 +176,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
     super.didChangeDependencies();
     _bindSettings();
     _requestMentionNotifications();
+    _updateKeepScreenOn();
   }
 
   @override
@@ -223,10 +225,14 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
       enabled: widget.isLive && _settings.autoClaimChannelPoints,
     );
     _requestMentionNotifications();
+    _updateKeepScreenOn();
   }
 
   @override
   void dispose() {
+    if (_keepingScreenOn) {
+      unawaited(_invokeChatNotification<void>("setKeepScreenOn", {"enabled": false}));
+    }
     WidgetsBinding.instance.removeObserver(this);
     widget.onInlineBackHandlerChanged?.call(null);
     _settingsReaction?.call();
@@ -249,6 +255,15 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _appLifecycleState = state;
     _requestMentionNotifications();
+    _updateKeepScreenOn();
+  }
+
+  void _updateKeepScreenOn() {
+    final enabled = _chatIsVisible && widget.controller?.status == TwitchChatStatus.connected;
+    if (_keepingScreenOn != enabled) {
+      _keepingScreenOn = enabled;
+      unawaited(_invokeChatNotification<void>("setKeepScreenOn", {"enabled": enabled}));
+    }
   }
 
   void _requestMentionNotifications() {
@@ -355,6 +370,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
 
   void _chatChanged() {
     _requestMentionNotifications();
+    _updateKeepScreenOn();
     if (!_chatIsVisible) {
       _messagesForDisplay();
     }
@@ -601,20 +617,19 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
     if (!await _ensureCanCompose() || !mounted || controller != widget.controller) {
       return;
     }
-    final draft = _draft.value;
     final replyTo = _replyTo;
     setState(() {
       _sending = true;
-      _draft.clear();
-      _replyTo = null;
       _following = true;
       _pausedMessages = null;
     });
     try {
       final sent = await controller.send(text, replyTo: replyTo);
-      if (mounted && controller == widget.controller && !sent && _draft.text.isEmpty) {
-        _draft.value = draft;
-        _replyTo = replyTo;
+      if (mounted && controller == widget.controller && sent && _draft.text == text) {
+        _draft.clear();
+        if (_replyTo == replyTo) {
+          _replyTo = null;
+        }
       }
     } finally {
       if (mounted && controller == widget.controller) {
@@ -1730,6 +1745,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
           }
           if (mounted && widget._source == source) {
             setState(() => _rememberUsers(history, historical: true));
+            widget.assets?.observeMessages([..._history, ...history]);
           }
           return history;
         },
@@ -2132,7 +2148,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                   child: GestureDetector(
                                     onTap: _pinnerTap.onTap,
                                     child: ChatUsername(
-                                      name: pinner.displayName,
+                                      name: _chatDisplayName(pinner.displayName, pinner.login),
                                       style: theme.textTheme.labelLarge!.copyWith(
                                         color: colors.onSurfaceVariant,
                                         fontSize: fontSize - 2,
@@ -2143,7 +2159,10 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                   ),
                                 )
                               else
-                                TextSpan(text: pinner.displayName, recognizer: _pinnerTap),
+                                TextSpan(
+                                  text: _chatDisplayName(pinner.displayName, pinner.login),
+                                  recognizer: _pinnerTap,
+                                ),
                           ],
                         ),
                         maxLines: 1,
@@ -2695,7 +2714,8 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                           assets: widget.assets,
                                           knownUsers: knownUsers,
                                           blockedLogins: _blockedLogins.value,
-                                          previewPrefix: "Replying to ${message.displayName}: ",
+                                          previewPrefix:
+                                              "Replying to ${_chatDisplayName(message.displayName, message.login)}: ",
                                           previewLines: 1,
                                         ),
                                       ),
@@ -2739,7 +2759,10 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                           textCapitalization: TextCapitalization.sentences,
                                           maxLength: 500,
                                           decoration: InputDecoration(
-                                            hintText: hint,
+                                            hintText: controller?.sendRateLimitMessage ?? hint,
+                                            labelText: hasDraft
+                                                ? controller?.sendRateLimitMessage
+                                                : null,
                                             counterText: "",
                                             suffixIcon: widget.assets == null && replay == null
                                                 ? null
@@ -3662,6 +3685,15 @@ const _featuredSeasonalAndGiftsSvg =
     "q0-17-11.5-28.5T400-840q-17 0-28.5 11.5T360-800ZM160-680v80h280v-80H160Zm280 520v-360"
     'H240v360h200Zm80 0h200v-360H520v360Zm280-440v-80H520v80h280Z"/></svg>';
 
+String _chatDisplayName(String displayName, String? login) {
+  if (displayName.isEmpty) {
+    return login ?? "";
+  }
+  return login == null || login.isEmpty || displayName.toLowerCase() == login.toLowerCase()
+      ? displayName
+      : "$displayName ($login)";
+}
+
 String _chatDuration(Duration duration) {
   final remaining = (duration.inMilliseconds / 1000).ceil();
   return remaining < 60
@@ -4394,7 +4426,7 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
         : ": ";
     final paintedSender = _paintedName(
       message,
-      message.displayName,
+      _chatDisplayName(message.displayName, message.login),
       style:
           (widget.pinned
                   ? theme.textTheme.bodySmall!
@@ -4406,7 +4438,29 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
               ),
       onTap: onUserTap == null ? null : _nameTap.onTap,
     );
+    final sourceChannel = assets?.sharedChannels[message.sourceRoomId];
     final sender = <InlineSpan>[
+      if (sourceChannel?.profileImageUrl case final String url)
+        WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: Tooltip(
+              message: "${sourceChannel!.displayName} Chatter",
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(3),
+                child: Image.network(
+                  url,
+                  width: _fontSize * settings.badgeScale,
+                  height: _fontSize * settings.badgeScale,
+                  fit: BoxFit.cover,
+                  semanticLabel: "${sourceChannel.displayName} Chatter",
+                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                ),
+              ),
+            ),
+          ),
+        ),
       if (settings.twitchBadges)
         for (final badge in message.badges)
           if (assets?.badgeUrls[badge] case final String url)
@@ -4430,7 +4484,8 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
           _badge(badge),
       ?paintedSender,
       TextSpan(
-        text: "${paintedSender == null ? message.displayName : ''}$nameSeparator",
+        text:
+            "${paintedSender == null ? _chatDisplayName(message.displayName, message.login) : ''}$nameSeparator",
         style: TextStyle(color: nameColor, fontWeight: FontWeight.w700),
         recognizer: onUserTap == null ? null : _nameTap,
       ),
@@ -4557,7 +4612,7 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
                                       blockedLogins: widget.blockedLogins,
                                       bodyKey: widget.replyContextKey,
                                       previewPrefix:
-                                          "${message.parentDisplayName ?? parentLogin ?? 'Reply'}: ",
+                                          "${_chatDisplayName(message.parentDisplayName ?? parentLogin ?? 'Reply', parentLogin)}: ",
                                     ),
                             ),
                           ],
