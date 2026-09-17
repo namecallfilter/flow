@@ -73,6 +73,7 @@ void main() {
       clientLoader: () async => client,
       channelLogin: "hivise",
       autoLoad: false,
+      liveUpdates: false,
       httpClient: MockClient((_) async => http.Response("missing", 404)),
     );
     final controller = _ColorController(channel: "hivise")
@@ -144,10 +145,15 @@ Widget _panel(
 );
 
 Color? _nameColor(WidgetTester tester) {
-  final text = tester.widget<RichText>(find.text("Viewer: hello", findRichText: true));
+  final text = tester.widget<RichText>(
+    find.textContaining(
+      RegExp(r"^Viewer \([^)]+\): hello$"),
+      findRichText: true,
+    ),
+  );
   Color? color;
   text.text.visitChildren((span) {
-    if (span is TextSpan && span.text == "Viewer: ") {
+    if (span is TextSpan && span.text == "Viewer") {
       color = span.style?.color;
     }
     return true;

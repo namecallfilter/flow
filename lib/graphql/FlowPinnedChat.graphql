@@ -16,6 +16,7 @@ query FlowPinnedChat($channelID: ID!) {
             id
             sentAt
             senderChatColor
+            sourceChannel { id }
             senderBadges {
               setID
               version

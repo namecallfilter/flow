@@ -56,6 +56,8 @@ class TwitchChatMessage {
     this.offsetSeconds,
     this.timestamp,
     this.userId,
+    this.roomId,
+    this.sourceRoomId,
     this.isDeleted = false,
     this.isFirstMessage = false,
     this.isHighlighted = false,
@@ -63,6 +65,7 @@ class TwitchChatMessage {
     this.isPrivate = false,
     this.noticeType,
     this.noticeText,
+    this.noticeAction,
     this.parentMessageId,
     this.parentUserId,
     this.parentLogin,
@@ -91,6 +94,8 @@ class TwitchChatMessage {
   final double? offsetSeconds;
   final DateTime? timestamp;
   final String? userId;
+  final String? roomId;
+  final String? sourceRoomId;
   final bool isDeleted;
   final bool isFirstMessage;
   final bool isHighlighted;
@@ -98,6 +103,7 @@ class TwitchChatMessage {
   final bool isPrivate;
   final String? noticeType;
   final String? noticeText;
+  final ({String label, Uri url})? noticeAction;
   final String? parentMessageId;
   final String? parentUserId;
   final String? parentLogin;
@@ -135,6 +141,8 @@ class TwitchChatMessage {
     offsetSeconds: offsetSeconds ?? this.offsetSeconds,
     timestamp: timestamp,
     userId: userId,
+    roomId: roomId,
+    sourceRoomId: sourceRoomId,
     isDeleted: isDeleted ?? this.isDeleted,
     isFirstMessage: isFirstMessage,
     isHighlighted: isHighlighted,
@@ -142,6 +150,7 @@ class TwitchChatMessage {
     isPrivate: isPrivate,
     noticeType: noticeType,
     noticeText: noticeText ?? this.noticeText,
+    noticeAction: noticeAction,
     parentMessageId: parentMessageId,
     parentUserId: parentUserId,
     parentLogin: parentLogin,

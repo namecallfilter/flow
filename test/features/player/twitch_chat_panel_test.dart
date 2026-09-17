@@ -11,6 +11,8 @@ import "package:flow/features/player/chat_username.dart";
 import "package:flow/features/player/twitch_chat_panel.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flutter/material.dart";
+import "package:flutter/rendering.dart";
+import "package:flutter/services.dart";
 import "package:flutter_svg/flutter_svg.dart";
 import "package:flutter_test/flutter_test.dart";
 
@@ -41,6 +43,111 @@ void main() {
       ),
     ),
   );
+
+  testWidgets(
+    "sub anniversary shares an optional message, retries failures, and can be dismissed",
+    (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final controller = _ChatController();
+      addTearDown(controller.dispose);
+      final banner = find.byKey(const ValueKey("chat_subscription_anniversary"));
+      await tester.pumpWidget(panel(controller));
+      await tester.pumpAndSettle();
+      expect(banner, findsNothing);
+      controller.anniversary = const TwitchSubscriptionAnniversary(id: "token", months: 5);
+      controller.update();
+      await tester.pump();
+      expect(find.text("It's your 5-month sub anniversary!"), findsOneWidget);
+      await tester.enterText(find.byKey(const ValueKey("chat_message_input")), "Unsent chat draft");
+      await tester.tap(find.byKey(const ValueKey("chat_anniversary_share")));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      final message = find.byKey(const ValueKey("chat_anniversary_message"));
+      final send = find.byKey(const ValueKey("chat_anniversary_send"));
+      await tester.enterText(message, "Happy anniversary!");
+      final pending = Completer<bool>();
+      controller.anniversaryShareResult = pending.future;
+      await tester.tap(send);
+      await tester.pump();
+      expect(tester.widget<FilledButton>(send).onPressed, isNull);
+      expect(controller.anniversaryMessages, ["Happy anniversary!"]);
+      pending.complete(false);
+      await tester.pump();
+      expect(find.text("Could not share. Try again."), findsOneWidget);
+      expect(tester.widget<TextField>(message).controller!.text, "Happy anniversary!");
+      controller.anniversaryShareResult = Future.value(true);
+      await tester.enterText(message, "");
+      await tester.tap(send);
+      await tester.pumpAndSettle();
+      expect(controller.anniversaryMessages, ["Happy anniversary!", ""]);
+      expect(banner, findsNothing);
+      expect(message, findsNothing);
+      expect(
+        tester.widget<TextField>(find.byKey(const ValueKey("chat_message_input"))).controller!.text,
+        "Unsent chat draft",
+      );
+      controller.anniversary = const TwitchSubscriptionAnniversary(id: "next-token", months: 6);
+      controller.update();
+      await tester.pump();
+      await tester.tap(find.byTooltip("Dismiss sub anniversary"));
+      await tester.pumpAndSettle();
+      controller.update();
+      await tester.pumpAndSettle();
+      expect(banner, findsNothing);
+      expect(controller.anniversaryMessages, hasLength(2));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets("anniversary countdown keeps its deadline and preserves an open share sheet", (
+    tester,
+  ) async {
+    final controller = _ChatController()
+      ..anniversary = const TwitchSubscriptionAnniversary(id: "token", months: 5);
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(panel(controller));
+    await tester.pump();
+    final banner = find.byKey(const ValueKey("chat_subscription_anniversary"));
+    final timer = find.byKey(const ValueKey("chat_anniversary_dismissal"));
+    expect(banner, findsOneWidget);
+    await tester.pump(const Duration(seconds: 20));
+    expect(tester.widget<LinearProgressIndicator>(timer).value, closeTo(25 / 45, 0.01));
+    controller.anniversary = const TwitchSubscriptionAnniversary(id: "token", months: 5);
+    controller.items.add(_message(1));
+    controller.update();
+    await tester.pump();
+    expect(tester.widget<LinearProgressIndicator>(timer).value, closeTo(25 / 45, 0.01));
+    await tester.pump(const Duration(seconds: 24));
+    expect(banner, findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey("chat_anniversary_share")));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pump(const Duration(seconds: 1));
+    expect(banner, findsNothing);
+    expect(controller.subscriptionAnniversary?.id, "token");
+    expect(
+      tester.widget<FilledButton>(find.byKey(const ValueKey("chat_anniversary_send"))).onPressed,
+      isNotNull,
+    );
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    controller.update();
+    await tester.pump();
+    expect(banner, findsNothing);
+    controller.anniversary = const TwitchSubscriptionAnniversary(id: "next-token", months: 5);
+    controller.update();
+    await tester.pump();
+    expect(banner, findsOneWidget);
+    expect(tester.widget<LinearProgressIndicator>(timer).value, 1);
+    expect(controller.anniversaryMessages, isEmpty);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   testWidgets(
     "watch streak popup uses the app theme for a private event without a footer counter",
@@ -1409,7 +1516,7 @@ void main() {
     }
   });
 
-  testWidgets("clears sent drafts immediately, restores failures and supports keyboard send", (
+  testWidgets("keeps pending drafts, clears confirmed sends and supports keyboard send", (
     tester,
   ) async {
     final controller = _ChatController();
@@ -1427,8 +1534,8 @@ void main() {
     await tester.tap(send);
     await tester.pump();
     expect(controller.sent, ["Hello Twitch"]);
-    expect(send, findsNothing);
-    expect(tester.widget<TextField>(input).controller!.text, isEmpty);
+    expect(tester.widget<IconButton>(send).onPressed, isNull);
+    expect(tester.widget<TextField>(input).controller!.text, "Hello Twitch");
     result.complete(false);
     await tester.pump();
     expect(tester.widget<TextField>(input).controller!.text, "Hello Twitch");
@@ -1494,6 +1601,55 @@ void main() {
     await tester.pump();
     expect(tester.widget<TextField>(find.byType(TextField)).enabled, isTrue);
     expect(find.byTooltip("Reconnect chat"), findsNothing);
+  });
+
+  testWidgets("private callouts show server text and open their link action", (tester) async {
+    final url = Uri.parse("https://www.twitch.tv/drops/inventory");
+    final controller = _ChatController()
+      ..items.addAll([
+        TwitchChatMessage(
+          id: "private-callout",
+          login: "",
+          displayName: "",
+          text: "",
+          isPrivate: true,
+          noticeType: "private-callout",
+          noticeText: "Your reward is ready to claim.",
+          noticeAction: (label: "View reward", url: url),
+        ),
+        TwitchChatMessage(
+          id: "ordinary-message",
+          login: "viewer",
+          displayName: "Viewer",
+          text: "Hello",
+          noticeAction: (label: "Not a private action", url: url),
+        ),
+      ]);
+    addTearDown(controller.dispose);
+    const external = MethodChannel("flow/external_url");
+    final messenger = tester.binding.defaultBinaryMessenger;
+    final opened = <String>[];
+    var didOpen = true;
+    messenger.setMockMethodCallHandler(external, (call) async {
+      expect(call.method, "openExternalUrl");
+      opened.add(call.arguments as String);
+      return didOpen;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(external, null));
+    await tester.pumpWidget(panel(controller));
+    await tester.pumpAndSettle();
+    expect(find.text("Only visible to you"), findsOneWidget);
+    expect(find.text("Your reward is ready to claim."), findsOneWidget);
+    expect(find.text("Not a private action"), findsNothing);
+    final action = find.widgetWithText(TextButton, "View reward");
+    await tester.tap(action);
+    await tester.pumpAndSettle();
+    expect(opened, [url.toString()]);
+    didOpen = false;
+    await tester.tap(action);
+    await tester.pumpAndSettle();
+    expect(find.text("Could not open $url"), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets("VOD replay retains a disabled composer and a watch action", (
@@ -2264,7 +2420,7 @@ void main() {
     expect(images.singleWhere((image) => image.semanticLabel == "HeyGuys").height, 102);
     expect(images.singleWhere((image) => image.semanticLabel == "moderator").height, 18);
     final text = tester.widget<RichText>(
-      find.textContaining("LongViewerNameThatWraps:", findRichText: true),
+      find.textContaining("LongViewerNameThatWraps (author):", findRichText: true),
     );
     expect(text.text.style!.fontSize, 30);
     final row = tester.widget<Container>(
@@ -2639,6 +2795,275 @@ void main() {
     expect(find.textContaining("Kappa Bttv Seven Ffz", findRichText: true), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+  testWidgets("shared chat shows both origin avatars even with badges disabled", (tester) async {
+    final controller = _ChatController()
+      ..items.addAll([
+        for (final source in ["1", "2", null])
+          TwitchChatMessage(
+            id: source ?? "ordinary",
+            login: "viewer",
+            displayName: "Viewer",
+            text: "message",
+            badges: const ["moderator/1"],
+            sourceRoomId: source,
+          ),
+      ]);
+    final assets = _Assets(
+      sharedChannels: const {
+        "1": TwitchUser(
+          id: "1",
+          login: "testchannel",
+          displayName: "Test Channel",
+          profileImageUrl: "https://example.com/local.png",
+        ),
+        "2": TwitchUser(
+          id: "2",
+          login: "otherchannel",
+          displayName: "Other Channel",
+          profileImageUrl: "https://example.com/other.png",
+        ),
+      },
+    );
+    final preferences = MemoryFlowPreferences();
+    await preferences.saveChatPreferences(
+      const ChatPreferences(
+        twitchBadges: false,
+        sevenTvBadges: false,
+        bttvBadges: false,
+        ffzBadges: false,
+      ),
+    );
+    final settings = AppSettingsStore(preferences: preferences);
+    await settings.load();
+    addTearDown(controller.dispose);
+    addTearDown(assets.dispose);
+    await tester.pumpWidget(panel(controller, assets: assets, settingsStore: settings));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip("Test Channel Chatter"), findsOneWidget);
+    expect(find.byTooltip("Other Channel Chatter"), findsOneWidget);
+    expect(
+      tester.widgetList<Image>(find.byType(Image)).map((image) => image.semanticLabel),
+      unorderedEquals(["Test Channel Chatter", "Other Channel Chatter"]),
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey("chat_message_highlight-ordinary")),
+        matching: find.byType(Image),
+      ),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets("server rate rejection stays in the editable composer and preserves the draft", (
+    tester,
+  ) async {
+    final controller = _ChatController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(panel(controller));
+    final input = find.byKey(const ValueKey("chat_message_input"));
+    final send = find.byKey(const ValueKey("chat_send"));
+    await tester.enterText(input, "Keep this message");
+    await tester.pump();
+    final rejected = Completer<bool>();
+    controller.sendResult = rejected.future;
+    await tester.tap(send);
+    await tester.pump();
+    const warning = "You are sending messages too quickly.";
+    controller.rateLimitMessage = warning;
+    controller.update();
+    rejected.complete(false);
+    await tester.pump();
+    final field = tester.widget<TextField>(input);
+    expect(field.controller!.text, "Keep this message");
+    expect(field.decoration!.labelText, warning);
+    expect(field.enabled, isTrue);
+    expect(field.readOnly, isFalse);
+    expect(tester.widget<IconButton>(send).onPressed, isNotNull);
+    expect(find.text("Only visible to you"), findsNothing);
+
+    await tester.enterText(input, "Edited retry");
+    await tester.pump();
+    controller.sendResult = Future.value(false);
+    await tester.tap(send);
+    await tester.pump();
+    expect(tester.widget<TextField>(input).controller!.text, "Edited retry");
+    expect(controller.sent, ["Keep this message", "Edited retry"]);
+    await tester.enterText(input, "");
+    await tester.pump();
+    expect(tester.widget<TextField>(input).decoration!.hintText, warning);
+    expect(tester.widget<TextField>(input).decoration!.labelText, isNull);
+
+    await tester.enterText(input, "Successful retry");
+    await tester.pump();
+    controller
+      ..rateLimitMessage = null
+      ..sendResult = Future.value(true);
+    await tester.tap(send);
+    await tester.pump();
+    expect(tester.widget<TextField>(input).controller!.text, isEmpty);
+    expect(tester.widget<TextField>(input).decoration!.hintText, "Send a message");
+    expect(controller.sent.last, "Successful retry");
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets("display aliases keep canonical logins plain and clickable beside painted names", (
+    tester,
+  ) async {
+    final client = _ChattersClient();
+    final controller = _ChatController(client: client)
+      ..items.addAll(const [
+        TwitchChatMessage(
+          id: "translated",
+          userId: "id00",
+          login: "user00",
+          displayName: "日本語",
+          color: "#00FF00",
+          text: "painted alias",
+        ),
+        TwitchChatMessage(
+          id: "numeric",
+          login: "actualname",
+          displayName: "123",
+          text: "numeric alias",
+        ),
+        TwitchChatMessage(
+          id: "casing",
+          login: "alice",
+          displayName: "Alice",
+          text: "same name",
+        ),
+      ]);
+    final assets = _LargeCompletionAssets();
+    addTearDown(controller.dispose);
+    addTearDown(assets.dispose);
+    await tester.pumpWidget(panel(controller, assets: assets));
+    await tester.pumpAndSettle();
+    expect(find.text("123 (actualname): numeric alias", findRichText: true), findsOneWidget);
+    expect(find.text("Alice: same name", findRichText: true), findsOneWidget);
+    final painted = find.byType(ChatUsername);
+    expect(painted, findsOneWidget);
+    expect(tester.widget<ChatUsername>(painted).name, "日本語");
+    final rich = find.byWidgetPredicate(
+      (widget) => widget is RichText && widget.text.toPlainText().contains(" (user00): "),
+    );
+    final paragraph = tester.renderObject<RenderParagraph>(rich);
+    TextSpan? suffix;
+    TextStyle? nameStyle;
+    paragraph.text.visitChildren((span) {
+      if (span is TextSpan) {
+        if (span.text == " (user00)") {
+          suffix = span;
+        }
+        if (span.children?.any((child) => child is TextSpan && child.text == " (user00)") == true) {
+          nameStyle = span.style;
+        }
+      }
+      return true;
+    });
+    expect(nameStyle!.color, const Color(0xFF007B00));
+    expect(suffix!.style!.color, isNull);
+    expect(suffix!.style!.fontWeight, FontWeight.w400);
+    final offset = paragraph.text.toPlainText().indexOf("(user00)");
+    final box = paragraph
+        .getBoxesForSelection(
+          TextSelection(baseOffset: offset, extentOffset: offset + "(user00)".length),
+        )
+        .first;
+    for (final point in [tester.getCenter(painted), paragraph.localToGlobal(box.toRect().center)]) {
+      await tester.tapAt(point);
+      await tester.pumpAndSettle();
+      expect(client.profileLookup, (userId: "id00", login: "user00"));
+      expect(find.text("@user00"), findsOneWidget);
+      expect(
+        tester.widget<ChatUsername>(find.byKey(const ValueKey("chat_user_name"))).name,
+        "日本語",
+      );
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+    }
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets("connected visible chat keeps the screen on only while active", (tester) async {
+    final controller = _ChatController()
+      ..signedIn = false
+      ..connectionStatus = TwitchChatStatus.connecting;
+    final preferences = MemoryFlowPreferences();
+    addTearDown(controller.dispose);
+    const channel = MethodChannel("flow/chat_notifications");
+    final enabled = <bool>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == "setKeepScreenOn") {
+        enabled.add((call.arguments as Map<Object?, Object?>)["enabled"]! as bool);
+      }
+      return null;
+    });
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null),
+    );
+    addTearDown(
+      () => tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed),
+    );
+    Widget app({bool visible = true}) => MaterialApp(
+      home: Scaffold(
+        body: TwitchChatPanel(
+          controller: controller,
+          preferences: preferences,
+          chatOnly: true,
+          isLive: true,
+          isVisible: visible,
+          onToggleChatOnly: () {},
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(app());
+    expect(enabled, isEmpty);
+    controller.connectionStatus = TwitchChatStatus.connected;
+    controller.update();
+    await tester.pump();
+    expect(enabled, [true]);
+    controller.update();
+    await tester.pump();
+    expect(enabled, [true]);
+
+    for (final state in [
+      AppLifecycleState.inactive,
+      AppLifecycleState.hidden,
+      AppLifecycleState.paused,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(state);
+    }
+    await tester.pump();
+    expect(enabled, [true, false]);
+    for (final state in [
+      AppLifecycleState.hidden,
+      AppLifecycleState.inactive,
+      AppLifecycleState.resumed,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(state);
+    }
+    await tester.pump();
+    expect(enabled, [true, false, true]);
+
+    controller.connectionStatus = TwitchChatStatus.connecting;
+    controller.update();
+    await tester.pump();
+    expect(enabled.last, false);
+    controller.connectionStatus = TwitchChatStatus.connected;
+    controller.update();
+    await tester.pump();
+    expect(enabled.last, true);
+    await tester.pumpWidget(app(visible: false));
+    expect(enabled.last, false);
+    await tester.pumpWidget(app());
+    expect(enabled.last, true);
+    await tester.pumpWidget(const SizedBox.shrink());
+    expect(enabled, [true, false, true, false, true, false, true, false]);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Future<void> _openMenu(WidgetTester tester) async {
@@ -2670,6 +3095,7 @@ class _ChatController extends TwitchChatController {
   final room = <String, String>{};
   TwitchChatStatus connectionStatus = TwitchChatStatus.connected;
   String? notice;
+  String? rateLimitMessage;
   bool signedIn = true;
   bool followerEligible = true;
   Duration waitRemaining = Duration.zero;
@@ -2686,6 +3112,37 @@ class _ChatController extends TwitchChatController {
   int toggles = 0;
   Future<bool>? sendResult;
   int? received;
+  TwitchSubscriptionAnniversary? anniversary;
+  final anniversaryMessages = <String>[];
+  Future<bool> anniversaryShareResult = Future.value(true);
+  bool sharingAnniversary = false;
+  String? anniversaryError;
+
+  @override
+  TwitchSubscriptionAnniversary? get subscriptionAnniversary => anniversary;
+
+  @override
+  bool get isSharingSubscriptionAnniversary => sharingAnniversary;
+
+  @override
+  String? get subscriptionAnniversaryError => anniversaryError;
+
+  @override
+  Future<bool> shareSubscriptionAnniversary(String message) async {
+    anniversaryMessages.add(message);
+    sharingAnniversary = true;
+    anniversaryError = null;
+    notifyListeners();
+    final shared = await anniversaryShareResult;
+    sharingAnniversary = false;
+    if (shared) {
+      anniversary = null;
+    } else {
+      anniversaryError = "Could not share. Try again.";
+    }
+    notifyListeners();
+    return shared;
+  }
 
   bool get listening => hasListeners;
 
@@ -2706,6 +3163,9 @@ class _ChatController extends TwitchChatController {
 
   @override
   String? get error => notice;
+
+  @override
+  String? get sendRateLimitMessage => rateLimitMessage;
 
   @override
   bool get isSignedIn => signedIn;
@@ -2812,6 +3272,7 @@ class _ChattersClient extends TwitchApiClient {
   _ChattersClient() : super(clientId: "test", accessToken: "");
 
   String? channel;
+  ({String? userId, String? login})? profileLookup;
   int calls = 0;
   bool fail = false;
   Future<TwitchChatters>? response;
@@ -2831,6 +3292,17 @@ class _ChattersClient extends TwitchApiClient {
       throw TwitchApiException("Offline");
     }
     return response ?? result;
+  }
+
+  @override
+  Future<TwitchUser?> fetchChatUser({
+    String? userId,
+    String? login,
+    String? channelId,
+    String? channelLogin,
+  }) async {
+    profileLookup = (userId: userId, login: login);
+    return null;
   }
 }
 
@@ -2920,7 +3392,7 @@ class _LargeCompletionAssets extends _Assets {
 }
 
 class _Assets extends TwitchChatAssets {
-  _Assets({this.failUnlockedOnce = false})
+  _Assets({this.failUnlockedOnce = false, this.sharedChannels = const {}})
     : super(
         clientLoader: () async => throw StateError("Unused"),
         channelLogin: "testchannel",
@@ -2930,6 +3402,9 @@ class _Assets extends TwitchChatAssets {
   int refreshes = 0;
   int unlockedLoads = 0;
   final bool failUnlockedOnce;
+
+  @override
+  final Map<String, TwitchUser> sharedChannels;
 
   @override
   String? get unlockedError =>

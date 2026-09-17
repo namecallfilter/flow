@@ -926,7 +926,7 @@ class _AdProxySettings extends StatelessWidget {
               trailing: subscriptionChannels.contains(channel) && !manualChannels.contains(channel)
                   ? const Tooltip(
                       message: "Managed automatically",
-                      child: Icon(Icons.lock_outline),
+                      child: SizedBox.square(dimension: 48, child: Icon(Icons.lock_outline)),
                     )
                   : IconButton(
                       tooltip: "Remove channel",

@@ -10,6 +10,222 @@ import "package:http/testing.dart";
 void main() {
   tearDown(() => TwitchApiClient.restoreWebSessionDeviceId(null));
 
+  test("loads every subscription page and only includes active channel benefits", () async {
+    final cursors = <String?>[];
+    Map<String, Object?> edge(String? login, {bool active = true}) => {
+      "cursor": "next",
+      "node": {
+        "user": login == null
+            ? null
+            : {
+                "login": login,
+                "self": {
+                  "subscriptionBenefit": active ? {"id": "sub-$login"} : null,
+                },
+              },
+      },
+    };
+    final client = TwitchApiClient(
+      clientId: "client",
+      accessToken: "native-token",
+      gqlAccessToken: "web-token",
+      httpClient: MockClient((request) async {
+        expect(request.headers["authorization"], "OAuth web-token");
+        final payload = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(payload["query"], contains("filter: ALL"));
+        final variables = payload["variables"] as Map<String, dynamic>;
+        expect(variables["first"], 100);
+        final cursor = variables["after"] as String?;
+        cursors.add(cursor);
+        return _jsonResponse({
+          "data": {
+            "currentUser": {
+              "subscriptionBenefits": {
+                "edges": cursor == null
+                    ? [edge("StableRonaldo"), edge("expired", active: false), edge(null)]
+                    : [edge("stableronaldo"), edge("gifted_channel"), edge("mobile_channel")],
+                "pageInfo": {"hasNextPage": cursor == null},
+              },
+            },
+          },
+        });
+      }),
+    );
+    expect(await client.fetchSubscribedChannelLogins(), [
+      "stableronaldo",
+      "gifted_channel",
+      "mobile_channel",
+    ]);
+    expect(cursors, [null, "next"]);
+  });
+
+  test(
+    "subscription list rejects incomplete responses instead of replacing saved channels",
+    () async {
+      Map<String, Object?>? connection;
+      final client = TwitchApiClient(
+        clientId: "client",
+        accessToken: "native-token",
+        gqlAccessToken: "web-token",
+        httpClient: MockClient(
+          (_) async => _jsonResponse({
+            "data": {
+              "currentUser": {"subscriptionBenefits": connection},
+            },
+          }),
+        ),
+      );
+      for (final value in <Map<String, Object?>?>[
+        null,
+        {"edges": <Object?>[]},
+        {
+          "edges": <Object?>[],
+          "pageInfo": {"hasNextPage": true},
+        },
+        {
+          "edges": [
+            {
+              "cursor": "repeated",
+              "node": {"user": null},
+            },
+          ],
+          "pageInfo": {"hasNextPage": true},
+        },
+        {
+          "edges": [
+            {
+              "node": {
+                "user": {"login": "creator", "self": null},
+              },
+            },
+          ],
+          "pageInfo": {"hasNextPage": false},
+        },
+      ]) {
+        connection = value;
+        await expectLater(
+          client.fetchSubscribedChannelLogins(),
+          throwsA(isA<TwitchApiException>()),
+        );
+      }
+      connection = {
+        "edges": <Object?>[],
+        "pageInfo": {"hasNextPage": false},
+      };
+      expect(await client.fetchSubscribedChannelLogins(), isEmpty);
+    },
+  );
+
+  test("missing subscription relationship is unknown instead of unsubscribed", () async {
+    Map<String, Object?>? user;
+    final client = TwitchApiClient(
+      clientId: "client",
+      accessToken: "native-token",
+      gqlAccessToken: "web-token",
+      httpClient: MockClient(
+        (_) async => _jsonResponse({
+          "data": {"user": user},
+        }),
+      ),
+    );
+    for (final value in <Map<String, Object?>?>[
+      null,
+      {"self": null},
+    ]) {
+      user = value;
+      await expectLater(
+        client.fetchChannelSubscriptionStatus("creator"),
+        throwsA(isA<TwitchApiException>()),
+      );
+    }
+    user = {
+      "self": {"subscriptionBenefit": null},
+    };
+    expect(await client.fetchChannelSubscriptionStatus("creator"), isFalse);
+    user = {
+      "self": {
+        "subscriptionBenefit": {"id": "sub"},
+      },
+    };
+    expect(await client.fetchChannelSubscriptionStatus("creator"), isTrue);
+  });
+
+  test(
+    "subscription anniversaries use the authenticated token and only accept confirmed shares",
+    () async {
+      var success = false;
+      final requests = <Map<String, dynamic>>[];
+      final client = TwitchApiClient(
+        clientId: "client",
+        accessToken: "native-token",
+        gqlAccessToken: "web-token",
+        httpClient: MockClient((request) async {
+          expect(request.headers["authorization"], "OAuth web-token");
+          final payload = jsonDecode(request.body) as Map<String, dynamic>;
+          requests.add(payload);
+          if ((payload["query"] as String).contains("query FlowSubscriptionAnniversary")) {
+            expect(payload["variables"], {"login": "channel"});
+            return _jsonResponse({
+              "data": {
+                "user": {
+                  "self": {
+                    "resubNotification": {"id": "token-id", "cumulativeTenureMonths": 5},
+                  },
+                },
+              },
+            });
+          }
+          expect(payload["query"], contains("mutation FlowShareSubscriptionAnniversary"));
+          expect(payload["variables"], {
+            "input": {
+              "channelLogin": "channel",
+              "tokenID": "token-id",
+              "message": "hello",
+              "includeStreak": false,
+            },
+          });
+          return _jsonResponse({
+            "data": {
+              "useChatNotificationToken": {"isSuccess": success},
+            },
+          });
+        }),
+      );
+      final anniversary = await client.fetchSubscriptionAnniversary(" Channel ");
+      expect(anniversary!.id, "token-id");
+      expect(anniversary.months, 5);
+      Future<void> share() => client.shareSubscriptionAnniversary(
+        login: " Channel ",
+        anniversaryId: anniversary.id,
+        message: "hello",
+      );
+      await expectLater(share(), throwsA(isA<TwitchApiException>()));
+      success = true;
+      await share();
+      expect(requests.length, 3);
+      await expectLater(
+        client.shareSubscriptionAnniversary(
+          login: "channel",
+          anniversaryId: anniversary.id,
+          message: "a" * 501,
+        ),
+        throwsA(isA<TwitchApiException>()),
+      );
+      expect(requests.length, 3);
+
+      final anonymous = TwitchApiClient(
+        clientId: "client",
+        accessToken: "",
+        httpClient: MockClient((_) async => throw StateError("Anonymous request")),
+      );
+      expect(await anonymous.fetchSubscriptionAnniversary("channel"), isNull);
+      await expectLater(
+        anonymous.shareSubscriptionAnniversary(login: "channel", anniversaryId: "id", message: ""),
+        throwsA(isA<TwitchApiException>()),
+      );
+    },
+  );
+
   test(
     "chat profile lookup prefers stable IDs and supports normalized login-only history",
     () async {

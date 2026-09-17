@@ -20,6 +20,7 @@ fragment FlowChatReplyMessage on Message {
     displayName
   }
   senderChatColor
+  sourceChannel { id }
   senderBadges {
     setID
     version

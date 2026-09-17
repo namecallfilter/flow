@@ -1,0 +1,5 @@
+mutation FlowShareSubscriptionAnniversary($input: UseChatNotificationTokenInput!) {
+  useChatNotificationToken(input: $input) {
+    isSuccess
+  }
+}

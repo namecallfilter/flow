@@ -11,6 +11,7 @@ class TwitchPrivateChatNotices {
     required this.userId,
     required this.clientLoader,
     required this.onNotice,
+    this.onSharedChatEnded,
     Future<WebSocket> Function()? socketConnector,
   }) : _socketConnector = socketConnector ?? _openSocket {
     unawaited(_connect());
@@ -20,7 +21,14 @@ class TwitchPrivateChatNotices {
   final String channelId;
   final String userId;
   final TwitchApiClientLoader clientLoader;
-  final void Function({required String id, required String type, required String text}) onNotice;
+  final void Function()? onSharedChatEnded;
+  final void Function({
+    required String id,
+    required String type,
+    required String text,
+    ({String label, Uri url})? action,
+  })
+  onNotice;
   final Future<WebSocket> Function() _socketConnector;
   late final Timer _sessionTimer;
   WebSocket? _socket;
@@ -30,12 +38,12 @@ class TwitchPrivateChatNotices {
   Timer? _retry;
   String _token = "";
   String _authId = "";
-  String _requestId = "";
-  String _subscriptionId = "";
+  final _pendingSubscriptions = <String, ({String id, String topic})>{};
+  final _subscriptions = <String, String>{};
+  final _publishedCallouts = <String>{};
   int _generation = 0;
   int _attempt = 0;
   int _keepaliveSeconds = 15;
-  bool _subscribed = false;
   bool _disposed = false;
 
   static Future<WebSocket> _openSocket() => WebSocket.connect(
@@ -109,49 +117,125 @@ class TwitchPrivateChatNotices {
             _lost(generation);
             return;
           }
-          _requestId = _uuid();
-          _subscriptionId = _uuid();
-          _send({
-            "type": "subscribe",
-            "id": _requestId,
-            "subscribe": {
-              "id": _subscriptionId,
-              "type": "pubsub",
-              "pubsub": {"topic": "viewer-milestones.$userId"},
-            },
-          });
+          for (final topic in [
+            "viewer-milestones.$userId",
+            if (onSharedChatEnded != null) "shared-chat-channel-v1.$channelId",
+            "private-callout.$userId.$channelId",
+          ]) {
+            final requestId = _uuid();
+            final subscriptionId = _uuid();
+            _pendingSubscriptions[requestId] = (id: subscriptionId, topic: topic);
+            _send({
+              "type": "subscribe",
+              "id": requestId,
+              "subscribe": {
+                "id": subscriptionId,
+                "type": "pubsub",
+                "pubsub": {"topic": topic},
+              },
+            });
+          }
           _phaseDeadline?.cancel();
           _phaseDeadline = Timer(const Duration(seconds: 10), () => _lost(generation));
         case "subscribeResponse":
-          if (message["parentId"] != _requestId) {
+          final pending = _pendingSubscriptions.remove(message["parentId"]);
+          if (pending == null) {
             return;
           }
           if ((message["subscribeResponse"]! as Map)["result"] != "ok") {
             _lost(generation);
             return;
           }
-          _phaseDeadline?.cancel();
-          _subscribed = true;
-          _attempt = 0;
+          _subscriptions[pending.id] = pending.topic;
+          if (_pendingSubscriptions.isEmpty) {
+            _phaseDeadline?.cancel();
+            _attempt = 0;
+          }
         case "notification":
-          final notification = message["notification"]! as Map<String, Object?>;
-          if (!_subscribed ||
-              notification["type"] != "pubsub" ||
-              (notification["subscription"]! as Map)["id"] != _subscriptionId) {
+          final notification = message["notification"];
+          if (notification is! Map || notification["type"] != "pubsub") {
             return;
           }
-          final event = jsonDecode(notification["pubsub"]! as String) as Map<String, Object?>;
-          final data = event["data"] as Map<String, Object?>?;
+          final subscription = notification["subscription"];
+          final pubsub = notification["pubsub"];
+          if (subscription is! Map || pubsub is! String) {
+            return;
+          }
+          final topic = _subscriptions[subscription["id"]];
+          if (topic == null) {
+            return;
+          }
+          final Object? event;
+          try {
+            event = jsonDecode(pubsub);
+          } on FormatException {
+            return;
+          }
+          if (event is! Map) {
+            return;
+          }
+          if (topic == "shared-chat-channel-v1.$channelId") {
+            if (event["type"] == "session-ended") {
+              onSharedChatEnded?.call();
+            }
+            return;
+          }
+          final data = event["data"];
+          if (data is! Map) {
+            return;
+          }
+          if (topic == "private-callout.$userId.$channelId") {
+            final callout = data["private_callout"];
+            if (event["type"] != "send-private-callout" || callout is! Map) {
+              return;
+            }
+            final id = callout["id"];
+            final body = callout["body"];
+            if (id is String && id.trim().isNotEmpty && body is String && body.trim().isNotEmpty) {
+              ({String label, Uri url})? action;
+              final actions = callout["actions"];
+              final first = actions is List && actions.isNotEmpty ? actions.first : null;
+              if (first is Map && first["type"] == "click") {
+                final label = first["body"];
+                final rawUrl = first["url"];
+                final url = rawUrl is String ? Uri.tryParse(rawUrl) : null;
+                if (label is String &&
+                    label.trim().isNotEmpty &&
+                    url != null &&
+                    (url.scheme == "https" || url.scheme == "http") &&
+                    url.host.isNotEmpty) {
+                  action = (label: label, url: url);
+                }
+              }
+              unawaited(
+                _publish(
+                  "private-callout:$id",
+                  "private-callout",
+                  body,
+                  generation,
+                  action: action,
+                ),
+              );
+            }
+            return;
+          }
           final id = message["id"] as String?;
-          final count = int.tryParse(data?["watch_streak_value"]?.toString() ?? "");
+          final count = int.tryParse(data["watch_streak_value"]?.toString() ?? "");
           if (event["type"] == "viewer-milestones-update" &&
-              data?["event_type"] == "achieved" &&
-              data?["channel_id"] == channelId &&
+              data["event_type"] == "achieved" &&
+              data["channel_id"] == channelId &&
               id != null &&
               id.isNotEmpty &&
               count != null &&
               count > 0) {
-            unawaited(_publish(id, count, generation));
+            unawaited(
+              _publish(
+                "watch-streak:$id",
+                "watch-streak",
+                "You reached a $count-stream watch streak!",
+                generation,
+              ),
+            );
           }
         case "reconnect":
         case "subscriptionRevocation":
@@ -162,15 +246,17 @@ class TwitchPrivateChatNotices {
     }
   }
 
-  Future<void> _publish(String id, int count, int generation) async {
+  Future<void> _publish(
+    String id,
+    String type,
+    String text,
+    int generation, {
+    ({String label, Uri url})? action,
+  }) async {
     try {
       await clientLoader().timeout(const Duration(seconds: 5));
-      if (_isCurrent(generation)) {
-        onNotice(
-          id: "watch-streak:$id",
-          type: "watch-streak",
-          text: "You reached a $count-stream watch streak!",
-        );
+      if (_isCurrent(generation) && (type != "private-callout" || _publishedCallouts.add(id))) {
+        onNotice(id: id, type: type, text: text, action: action);
       }
     } on Object {
       _lost(generation);
@@ -202,7 +288,8 @@ class TwitchPrivateChatNotices {
     _deadline?.cancel();
     _phaseDeadline?.cancel();
     _retry?.cancel();
-    _subscribed = false;
+    _pendingSubscriptions.clear();
+    _subscriptions.clear();
     unawaited(_subscription?.cancel());
     _subscription = null;
     final socket = _socket;

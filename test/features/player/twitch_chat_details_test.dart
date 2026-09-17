@@ -133,7 +133,12 @@ void main() {
     const channel = MethodChannel("flow/chat_notifications");
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
       channel,
-      (call) async => sounds.add(call),
+      (call) async {
+        if (call.method == "mention") {
+          sounds.add(call);
+        }
+        return null;
+      },
     );
     addTearDown(
       () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null),
@@ -213,12 +218,163 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets("Unicode viewer mentions notify without matching partial names", (tester) async {
+    final controller = _Controller(_Client())
+      ..viewerId = "self"
+      ..viewerLogin = "my_login"
+      ..viewerDisplayName = "中文名字";
+    addTearDown(controller.dispose);
+    final settings = AppSettingsStore(preferences: MemoryFlowPreferences());
+    await settings.load();
+    final notifications = <MethodCall>[];
+    const channel = MethodChannel("flow/chat_notifications");
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == "mention") {
+        notifications.add(call);
+      }
+      return true;
+    });
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null),
+    );
+    await tester.pumpWidget(_panel(controller, settingsStore: settings, isVisible: false));
+    await tester.pumpAndSettle();
+    controller.items.addAll([
+      _message("unicode-mention", "Hi (@中文名字)！", minute: 1),
+      _message("unicode-partial", "@中文名字多 中文@中文名字 @@中文名字 @my_login多", minute: 1),
+      const TwitchChatMessage(
+        id: "unicode-other-account",
+        login: "other",
+        displayName: "Other",
+        text: "@中文名字 reply to a different account",
+        parentMessageId: "parent",
+        parentUserId: "another-account",
+        parentLogin: "another_login",
+        parentDisplayName: "中文名字",
+      ),
+    ]);
+    controller.update();
+    await tester.pumpAndSettle();
+    expect(notifications, hasLength(1));
+    expect((notifications.single.arguments as Map)["notify"], isTrue);
+    expect(_highlight(tester, "unicode-mention").border, isNotNull);
+    expect(_highlight(tester, "unicode-partial").border, isNull);
+    expect(_highlight(tester, "unicode-other-account").border, isNull);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets("hidden chat notifies once per new mention even when sounds and highlights are off", (
+    tester,
+  ) async {
+    final mentions = <MethodCall>[];
+    var permissionRequests = 0;
+    const channel = MethodChannel("flow/chat_notifications");
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == "mention") {
+        mentions.add(call);
+      } else if (call.method == "requestPermission") {
+        permissionRequests++;
+        return true;
+      }
+      return null;
+    });
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null),
+    );
+    final controller = _Controller(_Client())
+      ..viewerId = "self"
+      ..viewerLogin = "my_login"
+      ..items.add(_message("existing", "Existing @my_login", minute: 1));
+    final settings = AppSettingsStore(preferences: MemoryFlowPreferences());
+    await settings.load();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_panel(controller, settingsStore: settings));
+    await tester.pumpAndSettle();
+    expect(permissionRequests, 1);
+    controller.items.add(_message("visible", "Visible @my_login", minute: 2));
+    controller.update();
+    await tester.pumpAndSettle();
+    expect(mentions.single.arguments, isNull);
+
+    await tester.pumpWidget(_panel(controller, settingsStore: settings, isVisible: false));
+    await tester.pumpAndSettle();
+    expect(mentions, hasLength(1));
+    controller.items.addAll([
+      _message("hidden", "Hidden @my_login", minute: 3),
+      _message("own", "@my_login", minute: 3).copyWith(isOwn: true),
+      _message("history", "@my_login", minute: 3).copyWith(isHistorical: true),
+      _message("deleted", "@my_login", minute: 3).copyWith(isDeleted: true),
+    ]);
+    controller.update();
+    await tester.pumpAndSettle();
+    expect(mentions, hasLength(2));
+    expect(mentions.last.arguments, {
+      "notify": true,
+      "channel": "channel",
+      "sender": "Viewer",
+      "message": "Hidden @my_login",
+      "sound": true,
+    });
+    await settings.setChatPreferences(
+      settings.chatPreferences.copyWith(highlightMentions: false, mentionSounds: false),
+    );
+    controller.items.add(_message("silent", "Silent @my_login", minute: 4));
+    controller.update();
+    await tester.pumpAndSettle();
+    expect(mentions, hasLength(3));
+    expect(mentions.last.arguments, {
+      "notify": true,
+      "channel": "channel",
+      "sender": "Viewer",
+      "message": "Silent @my_login",
+      "sound": false,
+    });
+    expect(_highlight(tester, "silent").border, isNull);
+    controller.update();
+    await tester.pumpWidget(_panel(controller, settingsStore: settings));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(_panel(controller, settingsStore: settings, isVisible: false));
+    await tester.pumpAndSettle();
+    expect(mentions, hasLength(3));
+    await tester.pumpWidget(_panel(controller, settingsStore: settings));
+    await tester.pumpAndSettle();
+    addTearDown(
+      () => tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed),
+    );
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    controller.items.add(_message("background", "Background @my_login", minute: 5));
+    controller.update();
+    await tester.idle();
+    expect(mentions, hasLength(4));
+    expect(mentions.last.arguments, {
+      "notify": true,
+      "channel": "channel",
+      "sender": "Viewer",
+      "message": "Background @my_login",
+      "sound": false,
+    });
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(mentions, hasLength(4));
+    expect(permissionRequests, 1);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets("mention sounds follow the display delay and skip muted arrivals", (tester) async {
     final sounds = <MethodCall>[];
     const channel = MethodChannel("flow/chat_notifications");
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
       channel,
-      (call) async => sounds.add(call),
+      (call) async {
+        if (call.method == "mention") {
+          sounds.add(call);
+        }
+        return null;
+      },
     );
     addTearDown(
       () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, null),
@@ -1349,7 +1505,7 @@ void main() {
     const root = TwitchChatMessage(
       id: "root",
       login: "parent",
-      displayName: "Parent",
+      displayName: "𠮷野",
       text: "Question",
       color: "#123456",
     );
@@ -1357,11 +1513,12 @@ void main() {
       id: "reply",
       login: "viewer",
       displayName: "Viewer",
-      text: "@parent Kappa @Server @MiXeD",
+      text: "@𠮷野 Kappa @Server @MiXeD",
       color: "#FF1493",
-      emotes: [TwitchChatEmote(id: "25", start: 8, end: 13)],
+      emotes: [TwitchChatEmote(id: "25", start: 5, end: 10)],
       parentMessageId: "root",
       parentLogin: "parent",
+      parentDisplayName: "𠮷野",
       parentText: "@Viewer @Server",
       threadRootId: "root",
     );
@@ -1389,11 +1546,11 @@ void main() {
       _span(tester, feed, "Viewer: ").style!.color,
     );
     final fallback = _span(tester, feed, "@MiXeD").style!.color;
-    expect(_log(feed, "@parent"), findsNothing);
+    expect(_log(feed, "@𠮷野"), findsNothing);
     await tester.tap(find.byKey(const ValueKey("reply-context-reply")));
     await tester.pumpAndSettle();
     final threadReply = find.byKey(const ValueKey("thread-reply"));
-    expect(_log(threadReply, "@parent"), findsNothing);
+    expect(_log(threadReply, "@𠮷野"), findsNothing);
     expect(_span(tester, threadReply, "@Server").style!.color, const Color(0xFFAB1234));
     expect(_span(tester, feed, "@Server").style!.color, const Color(0xFFAB1234));
     expect(_span(tester, preview, "@Server").style!.color, const Color(0xFFAB1234));
@@ -1426,7 +1583,7 @@ void main() {
     await tester.pump();
     await tester.tap(find.byTooltip("Send message"));
     await tester.pumpAndSettle();
-    expect(controller.sent.single.replyTo!.text, "@parent Kappa @Server @MiXeD");
+    expect(controller.sent.single.replyTo!.text, "@𠮷野 Kappa @Server @MiXeD");
     expect(tester.takeException(), isNull);
   });
 
@@ -1509,12 +1666,20 @@ void main() {
 
   testWidgets("reply display removes only the matching leading parent mention", (tester) async {
     final controller = _Controller(_Client());
+    tester.view.physicalSize = const Size(800, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     const cases = [
-      ("@PaReNt hello @parent", "hello @parent"),
-      ("hello @parent", "hello @parent"),
-      ("@other hello", "@other hello"),
-      ("@parentish hello", "@parentish hello"),
-      ("@parent, hello", "@parent, hello"),
+      ("@PaReNt hello @parent", "hello @parent", "Parent"),
+      ("hello @parent", "hello @parent", "Parent"),
+      ("@other hello", "@other hello", "Parent"),
+      ("@parentish hello", "@parentish hello", "Parent"),
+      ("@parent, hello", "@parent, hello", "Parent"),
+      ("@アレンン ty", "ty", "アレンン"),
+      ("@中文名字 @中文名字 ty", "@中文名字 ty", "中文名字"),
+      ("hello @한국어", "hello @한국어", "한국어"),
+      ("@العَرَبِيَّة ty", "ty", "العَرَبِيَّة"),
+      ("@𠮷野多 ty", "@𠮷野多 ty", "𠮷野"),
     ];
     for (var index = 0; index < cases.length; index++) {
       controller.items.add(
@@ -1525,6 +1690,7 @@ void main() {
           text: cases[index].$1,
           parentMessageId: "parent",
           parentLogin: "parent",
+          parentDisplayName: cases[index].$3,
         ),
       );
     }
@@ -1711,12 +1877,13 @@ void main() {
     final assets = _PaintAssets(client);
     controller.pin = TwitchPinnedChat(
       id: "painted-pin",
-      pinnedBy: (id: "99", login: "pinner", displayName: "Pinner"),
+      pinnedBy: (id: "99", login: "pinner", displayName: "日本語"),
       message: TwitchChatMessage(
         id: "pin-name",
         userId: "1234",
         login: "viewer",
-        displayName: "Viewer",
+        displayName: "アレンン",
+        color: "#00FF00",
         text: "Pinned body",
         timestamp: DateTime(2026, 5, 12, 10, 1),
       ),
@@ -1726,14 +1893,23 @@ void main() {
     await tester.pumpWidget(_panel(controller, assets: assets));
     await tester.pumpAndSettle();
     final pin = find.byKey(const ValueKey("chat_pinned_message"));
-    expect(_paintName(pin, "Pinner"), findsOneWidget);
-    expect(_paintName(pin, "Viewer"), findsOneWidget);
+    expect(_paintName(pin, "日本語"), findsOneWidget);
+    expect(_paintName(pin, "アレンン"), findsOneWidget);
+    expect(_span(tester, pin, " (pinner)").style!.fontWeight, FontWeight.w400);
+    expect(_span(tester, pin, " (viewer)").style!.color, isNull);
+    expect(_span(tester, pin, " (viewer)").style!.fontWeight, FontWeight.w400);
     expect(_span(tester, pin, "Pinned by ").style, isNull);
     for (final entry in {
-      "Pinner": (userId: "99", login: "pinner"),
-      "Viewer": (userId: "1234", login: "viewer"),
+      "日本語": (userId: "99", login: "pinner"),
+      "アレンン": (userId: "1234", login: "viewer"),
+      " (pinner)": (userId: "99", login: "pinner"),
+      " (viewer)": (userId: "1234", login: "viewer"),
     }.entries) {
-      final tap = await tester.startGesture(tester.getCenter(_paintName(pin, entry.key)));
+      final tap = await tester.startGesture(
+        entry.key.startsWith(" ")
+            ? _textPoint(tester, pin, entry.key)
+            : tester.getCenter(_paintName(pin, entry.key)),
+      );
       await tester.pump(const Duration(milliseconds: 40));
       controller.update();
       await tester.pump(const Duration(milliseconds: 40));
@@ -2261,6 +2437,102 @@ void main() {
     controller.notifyListeners();
     await tester.pumpAndSettle();
     expect(_span(tester, row, "@viewer").style!.color, Colors.black);
+  });
+
+  testWidgets("Unicode mentions use canonical colors and profile identities", (tester) async {
+    await _cacheImages(tester);
+    final client = _Client();
+    final controller = _Controller(client);
+    addTearDown(controller.dispose);
+    for (final name in ["アレンン", "中文名字", "한국어", "العَرَبِيَّة", "𠮷野", "Jose\u0301"]) {
+      controller.history
+        ..clear()
+        ..add(
+          TwitchChatMessage(
+            id: "known-$name",
+            login: "viewer",
+            userId: "1234",
+            displayName: name,
+            color: "#00FF00",
+            text: "Earlier message",
+          ),
+        );
+      controller.items
+        ..clear()
+        ..add(
+          TwitchChatMessage(
+            id: "unicode-name",
+            login: "other",
+            displayName: "Other",
+            text: "Hi (@$name)， $name!",
+          ),
+        );
+      controller.update();
+      await tester.pumpWidget(_panel(controller));
+      await tester.pumpAndSettle();
+      final row = find.byKey(const ValueKey("unicode-name"));
+      for (final label in ["@$name", name]) {
+        final span = _span(tester, row, label);
+        expect(span.style!.color, const Color(0xFF00FF00), reason: label);
+        expect(span.style!.fontWeight, FontWeight.w700, reason: label);
+      }
+    }
+    (_span(tester, find.byKey(const ValueKey("unicode-name")), "@Jose\u0301").recognizer!
+            as TapGestureRecognizer)
+        .onTap!();
+    await tester.pumpAndSettle();
+    expect(client.lookups, [(userId: "1234", login: "viewer")]);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets("Unicode replies use the parent account despite duplicate display names", (
+    tester,
+  ) async {
+    await _cacheImages(tester);
+    final client = _Client();
+    final controller = _Controller(client)
+      ..history.addAll(const [
+        TwitchChatMessage(
+          id: "target",
+          login: "viewer",
+          userId: "1234",
+          displayName: "アレンン",
+          color: "#00FF00",
+          text: "Original message",
+        ),
+        TwitchChatMessage(
+          id: "other-account",
+          login: "another_user",
+          userId: "5678",
+          displayName: "アレンン",
+          color: "#FF0000",
+          text: "Different account",
+        ),
+      ])
+      ..items.add(
+        const TwitchChatMessage(
+          id: "unicode-reply",
+          login: "other",
+          displayName: "Other",
+          text: "@アレンン @アレンン ty",
+          parentMessageId: "target",
+          parentLogin: "viewer",
+          parentUserId: "1234",
+          parentDisplayName: "アレンン",
+        ),
+      );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(_panel(controller));
+    await tester.pumpAndSettle();
+    final row = find.byKey(const ValueKey("unicode-reply"));
+    final body = tester.widget<RichText>(_log(row, "Other: ")).text.toPlainText();
+    expect(body, "Other: @アレンン ty");
+    final mention = _span(tester, row, "@アレンン");
+    expect(mention.style!.color, const Color(0xFF00FF00));
+    (mention.recognizer! as TapGestureRecognizer).onTap!();
+    await tester.pumpAndSettle();
+    expect(client.lookups, [(userId: "1234", login: "viewer")]);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets("mentions use the chatter's exact color and open profiles; URLs open externally", (
@@ -3183,6 +3455,7 @@ Widget _panel(
   AppSettingsStore? settingsStore,
   Brightness brightness = Brightness.dark,
   bool chatOnly = true,
+  bool isVisible = true,
 }) => MaterialApp(
   theme: buildFlowTheme(brightness),
   home: Scaffold(
@@ -3193,6 +3466,7 @@ Widget _panel(
       preferences: MemoryFlowPreferences(),
       settingsStore: settingsStore,
       chatOnly: chatOnly,
+      isVisible: isVisible,
       isLive: true,
       onToggleChatOnly: () {},
     ),
@@ -3374,12 +3648,16 @@ class _Controller extends TwitchChatController {
   TwitchPinnedChat? pin;
   String? viewerId;
   String? viewerLogin;
+  String? viewerDisplayName;
 
   @override
   String? get currentUserId => viewerId;
 
   @override
   String? get currentUserLogin => viewerLogin;
+
+  @override
+  String? get currentUserDisplayName => viewerDisplayName;
 
   @override
   TwitchChatMessage? get pinnedMessage => pin?.message;
@@ -3450,6 +3728,9 @@ class _FailingThreadClient extends _Client {
 class _Assets extends TwitchChatAssets {
   _Assets(_Client client)
     : super(clientLoader: () async => client, channelLogin: "channel", autoLoad: false);
+
+  @override
+  void observeMessages(Iterable<TwitchChatMessage> messages) {}
 
   @override
   Map<String, ChatAssetEmote> get emotesByName => const {
