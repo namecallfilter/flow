@@ -2,6 +2,7 @@ import "dart:async";
 import "dart:collection";
 import "dart:convert";
 import "dart:io";
+import "dart:math";
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
@@ -156,6 +157,7 @@ class TwitchChatAssets extends ChangeNotifier {
   TwitchUser? _broadcaster;
   final Map<String, TwitchUser> _sharedChannels = {};
   final Set<String> _sharedChannelAttempts = {};
+  Timer? _sharedChannelRetryTimer;
   final Map<ChatEmoteProvider, Map<String, List<ChatAssetBadge>>> _providerBadges = {};
   Map<String, List<ChatAssetBadge>> _userBadgesByLogin = const {};
   final Map<String, ChatAssetPaint> _userPaintsByLogin = {};
@@ -661,6 +663,7 @@ query($id: String!) {
       _sevenSocket ??= _LiveEmoteSocket(
         url: "wss://events.7tv.io/v3",
         connect: _socketConnector,
+        onDisconnect: _sevenDisconnected,
         onReconnect: () {
           for (final source in ["7tv-global", if (_liveChannelId != null) "7tv-channel"]) {
             unawaited(_reloadLiveSource(source));
@@ -684,7 +687,9 @@ query($id: String!) {
             for (final source in _sevenSetIds.entries.where((e) => e.value == body?["id"])) {
               unawaited(_reloadLiveSource(source.key));
             }
-          } else if (event["op"] == 4 || event["op"] == 7) {
+          } else if (event["op"] == 7) {
+            _sevenDisconnected(_int(data?["code"]));
+          } else if (event["op"] == 4) {
             _sevenSocket?.reconnect();
           }
         },
@@ -723,6 +728,17 @@ query($id: String!) {
             unawaited(_reloadLiveSource(topic == "global" ? "ffz-global" : "ffz-channel"));
           }
         },
+      );
+    }
+  }
+
+  void _sevenDisconnected(int? code) {
+    // https://github.com/SevenTV/EventAPI#close-codes
+    if (const {1008, 4001, 4002, 4003, 4004, 4005, 4009, 4010, 4011}.contains(code)) {
+      _sevenSocket?.dispose();
+    } else {
+      _sevenSocket?.reconnect(
+        delay: code == 4007 ? Duration(seconds: 300 + Random().nextInt(60)) : null,
       );
     }
   }
@@ -782,7 +798,9 @@ query($id: String!) {
         ),
         abort.future,
       ]);
-      if (_isCurrent(generation) && previousSet != _sevenSetIds[source]) {
+      if (_isCurrent(generation) &&
+          previousSet != _sevenSetIds[source] &&
+          _sevenSocket?._disposed != true) {
         _sevenSocket?.dispose();
         _sevenSocket = null;
         _startLiveUpdates();
@@ -854,6 +872,7 @@ query($id: String!) {
       if (sourceId != null &&
           RegExp(r"^\d+$").hasMatch(sourceId) &&
           !_sharedChannels.containsKey(sourceId) &&
+          _sharedChannelRetryTimer?.isActive != true &&
           _sharedChannelAttempts.add(sourceId)) {
         sourceIds.add(sourceId);
       }
@@ -885,7 +904,12 @@ query($id: String!) {
       }
       notifyListeners();
     } on Object {
-      // ponytail: retry failed portraits next chat session, avoiding per-message requests.
+      if (_isCurrent(generation)) {
+        _sharedChannelAttempts.removeAll(ids);
+        _sharedChannelRetryTimer ??= Timer(const Duration(seconds: 30), () {
+          _sharedChannelRetryTimer = null;
+        });
+      }
     } finally {
       if (!_isCurrent(generation)) {
         _sharedChannelAttempts.removeAll(ids);
@@ -1328,6 +1352,8 @@ query($id: String!) {
 
   void _cancel() {
     _deadline?.cancel();
+    _sharedChannelRetryTimer?.cancel();
+    _sharedChannelRetryTimer = null;
     for (final pending in _liveAborts) {
       if (!pending.isCompleted) {
         pending.complete();
@@ -1369,6 +1395,7 @@ class _LiveEmoteSocket {
     required this.onMessage,
     required this.onReconnect,
     this.onOpen,
+    this.onDisconnect,
   }) {
     unawaited(_open());
   }
@@ -1378,6 +1405,7 @@ class _LiveEmoteSocket {
   final void Function(Map<String, Object?> event) onMessage;
   final void Function() onReconnect;
   final void Function(_LiveEmoteSocket socket)? onOpen;
+  final void Function(int? code)? onDisconnect;
   WebSocket? _socket;
   StreamSubscription<Object?>? _subscription;
   Timer? _retry;
@@ -1418,7 +1446,11 @@ class _LiveEmoteSocket {
         },
         onDone: () {
           if (generation == _generation) {
-            reconnect();
+            if (onDisconnect case final onDisconnect?) {
+              onDisconnect(socket.closeCode);
+            } else {
+              reconnect();
+            }
           }
         },
         onError: (_) {
@@ -1442,7 +1474,7 @@ class _LiveEmoteSocket {
 
   void send(Map<String, Object?> event) => _socket?.add(jsonEncode(event));
 
-  void reconnect() {
+  void reconnect({Duration? delay}) {
     if (_disposed || _retry?.isActive == true) {
       return;
     }
@@ -1450,7 +1482,7 @@ class _LiveEmoteSocket {
     unawaited(_subscription?.cancel());
     unawaited(_socket?.close());
     _socket = null;
-    _retry = Timer(Duration(seconds: _backoff), () => unawaited(_open()));
+    _retry = Timer(delay ?? Duration(seconds: _backoff), () => unawaited(_open()));
     _backoff = (_backoff * 2).clamp(1, 30);
   }
 

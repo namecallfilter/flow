@@ -222,6 +222,86 @@ void main() {
     await tester.pump(const Duration(seconds: 31));
     expect(sockets.values.expand((group) => group).every((socket) => socket.closed), isTrue);
   });
+  testWidgets("7TV terminal closures stop retries while recoverable closures reconnect", (
+    tester,
+  ) async {
+    final sockets = <_EmoteSocket>[];
+    Completer<http.Response>? pendingSet;
+    final assets = _assets(
+      liveUpdates: true,
+      socketConnector: (url) async {
+        final socket = _EmoteSocket();
+        if (Uri.parse(url).host == "events.7tv.io") {
+          sockets.add(socket);
+        }
+        return socket;
+      },
+      httpClient: MockClient((request) async {
+        if (request.url.host == "7tv.io" && request.url.path.contains("users")) {
+          return pendingSet?.future ?? _response(request.url);
+        }
+        return _response(request.url);
+      }),
+    );
+    await assets.refresh();
+    await tester.pump();
+    for (final code in [4001, 4002, 4003, 4004, 4005, 4009, 4010, 4011]) {
+      final count = sockets.length;
+      pendingSet = Completer<http.Response>();
+      sockets.last.receive({
+        "op": 0,
+        "d": {
+          "type": "user.update",
+          "body": {"id": "seven-user"},
+        },
+      });
+      await tester.pump();
+      sockets.last.receive({
+        "op": 7,
+        "d": {"code": code},
+      });
+      pendingSet.complete(
+        _json({
+          "emote_set": {"id": "replacement-set", "emotes": <Object?>[]},
+        }),
+      );
+      pendingSet = null;
+      await tester.pump();
+      await tester.pump(const Duration(minutes: 6));
+      expect(sockets.last.closed, isTrue);
+      expect(sockets, hasLength(count));
+      await assets.refresh();
+      await tester.pump();
+      expect(sockets, hasLength(count + 1));
+    }
+    final terminalCount = sockets.length;
+    await sockets.last.close(1008);
+    await tester.pump(const Duration(minutes: 6));
+    expect(sockets, hasLength(terminalCount));
+    await assets.refresh();
+    await tester.pump();
+    for (final code in [4000, 4006, 4008, 4012]) {
+      final count = sockets.length;
+      sockets.last.receive({
+        "op": 7,
+        "d": {"code": code},
+      });
+      await tester.pump(const Duration(seconds: 1));
+      expect(sockets, hasLength(count + 1));
+    }
+    final maintenanceCount = sockets.length;
+    sockets.last.receive({
+      "op": 7,
+      "d": {"code": 4007},
+    });
+    await tester.pump(const Duration(seconds: 299));
+    expect(sockets, hasLength(maintenanceCount));
+    await tester.pump(const Duration(seconds: 61));
+    expect(sockets, hasLength(maintenanceCount + 1));
+    assets.dispose();
+    await tester.pump();
+  });
+
   test("loads provider globals and channel aliases, native badges and emote names", () async {
     final requests = <Uri>[];
     final assets = _assets(
@@ -1053,6 +1133,23 @@ void main() {
     await tester.pump();
     expect(batches, hasLength(2));
 
+    await tester.pump(const Duration(seconds: 29));
+    assets.observeMessages([source("789")]);
+    await tester.pump();
+    expect(batches, hasLength(2));
+    response = Completer();
+    await tester.pump(const Duration(seconds: 1));
+    assets.observeMessages([source("789")]);
+    await tester.pump();
+    expect(batches, hasLength(3));
+    const recovered = TwitchUser(id: "789", login: "recovered", displayName: "Recovered");
+    response.complete({"789": recovered});
+    await tester.pump();
+    expect(assets.sharedChannels["789"], same(recovered));
+    assets.observeMessages([source("789")]);
+    await tester.pump();
+    expect(batches, hasLength(3));
+
     response = Completer();
     assets.observeMessages([source("999")]);
     await tester.pump();
@@ -1217,6 +1314,8 @@ class _EmoteSocket extends Stream<Object?> implements WebSocket {
   final sent = <Map<String, Object?>>[];
   bool closed = false;
   @override
+  int? closeCode;
+  @override
   Duration? pingInterval;
 
   void receive(Map<String, Object?> event) => _incoming.add(jsonEncode(event));
@@ -1228,6 +1327,8 @@ class _EmoteSocket extends Stream<Object?> implements WebSocket {
       return;
     }
     closed = true;
+    closeCode = code;
+    await Future<void>.value();
     await _incoming.close();
   }
 

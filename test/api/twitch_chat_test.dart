@@ -155,6 +155,85 @@ void main() {
     },
   );
 
+  testWidgets("anniversary refreshes during an initial request queue one fresh lookup", (
+    tester,
+  ) async {
+    final pending = Completer<TwitchSubscriptionAnniversary?>();
+    final client = _Client()..loadAnniversary = () => pending.future;
+    final chat = TwitchChatController(
+      channel: "channel",
+      clientLoader: () async => client,
+      socketConnector: () async => _Socket(),
+      loadPins: false,
+      loadPrivateNotices: false,
+    );
+    await tester.pump();
+    expect(client.anniversaryLoads, 1);
+    await chat.refreshSubscriptionAnniversary();
+    await chat.refreshSubscriptionAnniversary();
+    client.loadAnniversary = () async => const TwitchSubscriptionAnniversary(id: "new", months: 1);
+    pending.complete(null);
+    await tester.pump();
+    expect(client.anniversaryLoads, 2);
+    expect(chat.subscriptionAnniversary?.id, "new");
+    chat.dispose();
+  });
+
+  testWidgets("losing a subscription clears the anniversary and rejects stale results", (
+    tester,
+  ) async {
+    const anniversary = TwitchSubscriptionAnniversary(id: "anniversary", months: 5);
+    final client = _Client()..loadAnniversary = () async => anniversary;
+    final socket = _Socket();
+    final chat = TwitchChatController(
+      channel: "channel",
+      clientLoader: () async => client,
+      socketConnector: () async => socket,
+      loadPins: false,
+      loadPrivateNotices: false,
+    );
+    await tester.pump();
+    socket.acknowledgeJoin();
+    socket._incoming.add("@subscriber=1 :tmi.twitch.tv USERSTATE #channel\r\n");
+    await tester.pump();
+    client.onShareAnniversary = () => Future.error(TwitchApiException("Expired"));
+    expect(await chat.shareSubscriptionAnniversary("hello"), isFalse);
+    expect(chat.subscriptionAnniversaryError, "Expired");
+    final pending = Completer<TwitchSubscriptionAnniversary?>();
+    client.loadAnniversary = () => pending.future;
+    final refresh = chat.refreshSubscriptionAnniversary();
+    await tester.pump();
+    await chat.refreshSubscriptionAnniversary();
+    final loads = client.anniversaryLoads;
+    socket._incoming.add("@subscriber=0 :tmi.twitch.tv USERSTATE #channel\r\n");
+    await tester.pump();
+    expect(chat.subscriptionAnniversary, isNull);
+    expect(chat.subscriptionAnniversaryError, isNull);
+    pending.complete(anniversary);
+    await refresh;
+    await tester.pump();
+    expect(chat.subscriptionAnniversary, isNull);
+    expect(client.anniversaryLoads, loads);
+    expect(await chat.shareSubscriptionAnniversary("hello"), isFalse);
+
+    client.loadAnniversary = () async => anniversary;
+    socket._incoming.add("@subscriber=1 :tmi.twitch.tv USERSTATE #channel\r\n");
+    await tester.pump();
+    final pendingShare = Completer<void>();
+    client.onShareAnniversary = () => pendingShare.future;
+    final share = chat.shareSubscriptionAnniversary("hello");
+    await tester.pump();
+    expect(chat.isSharingSubscriptionAnniversary, isTrue);
+    socket._incoming.add("@subscriber=0 :tmi.twitch.tv USERSTATE #channel\r\n");
+    await tester.pump();
+    pendingShare.completeError(TwitchApiException("Stale error"));
+    expect(await share, isFalse);
+    expect(chat.subscriptionAnniversary, isNull);
+    expect(chat.subscriptionAnniversaryError, isNull);
+    expect(chat.isSharingSubscriptionAnniversary, isFalse);
+    chat.dispose();
+  });
+
   Future<TwitchChatController> historyChat(
     WidgetTester tester,
     _Client client,
