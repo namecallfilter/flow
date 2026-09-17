@@ -34,6 +34,7 @@ class TwitchChatPanel extends StatefulWidget {
     required this.chatOnly,
     required this.isLive,
     required this.onToggleChatOnly,
+    this.isVisible = true,
     this.canShowVideo = true,
     this.controller,
     this.replayController,
@@ -60,6 +61,7 @@ class TwitchChatPanel extends StatefulWidget {
   final ValueChanged<VoidCallback?>? onInlineBackHandlerChanged;
   final bool chatOnly;
   final bool isLive;
+  final bool isVisible;
   final bool canShowVideo;
   final double topPadding;
   final int? latencyMs;
@@ -90,12 +92,13 @@ class TwitchChatPanel extends StatefulWidget {
     properties.add(IntProperty("latencyMs", latencyMs));
     properties.add(FlagProperty("chatOnly", value: chatOnly, ifTrue: "chat only"));
     properties.add(FlagProperty("isLive", value: isLive, ifTrue: "live"));
+    properties.add(FlagProperty("isVisible", value: isVisible, ifTrue: "visible"));
     properties.add(FlagProperty("canShowVideo", value: canShowVideo, ifTrue: "can show video"));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onToggleChatOnly", onToggleChatOnly));
   }
 }
 
-class _TwitchChatPanelState extends State<TwitchChatPanel> {
+class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingObserver {
   final _draft = TextEditingController();
   final _draftFocus = FocusNode();
   final _scroll = ScrollController();
@@ -120,6 +123,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
   int _receivedWhenPaused = 0;
   TwitchChatMessage? _replyTo;
   String? _dismissedPinId;
+  (TwitchChatController, String?, String)? _dismissedAnniversary;
   String? _minimizedPinId;
   String? _autoCollapsePinId;
   Timer? _pinCollapseTimer;
@@ -145,10 +149,16 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
   int? _replayTimelineRevision;
   final _seenMentionMessages = <String>{};
   String? _mentionUserId;
+  AppLifecycleState _appLifecycleState = AppLifecycleState.resumed;
+  bool _notificationPermissionRequested = false;
+
+  bool get _chatIsVisible => widget.isVisible && _appLifecycleState == AppLifecycleState.resumed;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _appLifecycleState = WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed;
     _replayTimelineRevision = widget.replayController?.timelineRevision;
     widget._source.addListener(_chatChanged);
     widget.assets?.addListener(_chatChanged);
@@ -164,6 +174,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _bindSettings();
+    _requestMentionNotifications();
   }
 
   @override
@@ -211,10 +222,12 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     widget.controller?.setAutoClaimChannelPoints(
       enabled: widget.isLive && _settings.autoClaimChannelPoints,
     );
+    _requestMentionNotifications();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.onInlineBackHandlerChanged?.call(null);
     _settingsReaction?.call();
     widget._source.removeListener(_chatChanged);
@@ -230,6 +243,40 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     _closeSheets();
     _blockedLogins.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appLifecycleState = state;
+    _requestMentionNotifications();
+  }
+
+  void _requestMentionNotifications() {
+    if (_notificationPermissionRequested ||
+        _appLifecycleState != AppLifecycleState.resumed ||
+        !widget.isLive ||
+        widget.controller?.isSignedIn != true) {
+      return;
+    }
+    _notificationPermissionRequested = true;
+    unawaited(
+      _invokeChatNotification<bool>("requestPermission").then((handled) {
+        _notificationPermissionRequested = handled != false;
+      }),
+    );
+  }
+
+  Future<T?> _invokeChatNotification<T>(String method, [Map<String, Object>? arguments]) async {
+    try {
+      return await const MethodChannel(
+        "flow/chat_notifications",
+      ).invokeMethod<T>(method, arguments);
+    } on MissingPluginException {
+      // Chat notifications are provided by the Android host.
+    } on PlatformException catch (error) {
+      debugPrint("Could not send chat notification: $error");
+    }
+    return null;
   }
 
   void _closeSheets() {
@@ -249,6 +296,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
       final result = await showModalBottomSheet<T>(
         context: context,
         isScrollControlled: true,
+        useSafeArea: true,
         builder: (context) {
           route = ModalRoute.of<Object?>(context);
           if (route != null) {
@@ -306,6 +354,10 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
   }
 
   void _chatChanged() {
+    _requestMentionNotifications();
+    if (!_chatIsVisible) {
+      _messagesForDisplay();
+    }
     final revision = widget.replayController?.timelineRevision;
     if (revision != _replayTimelineRevision) {
       _replayTimelineRevision = revision;
@@ -332,34 +384,43 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
       _resetMentionAlerts();
     }
     _seenMentionMessages.retainAll(retainedIds);
-    var alert = false;
+    TwitchChatMessage? alert;
     for (final message in messages) {
       if (_seenMentionMessages.add(message.id) &&
           !message.isHistorical &&
           !_blockedLogins.value.contains(message.login.toLowerCase()) &&
           _mentionsViewer(message, widget.controller)) {
-        alert = true;
+        alert = message;
       }
     }
-    if (!alert || !widget.isLive || !_settings.mentionSounds || _settingsStore?.isLoaded != true) {
+    if (alert == null ||
+        !widget.isLive ||
+        (_chatIsVisible && !_settings.mentionSounds) ||
+        _settingsStore?.isLoaded != true) {
+      return;
+    }
+    if (!_chatIsVisible) {
+      unawaited(
+        _invokeChatNotification<void>("mention", {
+          "notify": true,
+          "channel": widget.controller!.channel,
+          "sender": alert.displayName,
+          "message": alert.text,
+          "sound": _settings.mentionSounds,
+        }),
+      );
       return;
     }
     final source = widget._source;
     final userId = _mentionUserId;
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted ||
           widget._source != source ||
           widget.controller?.currentUserId != userId ||
           !_settings.mentionSounds) {
         return;
       }
-      try {
-        await const MethodChannel("flow/chat_notifications").invokeMethod<void>("mention");
-      } on MissingPluginException {
-        // Notification sounds are provided by the Android host.
-      } on PlatformException catch (error) {
-        debugPrint("Could not play mention sound: $error");
-      }
+      unawaited(_invokeChatNotification<void>("mention"));
     });
   }
 
@@ -846,6 +907,137 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
     await widget.onOpenSettings?.call();
   }
 
+  Future<void> _shareSubscriptionAnniversary(TwitchChatController controller) async {
+    final message = TextEditingController();
+    try {
+      await _showSheet<void>(
+        builder: (context) => ListenableBuilder(
+          listenable: controller,
+          builder: (context, _) => SafeArea(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(
+                20,
+                20,
+                20,
+                20 + MediaQuery.viewInsetsOf(context).bottom,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text("Share your sub anniversary", style: Theme.of(context).textTheme.titleLarge),
+                  const SizedBox(height: 16),
+                  TextField(
+                    key: const ValueKey("chat_anniversary_message"),
+                    controller: message,
+                    enabled: !controller.isSharingSubscriptionAnniversary,
+                    maxLength: 500,
+                    maxLines: 3,
+                    minLines: 1,
+                    decoration: const InputDecoration(labelText: "Message (optional)"),
+                  ),
+                  if (controller.subscriptionAnniversaryError case final error?)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Text(
+                        error,
+                        style: TextStyle(color: Theme.of(context).colorScheme.error),
+                      ),
+                    ),
+                  FilledButton(
+                    key: const ValueKey("chat_anniversary_send"),
+                    onPressed:
+                        controller.isSharingSubscriptionAnniversary ||
+                            controller.status != TwitchChatStatus.connected ||
+                            controller.subscriptionAnniversary == null
+                        ? null
+                        : () async {
+                            final shared = await controller.shareSubscriptionAnniversary(
+                              message.text,
+                            );
+                            if (shared && context.mounted) {
+                              Navigator.of(context).pop();
+                            }
+                          },
+                    child: Text(controller.isSharingSubscriptionAnniversary ? "Sharing…" : "Share"),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    } finally {
+      message.dispose();
+    }
+  }
+
+  Widget _subscriptionAnniversaryCallout(TwitchChatController controller) {
+    final anniversary = controller.subscriptionAnniversary;
+    final key = (controller, controller.currentUserId, anniversary?.id ?? "");
+    if (anniversary == null || _dismissedAnniversary == key) {
+      return const SizedBox.shrink();
+    }
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+      child: Material(
+        key: const ValueKey("chat_subscription_anniversary"),
+        color: colors.primaryContainer,
+        borderRadius: BorderRadius.circular(12),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(left: 12),
+              child: Row(
+                children: [
+                  Icon(Icons.stars_rounded, color: colors.onPrimaryContainer, size: 22),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      "It's your ${anniversary.months}-month sub anniversary!",
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colors.onPrimaryContainer,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    key: const ValueKey("chat_anniversary_share"),
+                    onPressed: () => unawaited(_shareSubscriptionAnniversary(controller)),
+                    child: const Text("Share"),
+                  ),
+                  IconButton(
+                    tooltip: "Dismiss sub anniversary",
+                    onPressed: () => setState(() => _dismissedAnniversary = key),
+                    icon: Icon(Icons.close_rounded, color: colors.onPrimaryContainer, size: 18),
+                  ),
+                ],
+              ),
+            ),
+            ExcludeSemantics(
+              child: TweenAnimationBuilder<double>(
+                key: ValueKey(key),
+                tween: Tween(begin: 1, end: 0),
+                duration: const Duration(seconds: 45),
+                onEnd: () => setState(() => _dismissedAnniversary = key),
+                builder: (context, value, _) => LinearProgressIndicator(
+                  key: const ValueKey("chat_anniversary_dismissal"),
+                  value: value,
+                  minHeight: 2,
+                  color: colors.onPrimaryContainer,
+                  backgroundColor: colors.onPrimaryContainer.withValues(alpha: 0.2),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   FlowPreferences get _preferences => widget.preferences ?? _settingsStore!.preferences;
 
   String? get _currentRulesKey {
@@ -1089,7 +1281,10 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
       );
     }
     if (mounted && controller == widget.controller) {
-      await controller.refreshChatAccess();
+      await Future.wait([
+        controller.refreshChatAccess(),
+        controller.refreshSubscriptionAnniversary(),
+      ]);
     }
   }
 
@@ -1369,13 +1564,17 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
         ),
       ], historical: true);
     }
-    return _knownChatUsers;
+    return {
+      for (final user in _knownChatUsers.values)
+        if (user.displayName.isNotEmpty) user.displayName.toLowerCase(): user,
+      ..._knownChatUsers,
+    };
   }
 
   Iterable<TwitchChatMessage> get _completionUsers sync* {
     _checkChattersScope();
     final known = _knownUsers;
-    yield* known.values;
+    yield* known.values.toSet();
     yield* _rosterUsers.entries
         .where((entry) => !known.containsKey(entry.key))
         .map((entry) => entry.value);
@@ -2509,6 +2708,8 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> {
                                     ],
                                   ),
                                 ),
+                              if (controller != null && widget.isLive && controller.isSignedIn)
+                                _subscriptionAnniversaryCallout(controller),
                               if (controller != null &&
                                   widget.isLive &&
                                   controller.isSignedIn &&
@@ -3531,23 +3732,36 @@ bool _mentionsViewer(TwitchChatMessage message, Listenable? source) {
           : login != null && message.parentLogin?.toLowerCase() == login)) {
     return true;
   }
-  return login != null &&
-      login.isNotEmpty &&
-      RegExp(
-        "(^|[^A-Za-z0-9_])@${RegExp.escape(login)}(?![A-Za-z0-9_])",
-        caseSensitive: false,
-      ).hasMatch(message.text);
+  return [login, source.currentUserDisplayName].whereType<String>().any(
+    (name) =>
+        name.isNotEmpty &&
+        RegExp(
+          "(^|[^\\p{L}\\p{M}\\p{N}_@])@${RegExp.escape(name)}(?![\\p{L}\\p{M}\\p{N}_])",
+          caseSensitive: false,
+          unicode: true,
+        ).hasMatch(message.text.substring(_replyBodyStart(message))),
+  );
 }
 
 int _replyBodyStart(TwitchChatMessage message) {
-  final parentLogin = message.parentLogin;
-  return parentLogin != null && parentLogin.isNotEmpty
-      ? RegExp(
-              "^@${RegExp.escape(parentLogin)}(?:\\s+|\$)",
-              caseSensitive: false,
-            ).firstMatch(message.text)?.end ??
-            0
-      : 0;
+  if (message.parentMessageId == null ||
+      (message.parentUserId?.isNotEmpty != true && message.parentLogin?.isNotEmpty != true)) {
+    return 0;
+  }
+  for (final name in [message.parentLogin, message.parentDisplayName]) {
+    if (name == null || name.isEmpty) {
+      continue;
+    }
+    final prefix = RegExp(
+      "^@${RegExp.escape(name)}(?:\\s+|\$)",
+      caseSensitive: false,
+      unicode: true,
+    ).firstMatch(message.text);
+    if (prefix != null) {
+      return prefix.end;
+    }
+  }
+  return 0;
 }
 
 class _ChatMessageRow extends StatefulWidget {
@@ -3926,13 +4140,17 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
     for (final match in RegExp(
       r"https?://\S+|"
       r"(?<![\w@.-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?(?![\w@-])(?::[0-9]{1,5})?(?:[/?#]\S*)?|"
-      r"(?<![\w@])@[a-zA-Z0-9_]{1,25}(?![a-zA-Z0-9_])|"
-      r"(?<![\w@./-])[a-zA-Z0-9_]{1,25}(?![\w@./-])",
+      r"(?<![\p{L}\p{M}\p{N}_@])@[\p{L}\p{M}\p{N}_]{1,25}(?![\p{L}\p{M}\p{N}_])|"
+      r"(?<![\p{L}\p{M}\p{N}_@./-])[\p{L}\p{M}\p{N}_]{1,25}(?![\p{L}\p{M}\p{N}_@./-])",
       caseSensitive: false,
+      unicode: true,
     ).allMatches(text)) {
       final token = match[0]!;
       final explicitMention = token.startsWith("@");
-      final login = token.substring(explicitMention ? 1 : 0).toLowerCase();
+      final name = token.substring(explicitMention ? 1 : 0).toLowerCase();
+      final login = name == message.parentDisplayName?.toLowerCase()
+          ? message.parentLogin?.toLowerCase() ?? name
+          : name;
       final knownUser = widget.knownUsers[login];
       final mention = explicitMention || knownUser != null;
       var label = mention ? token : token.replaceFirst(RegExp(r"[.,!?;:]+$"), "");
@@ -3957,6 +4175,7 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
           TwitchChatMessage(
             id: "mention-$login",
             login: login,
+            userId: login == message.parentLogin?.toLowerCase() ? message.parentUserId : null,
             displayName: token.substring(explicitMention ? 1 : 0),
             text: "",
           );
@@ -4429,6 +4648,21 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
                       style: theme.textTheme.bodyMedium?.copyWith(height: 1.4, fontSize: _fontSize),
                     ),
                   ?art,
+                  if (message.noticeAction case final action? when message.isPrivate && !hidden)
+                    TextButton(
+                      onPressed: () async {
+                        try {
+                          await ExternalUrlLauncher.open(action.url);
+                        } on Object catch (error) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(SnackBar(content: Text(error.toString())));
+                          }
+                        }
+                      },
+                      child: Text(action.label),
+                    ),
                   if (widget.pinned && !hidden)
                     Padding(
                       padding: const EdgeInsets.only(top: 4),

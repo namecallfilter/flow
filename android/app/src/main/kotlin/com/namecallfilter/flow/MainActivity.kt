@@ -1,5 +1,8 @@
 package com.namecallfilter.flow
 
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.app.PictureInPictureUiState
@@ -23,11 +26,13 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.util.Rational
 import android.webkit.CookieManager
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.upstream.experimental.ExperimentalBandwidthMeter
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -124,7 +129,15 @@ class MainActivity : FlutterActivity() {
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "flow/chat_notifications")
             .setMethodCallHandler { call, result ->
-                if (call.method == "mention") playChatMention(result) else result.notImplemented()
+                when (call.method) {
+                    "mention" -> if (call.argument<Boolean>("notify") == true) {
+                        notifyChatMention(call, result)
+                    } else {
+                        playChatMention(result)
+                    }
+                    "requestPermission" -> result.success(requestChatNotificationPermission())
+                    else -> result.notImplemented()
+                }
             }
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "flow/external_url")
@@ -152,6 +165,60 @@ class MainActivity : FlutterActivity() {
             result.success(null)
         } catch (error: Exception) {
             result.error("mention_sound_failed", error.message, null)
+        }
+    }
+
+    private fun requestChatNotificationPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        ) return true
+        val preferences = getSharedPreferences("chat_notifications", Context.MODE_PRIVATE)
+        if (preferences.getBoolean("permission_requested", false)) return true
+        if (!playbackResumed || isInPictureInPictureMode || isFinishing || isDestroyed) return false
+        preferences.edit().putBoolean("permission_requested", true).apply()
+        requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
+        return true
+    }
+
+    private fun notifyChatMention(call: MethodCall, result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            result.success(null)
+            return
+        }
+        try {
+            val channel = requireNotNull(call.argument<String>("channel"))
+            val sender = requireNotNull(call.argument<String>("sender"))
+            val message = requireNotNull(call.argument<String>("message"))
+            val notificationManager = getSystemService(NotificationManager::class.java)
+            val channelId = "chat_mentions"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                notificationManager.createNotificationChannel(
+                    NotificationChannel(channelId, "Chat mentions", NotificationManager.IMPORTANCE_HIGH),
+                )
+            }
+            val openPlayer = PendingIntent.getActivity(
+                this, 0, Intent(this, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val notification = NotificationCompat.Builder(this, channelId)
+                .setSmallIcon(R.drawable.ic_stat_flow)
+                .setContentTitle("$sender mentioned you in #$channel")
+                .setContentText(message)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setDefaults(NotificationCompat.DEFAULT_SOUND)
+                .setSilent(call.argument<Boolean>("sound") != true)
+                .setContentIntent(openPlayer)
+                .setAutoCancel(true)
+                .build()
+            notificationManager.notify("chat_mentions:$channel", 2, notification)
+            result.success(null)
+        } catch (error: Exception) {
+            result.error("mention_notification_failed", error.message, null)
         }
     }
 

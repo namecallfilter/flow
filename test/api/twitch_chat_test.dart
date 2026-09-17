@@ -24,6 +24,137 @@ void main() {
     return chat;
   }
 
+  test("anniversaries load, keep failed shares retryable, and prevent duplicate shares", () async {
+    const anniversary = TwitchSubscriptionAnniversary(id: "anniversary", months: 5);
+    final client = _Client()..loadAnniversary = () async => anniversary;
+    final chat = TwitchChatController(
+      channel: "channel",
+      clientLoader: () async => client,
+      socketConnector: server.connect,
+      loadPins: false,
+      loadPrivateNotices: false,
+    );
+    addTearDown(chat.dispose);
+    await server.join(chat);
+    expect(chat.subscriptionAnniversary, anniversary);
+    final failure = Completer<void>();
+    client.onShareAnniversary = () => failure.future;
+    final failedShare = chat.shareSubscriptionAnniversary("hello");
+    await _waitFor(() => client.anniversaryShares == 1);
+    expect(chat.isSharingSubscriptionAnniversary, isTrue);
+    expect(await chat.shareSubscriptionAnniversary("duplicate"), isFalse);
+    failure.completeError(TwitchApiException("Try again."));
+    expect(await failedShare, isFalse);
+    expect(chat.subscriptionAnniversary, anniversary);
+    expect(chat.subscriptionAnniversaryError, "Try again.");
+    expect(chat.isSharingSubscriptionAnniversary, isFalse);
+
+    final staleRefresh = Completer<TwitchSubscriptionAnniversary?>();
+    client.loadAnniversary = () => staleRefresh.future;
+    final refresh = chat.refreshSubscriptionAnniversary();
+    await _waitFor(() => client.anniversaryLoads == 2);
+    await chat.refreshSubscriptionAnniversary();
+    expect(client.anniversaryLoads, 2);
+    client.onShareAnniversary = null;
+    expect(await chat.shareSubscriptionAnniversary("hello"), isTrue);
+    staleRefresh.complete(anniversary);
+    await refresh;
+    expect(chat.subscriptionAnniversary, isNull);
+    expect(chat.subscriptionAnniversaryError, isNull);
+    expect(client.anniversaryShares, 2);
+    expect(await chat.shareSubscriptionAnniversary("duplicate"), isFalse);
+  });
+
+  testWidgets("anniversary requests cannot carry across changed or disposed chat sessions", (
+    tester,
+  ) async {
+    const anniversary = TwitchSubscriptionAnniversary(id: "anniversary", months: 5);
+    final pending = Completer<TwitchSubscriptionAnniversary?>();
+    var client = _Client()..loadAnniversary = () => pending.future;
+    late _Socket socket;
+    final chat = TwitchChatController(
+      channel: "channel",
+      clientLoader: () async => client,
+      socketConnector: () async => socket = _Socket(),
+      loadPins: false,
+      loadPrivateNotices: false,
+    );
+    await tester.pump();
+    expect(client.anniversaryLoads, 1);
+    client = _Client(signedIn: false);
+    chat.reconnect();
+    await tester.pump();
+    pending.complete(anniversary);
+    await tester.pump();
+    expect(client.anniversaryLoads, 0);
+    expect(chat.subscriptionAnniversary, isNull);
+    expect(await chat.shareSubscriptionAnniversary("hello"), isFalse);
+
+    final oldShare = Completer<void>();
+    client = _Client()
+      ..loadAnniversary = (() async => anniversary)
+      ..onShareAnniversary = () => oldShare.future;
+    chat.reconnect();
+    await tester.pump();
+    socket.acknowledgeJoin();
+    final oldResult = chat.shareSubscriptionAnniversary("hello");
+    await tester.pump();
+    expect(chat.isSharingSubscriptionAnniversary, isTrue);
+    final newShare = Completer<void>();
+    client = _Client(webToken: "new-account")
+      ..loadAnniversary = (() async => anniversary)
+      ..onShareAnniversary = () => newShare.future;
+    chat.reconnect();
+    await tester.pump();
+    socket.acknowledgeJoin();
+    expect(chat.isSharingSubscriptionAnniversary, isFalse);
+    expect(chat.subscriptionAnniversary, anniversary);
+    final newResult = chat.shareSubscriptionAnniversary("hello");
+    await tester.pump();
+    oldShare.completeError(TwitchApiException("Old account error"));
+    await tester.pump();
+    expect(await oldResult, isFalse);
+    expect(chat.subscriptionAnniversaryError, isNull);
+    expect(chat.isSharingSubscriptionAnniversary, isTrue);
+    newShare.complete();
+    await tester.pump();
+    expect(await newResult, isTrue);
+
+    final disposedResult = Completer<TwitchSubscriptionAnniversary?>();
+    client = _Client()..loadAnniversary = () => disposedResult.future;
+    chat.reconnect();
+    await tester.pump();
+    chat.dispose();
+    disposedResult.complete(anniversary);
+    await tester.pump();
+    expect(chat.subscriptionAnniversary, isNull);
+  });
+
+  test(
+    "new subscriber state refreshes an anniversary without interrupting chat on failure",
+    () async {
+      final client = _Client()
+        ..loadAnniversary = () => Future.error(TwitchApiException("Unavailable"));
+      final chat = TwitchChatController(
+        channel: "channel",
+        clientLoader: () async => client,
+        socketConnector: server.connect,
+        loadPins: false,
+        loadPrivateNotices: false,
+      );
+      addTearDown(chat.dispose);
+      await server.join(chat);
+      expect(chat.subscriptionAnniversary, isNull);
+      expect(chat.status, TwitchChatStatus.connected);
+      client.loadAnniversary = () async =>
+          const TwitchSubscriptionAnniversary(id: "new", months: 1);
+      server.send("@subscriber=1 :tmi.twitch.tv USERSTATE #channel\r\n");
+      await _waitFor(() => chat.subscriptionAnniversary != null);
+      expect(chat.subscriptionAnniversary!.months, 1);
+      expect(client.anniversaryLoads, 2);
+    },
+  );
+
   Future<TwitchChatController> historyChat(
     WidgetTester tester,
     _Client client,
@@ -1198,51 +1329,78 @@ void main() {
     expect(server.sockets, isEmpty);
   });
 
-  test("actual private events dedupe across history eviction and same-viewer reconnect", () async {
-    final client = _Client();
-    final privateSockets = <_Socket>[];
-    final chat = TwitchChatController(
-      channel: "channel",
-      clientLoader: () async => client,
-      socketConnector: server.connect,
-      loadPins: false,
-      privateSocketConnector: () async {
-        final socket = _Socket();
-        privateSockets.add(socket);
-        return socket;
+  for (final genericCallout in [false, true]) {
+    test(
+      "private events dedupe across history eviction and reconnect (callout: $genericCallout)",
+      () async {
+        final client = _Client();
+        final privateSockets = <_Socket>[];
+        final chat = TwitchChatController(
+          channel: "channel",
+          clientLoader: () async => client,
+          socketConnector: server.connect,
+          loadPins: false,
+          privateSocketConnector: () async {
+            final socket = _Socket();
+            privateSockets.add(socket);
+            return socket;
+          },
+        );
+        addTearDown(chat.dispose);
+        await server.join(chat);
+        await _waitFor(
+          () => privateSockets.isNotEmpty && privateSockets.last._incoming.hasListener,
+        );
+        final socket = privateSockets.single;
+        socket.authenticateHermes();
+        final sent = server.commands.toList();
+        void deliver(_Socket socket, String id) =>
+            genericCallout ? socket.privateCallout(id) : socket.achievement(id);
+        deliver(socket, "event-one");
+        await _waitFor(() => chat.messages.any((message) => message.isPrivate));
+        expect(
+          chat.messages.last.noticeText,
+          genericCallout
+              ? "Twitch supplied this private message. 日本語"
+              : "You reached a 7-stream watch streak!",
+        );
+        expect(chat.messages.last.noticeType, genericCallout ? "private-callout" : "watch-streak");
+        expect(
+          chat.messages.last.copyWith(isHistorical: true).noticeAction,
+          genericCallout ? (label: "Open Twitch", url: Uri.parse("https://www.twitch.tv/")) : null,
+        );
+        expect(
+          chat.messages.last.id,
+          "${genericCallout ? 'private-callout' : 'watch-streak'}:event-one",
+        );
+        expect(chat.receivedMessageCount, 0);
+        expect(server.commands, sent);
+        deliver(socket, "event-one");
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(chat.messages.where((message) => message.isPrivate), hasLength(1));
+        server.send(
+          List.generate(
+            5001,
+            (index) => "@id=history-$index :person!p@tmi PRIVMSG #channel :message\r\n",
+          ).join(),
+        );
+        await _waitFor(() => chat.receivedMessageCount == 5001);
+        expect(chat.recentHistory.where((message) => message.isPrivate), isEmpty);
+        chat.reconnect();
+        await server.join(chat, connection: 2);
+        await _waitFor(
+          () => privateSockets.length == 2 && privateSockets.last._incoming.hasListener,
+        );
+        privateSockets.last.authenticateHermes();
+        deliver(privateSockets.last, "event-one");
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(chat.messages.where((message) => message.isPrivate), isEmpty);
+        deliver(privateSockets.last, "event-two");
+        await _waitFor(() => chat.messages.any((message) => message.isPrivate));
+        expect(chat.messages.where((message) => message.isPrivate), hasLength(1));
       },
     );
-    addTearDown(chat.dispose);
-    await server.join(chat);
-    await _waitFor(() => privateSockets.isNotEmpty && privateSockets.last._incoming.hasListener);
-    final socket = privateSockets.single;
-    socket.authenticateHermes();
-    socket.achievement("event-one");
-    await _waitFor(() => chat.messages.any((message) => message.isPrivate));
-    expect(chat.messages.last.noticeText, "You reached a 7-stream watch streak!");
-    socket.achievement("event-one");
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-    expect(chat.messages.where((message) => message.isPrivate), hasLength(1));
-    server.send(
-      List.generate(
-        5001,
-        (index) => "@id=history-$index :person!p@tmi PRIVMSG #channel :message\r\n",
-      ).join(),
-    );
-    await _waitFor(() => chat.receivedMessageCount == 5001);
-    expect(chat.recentHistory.where((message) => message.isPrivate), isEmpty);
-    chat.reconnect();
-    await server.join(chat, connection: 2);
-    await _waitFor(() => privateSockets.length == 2 && privateSockets.last._incoming.hasListener);
-    privateSockets.last
-      ..authenticateHermes()
-      ..achievement("event-one");
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-    expect(chat.messages.where((message) => message.isPrivate), isEmpty);
-    privateSockets.last.achievement("event-two");
-    await _waitFor(() => chat.messages.any((message) => message.isPrivate));
-    expect(chat.messages.where((message) => message.isPrivate), hasLength(1));
-  });
+  }
 
   for (final autoClaim in [true, false]) {
     testWidgets(
@@ -1302,8 +1460,12 @@ void main() {
         expect(second.pointClaims, autoClaim ? 1 : 0);
         expect(privateSockets, hasLength(2));
         privateSockets.last.authenticateHermes();
-        final subscription = jsonDecode(privateSockets.last.sent.last) as Map;
-        expect((subscription["subscribe"] as Map)["pubsub"], {"topic": "viewer-milestones.456"});
+        expect(
+          privateSockets.last.subscriptions.map(
+            (request) => ((request["subscribe"]! as Map)["pubsub"]! as Map)["topic"],
+          ),
+          ["viewer-milestones.456", "private-callout.456.1"],
+        );
         privateSockets.last.achievement("old-event");
         await tester.pump();
         expect(chat.messages.where((message) => message.isPrivate), hasLength(autoClaim ? 2 : 1));
@@ -1627,6 +1789,29 @@ class _Client extends TwitchApiClient {
   Future<TwitchChatAccess> Function()? loadAccess;
   bool subscribed = false;
   Future<bool> Function()? loadSubscription;
+  Future<TwitchSubscriptionAnniversary?> Function()? loadAnniversary;
+  Future<void> Function()? onShareAnniversary;
+  int anniversaryLoads = 0;
+  int anniversaryShares = 0;
+
+  @override
+  Future<TwitchSubscriptionAnniversary?> fetchSubscriptionAnniversary(String login) async {
+    anniversaryLoads++;
+    return loadAnniversary?.call();
+  }
+
+  @override
+  Future<void> shareSubscriptionAnniversary({
+    required String login,
+    required String anniversaryId,
+    required String message,
+  }) async {
+    expectSync(login, "channel");
+    expectSync(anniversaryId, "anniversary");
+    expectSync(message, "hello");
+    anniversaryShares++;
+    await onShareAnniversary?.call();
+  }
 
   @override
   Future<bool> fetchChannelSubscriptionStatus(String login) =>
@@ -1705,7 +1890,7 @@ class _Socket extends Stream<Object?> implements WebSocket {
         "welcome": {"keepaliveSec": 600},
       }),
     );
-    var request = jsonDecode(sent.last) as Map;
+    final request = jsonDecode(sent.last) as Map;
     _incoming.add(
       jsonEncode({
         "type": "authenticateResponse",
@@ -1713,28 +1898,60 @@ class _Socket extends Stream<Object?> implements WebSocket {
         "authenticateResponse": {"result": "ok"},
       }),
     );
-    request = jsonDecode(sent.last) as Map;
-    _incoming.add(
-      jsonEncode({
-        "type": "subscribeResponse",
-        "parentId": request["id"],
-        "subscribeResponse": {"result": "ok"},
-      }),
-    );
+    for (final request in subscriptions) {
+      _incoming.add(
+        jsonEncode({
+          "type": "subscribeResponse",
+          "parentId": request["id"],
+          "subscribeResponse": {"result": "ok"},
+        }),
+      );
+    }
   }
 
+  List<Map<String, Object?>> get subscriptions => sent
+      .map((raw) => jsonDecode(raw) as Map<String, Object?>)
+      .where((message) => message["type"] == "subscribe")
+      .toList();
+
   void achievement(String id) {
-    final request = jsonDecode(sent.last) as Map;
+    final request = subscriptions.first;
     _incoming.add(
       jsonEncode({
         "type": "notification",
         "id": id,
         "notification": {
           "type": "pubsub",
-          "subscription": {"id": (request["subscribe"] as Map)["id"]},
+          "subscription": {"id": (request["subscribe"]! as Map)["id"]},
           "pubsub": jsonEncode({
             "type": "viewer-milestones-update",
             "data": {"event_type": "achieved", "channel_id": "1", "watch_streak_value": "7"},
+          }),
+        },
+      }),
+    );
+  }
+
+  void privateCallout(String id) {
+    final request = subscriptions.last;
+    _incoming.add(
+      jsonEncode({
+        "type": "notification",
+        "id": "envelope-${DateTime.now().microsecondsSinceEpoch}",
+        "notification": {
+          "type": "pubsub",
+          "subscription": {"id": (request["subscribe"]! as Map)["id"]},
+          "pubsub": jsonEncode({
+            "type": "send-private-callout",
+            "data": {
+              "private_callout": {
+                "id": id,
+                "body": "Twitch supplied this private message. 日本語",
+                "actions": [
+                  {"type": "click", "body": "Open Twitch", "url": "https://www.twitch.tv/"},
+                ],
+              },
+            },
           }),
         },
       }),

@@ -197,6 +197,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   bool _playerForcedLandscape = false;
   bool _fullscreen = false;
   bool _playerIsForeground = true;
+  bool _overlayPageOpen = false;
   bool _playbackReloadInFlight = false;
   bool _audioOnly = false;
   bool _chatOnly = false;
@@ -1239,12 +1240,19 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
 
   Future<void> _openOverlayPage(WidgetBuilder builder) async {
     FocusManager.instance.primaryFocus?.unfocus();
-    if (_host case final host?) {
-      await host.openOverlayPage(builder: builder);
-    } else {
-      await Navigator.of(context, rootNavigator: true).push<void>(
-        MaterialPageRoute<void>(builder: builder),
-      );
+    setState(() => _overlayPageOpen = true);
+    try {
+      if (_host case final host?) {
+        await host.openOverlayPage(builder: builder);
+      } else {
+        await Navigator.of(context, rootNavigator: true).push<void>(
+          MaterialPageRoute<void>(builder: builder),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _overlayPageOpen = false);
+      }
     }
   }
 
@@ -1393,6 +1401,11 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
                 chatOnly: _chatOnly,
                 canShowVideo: !_streamEnded,
                 isLive: _isLive,
+                isVisible:
+                    _playerIsForeground &&
+                    !_overlayPageOpen &&
+                    !compact &&
+                    (_chatOnly || !isLandscape || sideChatWidth > 0),
                 onToggleChatOnly: _toggleChatOnly,
                 onOpenSettings: _openChatSettings,
                 onReportUser: _reportUser,

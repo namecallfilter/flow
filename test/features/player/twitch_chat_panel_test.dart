@@ -11,6 +11,7 @@ import "package:flow/features/player/chat_username.dart";
 import "package:flow/features/player/twitch_chat_panel.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:flutter_svg/flutter_svg.dart";
 import "package:flutter_test/flutter_test.dart";
 
@@ -41,6 +42,111 @@ void main() {
       ),
     ),
   );
+
+  testWidgets(
+    "sub anniversary shares an optional message, retries failures, and can be dismissed",
+    (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final controller = _ChatController();
+      addTearDown(controller.dispose);
+      final banner = find.byKey(const ValueKey("chat_subscription_anniversary"));
+      await tester.pumpWidget(panel(controller));
+      await tester.pumpAndSettle();
+      expect(banner, findsNothing);
+      controller.anniversary = const TwitchSubscriptionAnniversary(id: "token", months: 5);
+      controller.update();
+      await tester.pump();
+      expect(find.text("It's your 5-month sub anniversary!"), findsOneWidget);
+      await tester.enterText(find.byKey(const ValueKey("chat_message_input")), "Unsent chat draft");
+      await tester.tap(find.byKey(const ValueKey("chat_anniversary_share")));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+      final message = find.byKey(const ValueKey("chat_anniversary_message"));
+      final send = find.byKey(const ValueKey("chat_anniversary_send"));
+      await tester.enterText(message, "Happy anniversary!");
+      final pending = Completer<bool>();
+      controller.anniversaryShareResult = pending.future;
+      await tester.tap(send);
+      await tester.pump();
+      expect(tester.widget<FilledButton>(send).onPressed, isNull);
+      expect(controller.anniversaryMessages, ["Happy anniversary!"]);
+      pending.complete(false);
+      await tester.pump();
+      expect(find.text("Could not share. Try again."), findsOneWidget);
+      expect(tester.widget<TextField>(message).controller!.text, "Happy anniversary!");
+      controller.anniversaryShareResult = Future.value(true);
+      await tester.enterText(message, "");
+      await tester.tap(send);
+      await tester.pumpAndSettle();
+      expect(controller.anniversaryMessages, ["Happy anniversary!", ""]);
+      expect(banner, findsNothing);
+      expect(message, findsNothing);
+      expect(
+        tester.widget<TextField>(find.byKey(const ValueKey("chat_message_input"))).controller!.text,
+        "Unsent chat draft",
+      );
+      controller.anniversary = const TwitchSubscriptionAnniversary(id: "next-token", months: 6);
+      controller.update();
+      await tester.pump();
+      await tester.tap(find.byTooltip("Dismiss sub anniversary"));
+      await tester.pumpAndSettle();
+      controller.update();
+      await tester.pumpAndSettle();
+      expect(banner, findsNothing);
+      expect(controller.anniversaryMessages, hasLength(2));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets("anniversary countdown keeps its deadline and preserves an open share sheet", (
+    tester,
+  ) async {
+    final controller = _ChatController()
+      ..anniversary = const TwitchSubscriptionAnniversary(id: "token", months: 5);
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(panel(controller));
+    await tester.pump();
+    final banner = find.byKey(const ValueKey("chat_subscription_anniversary"));
+    final timer = find.byKey(const ValueKey("chat_anniversary_dismissal"));
+    expect(banner, findsOneWidget);
+    await tester.pump(const Duration(seconds: 20));
+    expect(tester.widget<LinearProgressIndicator>(timer).value, closeTo(25 / 45, 0.01));
+    controller.anniversary = const TwitchSubscriptionAnniversary(id: "token", months: 5);
+    controller.items.add(_message(1));
+    controller.update();
+    await tester.pump();
+    expect(tester.widget<LinearProgressIndicator>(timer).value, closeTo(25 / 45, 0.01));
+    await tester.pump(const Duration(seconds: 24));
+    expect(banner, findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey("chat_anniversary_share")));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    await tester.pump(const Duration(seconds: 1));
+    expect(banner, findsNothing);
+    expect(controller.subscriptionAnniversary?.id, "token");
+    expect(
+      tester.widget<FilledButton>(find.byKey(const ValueKey("chat_anniversary_send"))).onPressed,
+      isNotNull,
+    );
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    controller.update();
+    await tester.pump();
+    expect(banner, findsNothing);
+    controller.anniversary = const TwitchSubscriptionAnniversary(id: "next-token", months: 5);
+    controller.update();
+    await tester.pump();
+    expect(banner, findsOneWidget);
+    expect(tester.widget<LinearProgressIndicator>(timer).value, 1);
+    expect(controller.anniversaryMessages, isEmpty);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 
   testWidgets(
     "watch streak popup uses the app theme for a private event without a footer counter",
@@ -1496,6 +1602,55 @@ void main() {
     expect(find.byTooltip("Reconnect chat"), findsNothing);
   });
 
+  testWidgets("private callouts show server text and open their link action", (tester) async {
+    final url = Uri.parse("https://www.twitch.tv/drops/inventory");
+    final controller = _ChatController()
+      ..items.addAll([
+        TwitchChatMessage(
+          id: "private-callout",
+          login: "",
+          displayName: "",
+          text: "",
+          isPrivate: true,
+          noticeType: "private-callout",
+          noticeText: "Your reward is ready to claim.",
+          noticeAction: (label: "View reward", url: url),
+        ),
+        TwitchChatMessage(
+          id: "ordinary-message",
+          login: "viewer",
+          displayName: "Viewer",
+          text: "Hello",
+          noticeAction: (label: "Not a private action", url: url),
+        ),
+      ]);
+    addTearDown(controller.dispose);
+    const external = MethodChannel("flow/external_url");
+    final messenger = tester.binding.defaultBinaryMessenger;
+    final opened = <String>[];
+    var didOpen = true;
+    messenger.setMockMethodCallHandler(external, (call) async {
+      expect(call.method, "openExternalUrl");
+      opened.add(call.arguments as String);
+      return didOpen;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(external, null));
+    await tester.pumpWidget(panel(controller));
+    await tester.pumpAndSettle();
+    expect(find.text("Only visible to you"), findsOneWidget);
+    expect(find.text("Your reward is ready to claim."), findsOneWidget);
+    expect(find.text("Not a private action"), findsNothing);
+    final action = find.widgetWithText(TextButton, "View reward");
+    await tester.tap(action);
+    await tester.pumpAndSettle();
+    expect(opened, [url.toString()]);
+    didOpen = false;
+    await tester.tap(action);
+    await tester.pumpAndSettle();
+    expect(find.text("Could not open $url"), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets("VOD replay retains a disabled composer and a watch action", (
     tester,
   ) async {
@@ -2686,6 +2841,37 @@ class _ChatController extends TwitchChatController {
   int toggles = 0;
   Future<bool>? sendResult;
   int? received;
+  TwitchSubscriptionAnniversary? anniversary;
+  final anniversaryMessages = <String>[];
+  Future<bool> anniversaryShareResult = Future.value(true);
+  bool sharingAnniversary = false;
+  String? anniversaryError;
+
+  @override
+  TwitchSubscriptionAnniversary? get subscriptionAnniversary => anniversary;
+
+  @override
+  bool get isSharingSubscriptionAnniversary => sharingAnniversary;
+
+  @override
+  String? get subscriptionAnniversaryError => anniversaryError;
+
+  @override
+  Future<bool> shareSubscriptionAnniversary(String message) async {
+    anniversaryMessages.add(message);
+    sharingAnniversary = true;
+    anniversaryError = null;
+    notifyListeners();
+    final shared = await anniversaryShareResult;
+    sharingAnniversary = false;
+    if (shared) {
+      anniversary = null;
+    } else {
+      anniversaryError = "Could not share. Try again.";
+    }
+    notifyListeners();
+    return shared;
+  }
 
   bool get listening => hasListeners;
 

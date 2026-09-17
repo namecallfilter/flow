@@ -120,6 +120,12 @@ scalar UserClipsInput
 scalar UserLookupType
 scalar UserNotificationCampaignInput
 scalar UserProductConsentInput
+input UseChatNotificationTokenInput {
+  channelLogin: String!
+  tokenID: ID!
+  message: String!
+  includeStreak: Boolean!
+}
 scalar VerifyContactMethodInput
 
 enum Badge_ImageURL_Size_Enum {
@@ -534,6 +540,7 @@ interface VideoQuality {
 }
 
 type Mutation {
+  useChatNotificationToken(input: UseChatNotificationTokenInput!): UseChatNotificationTokenPayload
   claimCommunityPoints(input: ClaimCommunityPointsInput!): ClaimCommunityPointsPayload
   addBrowserPushSubscription(input: AddBrowserPushSubscriptionInput!): AddBrowserPushSubscription
   addRecommendationFeedback(input: AddRecommendationFeedbackInput!): AddRecommendationFeedback
@@ -3619,6 +3626,7 @@ type SelectionSignal {
 }
 
 type Self {
+  resubNotification: ResubNotification
   chatRestrictedReasons: [String]
   lastRecentChatMessageAt: Time
   communityPoints: CommunityPointsProperties
@@ -4094,6 +4102,25 @@ type SubscriptionBenefit {
   product: Product
   purchasedWithPrime: Boolean
   tier: String
+  user: User
+}
+
+enum SubscriptionBenefitFilter {
+  ALL
+}
+
+input FlowSubscriptionBenefitCriteria {
+  filter: SubscriptionBenefitFilter
+}
+
+type FlowSubscriptionBenefitConnection {
+  edges: [FlowSubscriptionBenefitEdge]
+  pageInfo: PageInfo
+}
+
+type FlowSubscriptionBenefitEdge {
+  cursor: Cursor
+  node: SubscriptionBenefit
 }
 
 type SubscriptionGifting {
@@ -4129,6 +4156,15 @@ type SubscriptionSummary {
 type SubscriptionTenure {
   daysRemaining: String
   months: Int
+}
+
+type ResubNotification {
+  id: ID
+  cumulativeTenureMonths: Int
+}
+
+type UseChatNotificationTokenPayload {
+  isSuccess: Boolean
 }
 
 type SubsidizedSubscription {
@@ -4484,6 +4520,7 @@ type User implements Curator & OnsiteNotificationContent & ShelfContentEdge_Node
   stream: Stream
   streamSummaries(first: Int!): [StreamSummary]
   subscriptionProducts: [SubscriptionProduct]
+  subscriptionBenefits(after: Cursor, first: Int, criteria: FlowSubscriptionBenefitCriteria): FlowSubscriptionBenefitConnection
   turboStatus: [TurboStatu]
   version: Int
   videos(

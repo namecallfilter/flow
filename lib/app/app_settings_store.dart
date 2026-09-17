@@ -136,6 +136,17 @@ abstract class AppSettingsStoreBase with Store {
     });
   }
 
+  Future<void> syncAdProxySubscriptionChannels(List<String> channels) async {
+    await load();
+    await _enqueueAdProxySubscriptionUpdate(() async {
+      final normalized = normalizeChannelLogins(channels);
+      await preferences.saveAdProxySubscriptionChannels(normalized);
+      runInAction(
+        () => adProxySubscriptionChannels = ObservableList.of(normalized),
+      );
+    });
+  }
+
   Future<void> _enqueueAdProxySubscriptionUpdate(Future<void> Function() update) {
     final result = _adProxySubscriptionUpdateTail.then((_) => update());
     _adProxySubscriptionUpdateTail = result.then<void>(

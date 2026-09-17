@@ -63,6 +63,7 @@ class TwitchChatMessage {
     this.isPrivate = false,
     this.noticeType,
     this.noticeText,
+    this.noticeAction,
     this.parentMessageId,
     this.parentUserId,
     this.parentLogin,
@@ -98,6 +99,7 @@ class TwitchChatMessage {
   final bool isPrivate;
   final String? noticeType;
   final String? noticeText;
+  final ({String label, Uri url})? noticeAction;
   final String? parentMessageId;
   final String? parentUserId;
   final String? parentLogin;
@@ -142,6 +144,7 @@ class TwitchChatMessage {
     isPrivate: isPrivate,
     noticeType: noticeType,
     noticeText: noticeText ?? this.noticeText,
+    noticeAction: noticeAction,
     parentMessageId: parentMessageId,
     parentUserId: parentUserId,
     parentLogin: parentLogin,

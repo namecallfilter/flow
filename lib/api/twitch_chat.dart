@@ -86,6 +86,11 @@ class TwitchChatController extends ChangeNotifier {
   bool _isFollowingChannel = false;
   bool _isPrivileged = false;
   bool _isSubscriber = false;
+  TwitchSubscriptionAnniversary? _subscriptionAnniversary;
+  String? _subscriptionAnniversaryError;
+  bool _isSharingSubscriptionAnniversary = false;
+  int _anniversaryLoadGeneration = -1;
+  int _anniversaryRevision = 0;
   int _userStateRevision = 0;
   bool _welcomed = false;
   int _systemMessageCount = 0;
@@ -112,10 +117,14 @@ class TwitchChatController extends ChangeNotifier {
   bool get isSignedIn => _user != null;
   String? get currentUserId => _user?.id;
   String? get currentUserLogin => _user?.login.toLowerCase();
+  String? get currentUserDisplayName => _user?.displayName;
   TwitchChatAccess? get chatAccess => _chatAccess;
   String? get chatAccessError => _chatAccessError;
   bool get isCheckingChatAccess => _isCheckingChatAccess;
   bool get isFollowingChannel => _isFollowingChannel;
+  TwitchSubscriptionAnniversary? get subscriptionAnniversary => _subscriptionAnniversary;
+  String? get subscriptionAnniversaryError => _subscriptionAnniversaryError;
+  bool get isSharingSubscriptionAnniversary => _isSharingSubscriptionAnniversary;
   int get followersOnlyMinutes => int.tryParse(_roomState["followers-only"] ?? "") ?? -1;
   bool get subscriberChatEligible =>
       _roomState["subs-only"] != "1" ||
@@ -241,6 +250,79 @@ class TwitchChatController extends ChangeNotifier {
     }
   }
 
+  Future<void> refreshSubscriptionAnniversary() async {
+    if (_disposed ||
+        !isSignedIn ||
+        _isSharingSubscriptionAnniversary ||
+        _anniversaryLoadGeneration == _generation) {
+      return;
+    }
+    final generation = _generation;
+    final revision = _anniversaryRevision;
+    _anniversaryLoadGeneration = generation;
+    try {
+      final client = await _loadSessionClient();
+      if (!_isCurrent(generation)) {
+        return;
+      }
+      final anniversary = await client.fetchSubscriptionAnniversary(channel);
+      if (_isCurrent(generation) && revision == _anniversaryRevision) {
+        _subscriptionAnniversary = anniversary;
+        notifyListeners();
+      }
+    } on Object {
+      // An unavailable anniversary must not interrupt chat.
+    } finally {
+      if (_anniversaryLoadGeneration == generation) {
+        _anniversaryLoadGeneration = -1;
+      }
+    }
+  }
+
+  Future<bool> shareSubscriptionAnniversary(String message) async {
+    final anniversary = _subscriptionAnniversary;
+    if (_disposed ||
+        !isSignedIn ||
+        _status != TwitchChatStatus.connected ||
+        anniversary == null ||
+        _isSharingSubscriptionAnniversary) {
+      return false;
+    }
+    final generation = _generation;
+    _anniversaryRevision++;
+    _isSharingSubscriptionAnniversary = true;
+    _subscriptionAnniversaryError = null;
+    notifyListeners();
+    try {
+      final client = await _loadSessionClient();
+      if (!_isCurrent(generation)) {
+        return false;
+      }
+      await client.shareSubscriptionAnniversary(
+        login: channel,
+        anniversaryId: anniversary.id,
+        message: message,
+      );
+      if (!_isCurrent(generation)) {
+        return false;
+      }
+      _subscriptionAnniversary = null;
+      return true;
+    } on Object catch (error) {
+      if (_isCurrent(generation)) {
+        _subscriptionAnniversaryError = error is TwitchApiException
+            ? error.message
+            : "Could not share your sub anniversary. Try again.";
+      }
+      return false;
+    } finally {
+      if (_isCurrent(generation)) {
+        _isSharingSubscriptionAnniversary = false;
+        notifyListeners();
+      }
+    }
+  }
+
   Future<bool> followChannel() => _setFollowing(true);
 
   Future<bool> unfollowChannel() => _setFollowing(false);
@@ -320,7 +402,12 @@ class TwitchChatController extends ChangeNotifier {
   void addSystemMessage(String text) =>
       upsertSystemMessage("system-${_systemMessageCount++}", text);
 
-  void addPrivateNotice({required String id, required String type, required String text}) {
+  void addPrivateNotice({
+    required String id,
+    required String type,
+    required String text,
+    ({String label, Uri url})? action,
+  }) {
     if (_disposed ||
         text.trim().isEmpty ||
         _privateNoticeIds.contains(id) ||
@@ -340,6 +427,7 @@ class TwitchChatController extends ChangeNotifier {
         isPrivate: true,
         noticeType: type,
         noticeText: text,
+        noticeAction: action,
         timestamp: DateTime.now(),
       ),
     );
@@ -557,6 +645,9 @@ class TwitchChatController extends ChangeNotifier {
     _userColor = null;
     _isPrivileged = false;
     _isSubscriber = false;
+    _subscriptionAnniversary = null;
+    _subscriptionAnniversaryError = null;
+    _isSharingSubscriptionAnniversary = false;
     _chatAccess = null;
     _chatAccessError = null;
     _isFollowingChannel = false;
@@ -609,6 +700,7 @@ class TwitchChatController extends ChangeNotifier {
       _privateUserId = _user?.id;
     }
     unawaited(refreshChatAccess());
+    unawaited(refreshSubscriptionAnniversary());
     try {
       _connectTimer = Timer(const Duration(seconds: 15), () => _lost(generation));
       final socket = await _socketConnector();
@@ -750,9 +842,9 @@ class TwitchChatController extends ChangeNotifier {
               userId: userId,
               clientLoader: _loadSessionClient,
               socketConnector: privateSocketConnector,
-              onNotice: ({required id, required type, required text}) {
+              onNotice: ({required id, required type, required text, action}) {
                 if (_isCurrent(generation) && currentUserId == userId) {
-                  addPrivateNotice(id: id, type: type, text: text);
+                  addPrivateNotice(id: id, type: type, text: text, action: action);
                 }
               },
             );
@@ -772,9 +864,13 @@ class TwitchChatController extends ChangeNotifier {
         _userStateRevision++;
         _userColor = message.tags["color"];
         final badges = (message.tags["badges"] ?? "").split(",");
+        final wasSubscriber = _isSubscriber;
         _isSubscriber =
             message.tags["subscriber"] == "1" ||
             badges.any((badge) => badge.startsWith("subscriber/") || badge.startsWith("founder/"));
+        if (_isSubscriber && !wasSubscriber) {
+          unawaited(refreshSubscriptionAnniversary());
+        }
         _isPrivileged =
             message.tags["mod"] == "1" ||
             badges.any(

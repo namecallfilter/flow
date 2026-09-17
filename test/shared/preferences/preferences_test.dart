@@ -4,6 +4,27 @@ import "package:flow/shared/twitch/stream_sort.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  test("subscription whitelist survives recreation and refresh preserves manual entries", () async {
+    final storage = _MemoryPreferencesStore();
+    final settings = AppSettingsStore(
+      preferences: SharedPreferencesFlowPreferences(store: storage),
+    );
+    await settings.load();
+    await settings.setAdProxyWhitelistedChannels(["manual"]);
+    await settings.syncAdProxySubscriptionChannel(login: "StableRonaldo", isSubscribed: true);
+
+    final restored = AppSettingsStore(
+      preferences: SharedPreferencesFlowPreferences(store: storage),
+    );
+    await restored.load();
+    expect(restored.adProxyEffectiveWhitelistedChannels, ["manual", "stableronaldo"]);
+
+    await restored.syncAdProxySubscriptionChannels([" New_Sub ", "new_sub"]);
+    expect(restored.adProxyEffectiveWhitelistedChannels, ["manual", "new_sub"]);
+    expect(await settings.preferences.readAdProxySubscriptionChannels(), ["new_sub"]);
+    expect(await settings.preferences.readAdProxyWhitelistedChannels(), ["manual"]);
+  });
+
   test("timestamp format defaults to 24-hour and persists independently of visibility", () async {
     final store = _MemoryPreferencesStore();
     final preferences = SharedPreferencesFlowPreferences(store: store);

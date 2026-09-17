@@ -1,0 +1,10 @@
+query FlowSubscriptionAnniversary($login: String!) {
+  user(login: $login) {
+    self {
+      resubNotification {
+        id
+        cumulativeTenureMonths
+      }
+    }
+  }
+}

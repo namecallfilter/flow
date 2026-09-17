@@ -252,11 +252,13 @@ void main() {
     );
     await tester.pump();
     final chatState = tester.state(find.byType(TwitchChatPanel));
+    expect(tester.widget<TwitchChatPanel>(find.byType(TwitchChatPanel)).isVisible, isTrue);
     tester.view.physicalSize = const Size(800, 400);
     tester.view.padding = const FakeViewPadding(left: 44, right: 8);
     tester.view.viewPadding = const FakeViewPadding(left: 44, right: 8);
     await tester.pump();
     expect(find.byType(TwitchChatPanel).hitTestable(), findsNothing);
+    expect(tester.widget<TwitchChatPanel>(find.byType(TwitchChatPanel)).isVisible, isFalse);
     for (final (onRight, visible) in [
       (true, true),
       (false, true),
@@ -273,6 +275,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.tapAt(point);
       await tester.pump(const Duration(milliseconds: 350));
+      expect(tester.widget<TwitchChatPanel>(find.byType(TwitchChatPanel)).isVisible, visible);
       if (!visible) {
         expect(find.byType(TwitchChatPanel).hitTestable(), findsNothing);
         expect(tester.getSize(find.byKey(const ValueKey("player_viewport"))).width, 800);
@@ -971,6 +974,7 @@ void main() {
     );
     final surface = tester.element(find.byType(_FakePlayerSurface));
     for (final mode in [PlaybackMode.mini, PlaybackMode.pip]) {
+      expect(tester.widget<TwitchChatPanel>(find.byType(TwitchChatPanel)).isVisible, isTrue);
       await tester.enterText(composer, "Keep this draft");
       expect(input.focusNode.hasFocus, isTrue);
       if (mode == PlaybackMode.mini) {
@@ -979,6 +983,7 @@ void main() {
         host.setPictureInPicture(active: true);
       }
       await _pumpNavigation(tester);
+      expect(tester.widget<TwitchChatPanel>(find.byType(TwitchChatPanel)).isVisible, isFalse);
       expect(input.focusNode.hasFocus, isFalse);
       expect(tester.testTextInput.isVisible, isFalse);
       tester.view.physicalSize = mode == PlaybackMode.mini
@@ -993,6 +998,7 @@ void main() {
         host.setPictureInPicture(active: false);
       }
       await _pumpNavigation(tester);
+      expect(tester.widget<TwitchChatPanel>(find.byType(TwitchChatPanel)).isVisible, isTrue);
       expect(tester.takeException(), isNull);
       expect(tester.widget<TextField>(composer).controller, same(input.controller));
       expect(input.controller.text, "Keep this draft");
@@ -1001,6 +1007,33 @@ void main() {
     host.dismiss();
     await _pumpNavigation(tester);
   });
+
+  for (final hosted in [false, true]) {
+    testWidgets("full-page chat settings hide chat until closed (hosted: $hosted)", (tester) async {
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final player = _FakePlayerController();
+      if (hosted) {
+        await _pumpHostedPlayer(tester, player: player);
+      } else {
+        await tester.pumpWidget(_playerApp(player: player));
+        await _pumpNavigation(tester);
+      }
+      final panel = find.byType(TwitchChatPanel, skipOffstage: false);
+      final navigator = Navigator.of(tester.element(panel), rootNavigator: true);
+      expect(tester.widget<TwitchChatPanel>(panel).isVisible, isTrue);
+      final opened = tester.widget<TwitchChatPanel>(panel).onOpenSettings!();
+      await _pumpNavigation(tester);
+      expect(tester.widget<TwitchChatPanel>(panel).isVisible, isFalse);
+      navigator.pop();
+      await _pumpNavigation(tester);
+      await opened;
+      expect(tester.widget<TwitchChatPanel>(panel).isVisible, isTrue);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
 
   testWidgets("chat-only metadata matches the video values and typography", (tester) async {
     tester.view.physicalSize = const Size(400, 800);

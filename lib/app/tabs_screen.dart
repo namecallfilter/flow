@@ -22,6 +22,7 @@ import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
 import "package:flutter/services.dart";
 import "package:flutter_mobx/flutter_mobx.dart";
+import "package:mobx/mobx.dart";
 
 class FlowTabsScreen extends StatefulWidget {
   const FlowTabsScreen({
@@ -107,6 +108,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
   late final TabsStore _tabsStore;
   late final BrowseStore _browseStore;
   late final FollowingStore _followingStore;
+  late final ReactionDisposer _subscriptionSyncReaction;
   late final _TabNavigatorObserver _followingNavigatorObserver;
   late final _TabNavigatorObserver _browseNavigatorObserver;
   late final _TabNavigatorObserver _settingsNavigatorObserver;
@@ -154,6 +156,15 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
           apiCache: _apiCache,
           preferences: _preferences,
         );
+    _subscriptionSyncReaction = reaction<String?>(
+      (_) => _followingStore.connection?.user.id,
+      (userId) {
+        if (userId != null) {
+          unawaited(_syncSubscribedChannels(userId));
+        }
+      },
+      fireImmediately: true,
+    );
     if (widget.showLoginOnLaunch) {
       _initialSessionRestore = _restoreInitialSession();
     } else {
@@ -221,6 +232,18 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
       _showStartupLoginOffer = !isLoginOfferDismissed && !_followingStore.isLoggedIn;
       _isStartupResolved = true;
     });
+  }
+
+  Future<void> _syncSubscribedChannels(String userId) async {
+    try {
+      final client = await _loadApiClient(_authController);
+      final channels = await client.fetchSubscribedChannelLogins();
+      if (mounted && _followingStore.connection?.user.id == userId) {
+        await _settingsStore.syncAdProxySubscriptionChannels(channels);
+      }
+    } on Object catch (error) {
+      debugPrint("Couldn't refresh subscribed channels: $error");
+    }
   }
 
   void _completeInitialLogin(TwitchAuthConnection connection) {
@@ -374,6 +397,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _subscriptionSyncReaction();
     _topLevelRefreshTimer?.cancel();
     _tabBackProgress.dispose();
     _footerSlideProgress.dispose();

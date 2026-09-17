@@ -1,0 +1,22 @@
+query FlowSubscribedChannels($first: Int, $after: Cursor) {
+  currentUser {
+    subscriptionBenefits(first: $first, after: $after, criteria: {filter: ALL}) {
+      edges {
+        cursor
+        node {
+          user {
+            login
+            self {
+              subscriptionBenefit {
+                id
+              }
+            }
+          }
+        }
+      }
+      pageInfo {
+        hasNextPage
+      }
+    }
+  }
+}

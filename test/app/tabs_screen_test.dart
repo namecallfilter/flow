@@ -28,6 +28,46 @@ import "package:http/testing.dart";
 typedef _RequestObserver = void Function(http.Request request);
 
 void main() {
+  for (final succeeds in [true, false]) {
+    testWidgets("startup subscription refresh preserves manual entries (success: $succeeds)", (
+      tester,
+    ) async {
+      final preferences = MemoryFlowPreferences();
+      await preferences.saveAdProxyWhitelistedChannels(["manual"]);
+      await preferences.saveAdProxySubscriptionChannels(["cached"]);
+      final secureStore = _MemoryTwitchStore()
+        ..accessToken = "token-123"
+        ..webSessionToken = "gql-token-123";
+      var subscriptionRequests = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: FlowTabsScreen(
+            preferences: preferences,
+            authController: _authController(
+              secureStore: secureStore,
+              onRequest: (request) {
+                if (_isGraphQlOperation(request, "FlowSubscribedChannels")) {
+                  subscriptionRequests++;
+                  if (!succeeds) {
+                    throw http.ClientException("Offline");
+                  }
+                }
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(subscriptionRequests, 1);
+      expect(await preferences.readAdProxySubscriptionChannels(), [
+        if (succeeds) "stableronaldo" else "cached",
+      ]);
+      expect(await preferences.readAdProxyWhitelistedChannels(), ["manual"]);
+      expect(find.byType(StreamPlayerScreen), findsNothing);
+    });
+  }
+
   testWidgets("settings tooltip survives opening a root dialog", (tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -1367,6 +1407,30 @@ MockClient _flowHttpClient({
     if (query.contains("FlowCurrentUser")) {
       return _jsonResponse({
         "data": {"currentUser": _userJson("user-123")},
+      });
+    }
+
+    if (query.contains("FlowSubscribedChannels")) {
+      return _jsonResponse({
+        "data": {
+          "currentUser": {
+            "subscriptionBenefits": {
+              "edges": [
+                {
+                  "node": {
+                    "user": {
+                      "login": "stableronaldo",
+                      "self": {
+                        "subscriptionBenefit": {"id": "sub"},
+                      },
+                    },
+                  },
+                },
+              ],
+              "pageInfo": {"hasNextPage": false},
+            },
+          },
+        },
       });
     }
 

@@ -24,6 +24,9 @@ import "package:flow/graphql/FlowPlaybackAccessToken.graphql.dart";
 import "package:flow/graphql/FlowRecentChat.graphql.dart";
 import "package:flow/graphql/FlowSearchCategories.graphql.dart";
 import "package:flow/graphql/FlowSearchChannels.graphql.dart";
+import "package:flow/graphql/FlowShareSubscriptionAnniversary.graphql.dart";
+import "package:flow/graphql/FlowSubscribedChannels.graphql.dart";
+import "package:flow/graphql/FlowSubscriptionAnniversary.graphql.dart";
 import "package:flow/graphql/FlowTopGames.graphql.dart";
 import "package:flow/graphql/FlowTopStreams.graphql.dart";
 import "package:flow/graphql/FlowUnfollowUser.graphql.dart";
@@ -80,6 +83,13 @@ class TwitchUserBadge {
   final String id;
   final String title;
   final String imageUrl;
+}
+
+class TwitchSubscriptionAnniversary {
+  const TwitchSubscriptionAnniversary({required this.id, required this.months});
+
+  final String id;
+  final int months;
 }
 
 class TwitchFollowedStream {
@@ -1761,6 +1771,50 @@ class TwitchApiClient {
     }
   }
 
+  Future<List<String>> fetchSubscribedChannelLogins() async {
+    final channels = <String>{};
+    final cursors = <String>{};
+    String? after;
+    while (true) {
+      final data = await _query(
+        () => _authenticatedGraphQlClient.query$FlowSubscribedChannels(
+          Options$Query$FlowSubscribedChannels(
+            variables: Variables$Query$FlowSubscribedChannels(first: 100, after: after),
+            fetchPolicy: graphql.FetchPolicy.noCache,
+          ),
+        ),
+        "FlowSubscribedChannels",
+        retryIntegrityChallenge: true,
+      );
+      final connection = data.currentUser?.subscriptionBenefits;
+      final edges = connection?.edges;
+      final hasNextPage = connection?.pageInfo?.hasNextPage;
+      if (edges == null || hasNextPage == null) {
+        throw TwitchApiException("Twitch returned incomplete subscription data.");
+      }
+      for (final edge in edges) {
+        final user = edge?.node?.user;
+        final login = _nonEmptyValue(user?.login)?.toLowerCase();
+        if (login == null) {
+          continue;
+        }
+        if (user?.self == null) {
+          throw TwitchApiException("Twitch could not determine your subscription status.");
+        }
+        if (user!.self!.subscriptionBenefit != null) {
+          channels.add(login);
+        }
+      }
+      if (!hasNextPage) {
+        return channels.toList();
+      }
+      after = _nonEmptyValue(edges.lastOrNull?.cursor);
+      if (after == null || !cursors.add(after)) {
+        throw TwitchApiException("Twitch returned incomplete subscription pagination.");
+      }
+    }
+  }
+
   Future<bool> fetchChannelSubscriptionStatus(String login) async {
     final normalizedLogin = _nonEmptyValue(login);
     if (normalizedLogin == null) {
@@ -1779,7 +1833,67 @@ class TwitchApiClient {
     );
     final user = _mapValue(data.toJson()["user"]);
     final self = _mapValue(user?["self"]);
-    return _mapValue(self?["subscriptionBenefit"]) != null;
+    if (self == null) {
+      throw TwitchApiException("Twitch could not determine your subscription status.");
+    }
+    return _mapValue(self["subscriptionBenefit"]) != null;
+  }
+
+  Future<TwitchSubscriptionAnniversary?> fetchSubscriptionAnniversary(String login) async {
+    if (_nonEmptyValue(gqlAccessToken) == null) {
+      return null;
+    }
+    final data = await _query(
+      () => _authenticatedGraphQlClient.query$FlowSubscriptionAnniversary(
+        Options$Query$FlowSubscriptionAnniversary(
+          variables: Variables$Query$FlowSubscriptionAnniversary(login: login.trim().toLowerCase()),
+          fetchPolicy: graphql.FetchPolicy.noCache,
+        ),
+      ),
+      "FlowSubscriptionAnniversary",
+      retryIntegrityChallenge: true,
+    );
+    final anniversary = data.user?.self?.resubNotification;
+    final id = _nonEmptyValue(anniversary?.id);
+    final months = anniversary?.cumulativeTenureMonths ?? 0;
+    return id == null || months <= 0 ? null : TwitchSubscriptionAnniversary(id: id, months: months);
+  }
+
+  Future<void> shareSubscriptionAnniversary({
+    required String login,
+    required String anniversaryId,
+    required String message,
+  }) async {
+    final channel = login.trim().toLowerCase();
+    if (_nonEmptyValue(gqlAccessToken) == null) {
+      throw TwitchApiException("Sign in to Twitch before sharing your sub anniversary.");
+    }
+    if (!RegExp(r"^[a-z0-9_]{1,25}$").hasMatch(channel) || anniversaryId.trim().isEmpty) {
+      throw TwitchApiException("Choose an available sub anniversary to share.");
+    }
+    if (message.runes.length > 500) {
+      throw TwitchApiException("Your anniversary message must be 500 characters or fewer.");
+    }
+    final data = await _query(
+      () => _authenticatedGraphQlClient.mutate$FlowShareSubscriptionAnniversary(
+        Options$Mutation$FlowShareSubscriptionAnniversary(
+          variables: Variables$Mutation$FlowShareSubscriptionAnniversary(
+            input: Input$UseChatNotificationTokenInput(
+              channelLogin: channel,
+              tokenID: anniversaryId,
+              message: message,
+              includeStreak: false,
+            ),
+          ),
+          fetchPolicy: graphql.FetchPolicy.noCache,
+        ),
+      ),
+      "FlowShareSubscriptionAnniversary",
+      retryIntegrityChallenge: true,
+    );
+    if (data.useChatNotificationToken?.isSuccess != true) {
+      throw TwitchApiException("Twitch could not share your sub anniversary. Try again.");
+    }
   }
 
   Future<TwitchPage<TwitchFollowedStream>> _fetchGameStreamsPage({
