@@ -11,6 +11,7 @@ class TwitchPrivateChatNotices {
     required this.userId,
     required this.clientLoader,
     required this.onNotice,
+    this.onSharedChatEnded,
     Future<WebSocket> Function()? socketConnector,
   }) : _socketConnector = socketConnector ?? _openSocket {
     unawaited(_connect());
@@ -20,6 +21,7 @@ class TwitchPrivateChatNotices {
   final String channelId;
   final String userId;
   final TwitchApiClientLoader clientLoader;
+  final void Function()? onSharedChatEnded;
   final void Function({
     required String id,
     required String type,
@@ -115,7 +117,11 @@ class TwitchPrivateChatNotices {
             _lost(generation);
             return;
           }
-          for (final topic in ["viewer-milestones.$userId", "private-callout.$userId.$channelId"]) {
+          for (final topic in [
+            "viewer-milestones.$userId",
+            if (onSharedChatEnded != null) "shared-chat-channel-v1.$channelId",
+            "private-callout.$userId.$channelId",
+          ]) {
             final requestId = _uuid();
             final subscriptionId = _uuid();
             _pendingSubscriptions[requestId] = (id: subscriptionId, topic: topic);
@@ -166,6 +172,12 @@ class TwitchPrivateChatNotices {
             return;
           }
           if (event is! Map) {
+            return;
+          }
+          if (topic == "shared-chat-channel-v1.$channelId") {
+            if (event["type"] == "session-ended") {
+              onSharedChatEnded?.call();
+            }
             return;
           }
           final data = event["data"];

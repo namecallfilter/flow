@@ -494,8 +494,18 @@ void main() {
   });
 
   test("preserves local and relayed shared-chat source rooms through moderation", () async {
-    final chat = controller();
+    final privateSocket = _Socket();
+    final chat = TwitchChatController(
+      channel: "channel",
+      clientLoader: () async => _Client(),
+      socketConnector: server.connect,
+      privateSocketConnector: () async => privateSocket,
+      loadPins: false,
+    );
+    addTearDown(chat.dispose);
     await server.join(chat);
+    await _waitFor(() => privateSocket._incoming.hasListener);
+    privateSocket.authenticateHermes();
     server.send(
       "@id=ordinary;room-id=1 :viewer!v@tmi PRIVMSG #channel :Ordinary chat\r\n"
       "@id=local;room-id=1;source-room-id=1;source-id=local :viewer!v@tmi PRIVMSG #channel :Shared local chat\r\n"
@@ -534,6 +544,32 @@ void main() {
     await _waitFor(() => server.commands.contains("PRIVMSG #channel :my ordinary message\r\n"));
     server.send("@id=ordinary-send :tmi.twitch.tv USERSTATE #channel\r\n");
     expect(await ordinarySend, isTrue);
+    expect(chat.conversation.last.sourceRoomId, isNull);
+
+    server.send(
+      "@id=shared-again;room-id=1;source-room-id=2 :other!o@tmi PRIVMSG #channel :Shared again\r\n"
+      "@id=milestone;room-id=1;msg-id=viewermilestone :tmi.twitch.tv USERNOTICE #channel\r\n",
+    );
+    await _waitFor(() => chat.conversation.last.id == "milestone");
+    final subscription = privateSocket.subscriptions.singleWhere(
+      (request) =>
+          ((request["subscribe"]! as Map)["pubsub"]! as Map)["topic"] == "shared-chat-channel-v1.1",
+    );
+    privateSocket._incoming.add(
+      jsonEncode({
+        "type": "notification",
+        "notification": {
+          "type": "pubsub",
+          "subscription": {"id": (subscription["subscribe"]! as Map)["id"]},
+          "pubsub": jsonEncode({"type": "session-ended"}),
+        },
+      }),
+    );
+    final afterEnd = chat.send("after session end");
+    expect(chat.conversation.last.sourceRoomId, isNull);
+    await _waitFor(() => server.commands.contains("PRIVMSG #channel :after session end\r\n"));
+    server.send("@id=after-end :tmi.twitch.tv USERSTATE #channel\r\n");
+    expect(await afterEnd, isTrue);
     expect(chat.conversation.last.sourceRoomId, isNull);
   });
 
@@ -1595,7 +1631,7 @@ void main() {
           privateSockets.last.subscriptions.map(
             (request) => ((request["subscribe"]! as Map)["pubsub"]! as Map)["topic"],
           ),
-          ["viewer-milestones.456", "private-callout.456.1"],
+          ["viewer-milestones.456", "shared-chat-channel-v1.1", "private-callout.456.1"],
         );
         privateSockets.last.achievement("old-event");
         await tester.pump();

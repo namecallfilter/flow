@@ -866,6 +866,11 @@ class TwitchChatController extends ChangeNotifier {
               userId: userId,
               clientLoader: _loadSessionClient,
               socketConnector: privateSocketConnector,
+              onSharedChatEnded: () {
+                if (_isCurrent(generation) && currentUserId == userId) {
+                  _sharedChatRoomId = null;
+                }
+              },
               onNotice: ({required id, required type, required text, action}) {
                 if (_isCurrent(generation) && currentUserId == userId) {
                   addPrivateNotice(id: id, type: type, text: text, action: action);
