@@ -11,6 +11,7 @@ import "package:flow/features/player/chat_username.dart";
 import "package:flow/features/player/twitch_chat_panel.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flutter/material.dart";
+import "package:flutter/rendering.dart";
 import "package:flutter/services.dart";
 import "package:flutter_svg/flutter_svg.dart";
 import "package:flutter_test/flutter_test.dart";
@@ -2906,7 +2907,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets("display aliases include the actual login within painted clickable names", (
+  testWidgets("display aliases keep canonical logins plain and clickable beside painted names", (
     tester,
   ) async {
     final client = _ChattersClient();
@@ -2917,6 +2918,7 @@ void main() {
           userId: "id00",
           login: "user00",
           displayName: "日本語",
+          color: "#00FF00",
           text: "painted alias",
         ),
         TwitchChatMessage(
@@ -2941,15 +2943,45 @@ void main() {
     expect(find.text("Alice: same name", findRichText: true), findsOneWidget);
     final painted = find.byType(ChatUsername);
     expect(painted, findsOneWidget);
-    expect(tester.widget<ChatUsername>(painted).name, "日本語 (user00)");
-    await tester.tap(painted);
-    await tester.pumpAndSettle();
-    expect(client.profileLookup, (userId: "id00", login: "user00"));
-    expect(find.text("@user00"), findsOneWidget);
-    expect(
-      tester.widget<ChatUsername>(find.byKey(const ValueKey("chat_user_name"))).name,
-      "日本語",
+    expect(tester.widget<ChatUsername>(painted).name, "日本語");
+    final rich = find.byWidgetPredicate(
+      (widget) => widget is RichText && widget.text.toPlainText().contains(" (user00): "),
     );
+    final paragraph = tester.renderObject<RenderParagraph>(rich);
+    TextSpan? suffix;
+    TextStyle? nameStyle;
+    paragraph.text.visitChildren((span) {
+      if (span is TextSpan) {
+        if (span.text == " (user00)") {
+          suffix = span;
+        }
+        if (span.children?.any((child) => child is TextSpan && child.text == " (user00)") == true) {
+          nameStyle = span.style;
+        }
+      }
+      return true;
+    });
+    expect(nameStyle!.color, const Color(0xFF007B00));
+    expect(suffix!.style!.color, isNull);
+    expect(suffix!.style!.fontWeight, FontWeight.w400);
+    final offset = paragraph.text.toPlainText().indexOf("(user00)");
+    final box = paragraph
+        .getBoxesForSelection(
+          TextSelection(baseOffset: offset, extentOffset: offset + "(user00)".length),
+        )
+        .first;
+    for (final point in [tester.getCenter(painted), paragraph.localToGlobal(box.toRect().center)]) {
+      await tester.tapAt(point);
+      await tester.pumpAndSettle();
+      expect(client.profileLookup, (userId: "id00", login: "user00"));
+      expect(find.text("@user00"), findsOneWidget);
+      expect(
+        tester.widget<ChatUsername>(find.byKey(const ValueKey("chat_user_name"))).name,
+        "日本語",
+      );
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+    }
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });

@@ -1877,12 +1877,13 @@ void main() {
     final assets = _PaintAssets(client);
     controller.pin = TwitchPinnedChat(
       id: "painted-pin",
-      pinnedBy: (id: "99", login: "pinner", displayName: "Pinner"),
+      pinnedBy: (id: "99", login: "pinner", displayName: "日本語"),
       message: TwitchChatMessage(
         id: "pin-name",
         userId: "1234",
         login: "viewer",
-        displayName: "Viewer",
+        displayName: "アレンン",
+        color: "#00FF00",
         text: "Pinned body",
         timestamp: DateTime(2026, 5, 12, 10, 1),
       ),
@@ -1892,14 +1893,23 @@ void main() {
     await tester.pumpWidget(_panel(controller, assets: assets));
     await tester.pumpAndSettle();
     final pin = find.byKey(const ValueKey("chat_pinned_message"));
-    expect(_paintName(pin, "Pinner"), findsOneWidget);
-    expect(_paintName(pin, "Viewer"), findsOneWidget);
+    expect(_paintName(pin, "日本語"), findsOneWidget);
+    expect(_paintName(pin, "アレンン"), findsOneWidget);
+    expect(_span(tester, pin, " (pinner)").style!.fontWeight, FontWeight.w400);
+    expect(_span(tester, pin, " (viewer)").style!.color, isNull);
+    expect(_span(tester, pin, " (viewer)").style!.fontWeight, FontWeight.w400);
     expect(_span(tester, pin, "Pinned by ").style, isNull);
     for (final entry in {
-      "Pinner": (userId: "99", login: "pinner"),
-      "Viewer": (userId: "1234", login: "viewer"),
+      "日本語": (userId: "99", login: "pinner"),
+      "アレンン": (userId: "1234", login: "viewer"),
+      " (pinner)": (userId: "99", login: "pinner"),
+      " (viewer)": (userId: "1234", login: "viewer"),
     }.entries) {
-      final tap = await tester.startGesture(tester.getCenter(_paintName(pin, entry.key)));
+      final tap = await tester.startGesture(
+        entry.key.startsWith(" ")
+            ? _textPoint(tester, pin, entry.key)
+            : tester.getCenter(_paintName(pin, entry.key)),
+      );
       await tester.pump(const Duration(milliseconds: 40));
       controller.update();
       await tester.pump(const Duration(milliseconds: 40));

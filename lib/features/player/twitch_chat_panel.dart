@@ -2051,6 +2051,12 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final pinner = pin.pinnedBy;
+    final pinnerName = pinner == null
+        ? ""
+        : pinner.displayName.isEmpty
+        ? pinner.login
+        : pinner.displayName;
+    final pinnerLabel = _chatDisplayName(pinnerName, pinner?.login);
     final expanded = _minimizedPinId != pin.id;
     final fontSize = _settings.fontSize * _settings.messageScale;
     final startsAt = pin.startsAt;
@@ -2141,14 +2147,14 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                 ),
                               ),
                             if (pinner != null)
-                              if (pinnerPaint != null)
+                              if (pinnerPaint != null) ...[
                                 WidgetSpan(
                                   alignment: PlaceholderAlignment.baseline,
                                   baseline: TextBaseline.alphabetic,
                                   child: GestureDetector(
                                     onTap: _pinnerTap.onTap,
                                     child: ChatUsername(
-                                      name: _chatDisplayName(pinner.displayName, pinner.login),
+                                      name: pinnerName,
                                       style: theme.textTheme.labelLarge!.copyWith(
                                         color: colors.onSurfaceVariant,
                                         fontSize: fontSize - 2,
@@ -2157,10 +2163,15 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                       animated: _settings.animatedPaints,
                                     ),
                                   ),
-                                )
-                              else
+                                ),
                                 TextSpan(
-                                  text: _chatDisplayName(pinner.displayName, pinner.login),
+                                  text: pinnerLabel.substring(pinnerName.length),
+                                  style: const TextStyle(fontWeight: FontWeight.w400),
+                                  recognizer: _pinnerTap,
+                                ),
+                              ] else
+                                TextSpan(
+                                  text: pinnerLabel,
                                   recognizer: _pinnerTap,
                                 ),
                           ],
@@ -4424,9 +4435,12 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
         : message.isAction
         ? " "
         : ": ";
+    final senderName = message.displayName.isEmpty ? message.login : message.displayName;
+    final senderLabel = _chatDisplayName(senderName, message.login);
+    final senderSuffix = senderLabel.substring(senderName.length);
     final paintedSender = _paintedName(
       message,
-      _chatDisplayName(message.displayName, message.login),
+      senderName,
       style:
           (widget.pinned
                   ? theme.textTheme.bodySmall!
@@ -4485,9 +4499,19 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
       ?paintedSender,
       TextSpan(
         text:
-            "${paintedSender == null ? _chatDisplayName(message.displayName, message.login) : ''}$nameSeparator",
+            "${paintedSender == null ? senderName : ''}${senderSuffix.isEmpty ? nameSeparator : ''}",
         style: TextStyle(color: nameColor, fontWeight: FontWeight.w700),
         recognizer: onUserTap == null ? null : _nameTap,
+        children: senderSuffix.isEmpty
+            ? null
+            : [
+                TextSpan(
+                  text: senderSuffix,
+                  style: const TextStyle(fontWeight: FontWeight.w400),
+                  recognizer: onUserTap == null ? null : _nameTap,
+                ),
+                TextSpan(text: nameSeparator),
+              ],
       ),
     ];
     return GestureDetector(
