@@ -3000,15 +3000,28 @@ void main() {
     },
   );
 
-  testWidgets("collapsed pins keep emotes, mentions and links interactive in one line", (
+  testWidgets("switching highlights preserves collapsed pin emotes, mentions and links", (
     tester,
   ) async {
     await _cacheImages(tester);
-    final client = _Client();
+    final client = _Client()
+      ..predictionEvents = [
+        TwitchPrediction(
+          id: "prediction",
+          title: "Who wins?",
+          status: "LOCKED",
+          createdAt: DateTime.utc(2026, 9, 18),
+          closesAt: DateTime.utc(2026, 9, 18),
+          outcomes: const [
+            TwitchPredictionOutcome(id: "one", title: "One", points: 100, users: 2, color: "BLUE"),
+          ],
+        ),
+      ];
     final controller = _Controller(client)
-      ..pin = const TwitchPinnedChat(
+      ..pin = TwitchPinnedChat(
         id: "rich-pin",
-        message: TwitchChatMessage(
+        startsAt: DateTime.utc(2026, 9, 17),
+        message: const TwitchChatMessage(
           id: "rich-message",
           login: "viewer",
           displayName: "Viewer",
@@ -3032,6 +3045,10 @@ void main() {
       () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(external, null),
     );
     await tester.pumpWidget(_panel(controller, assets: assets));
+    await tester.pumpAndSettle();
+    expect(find.text("Who wins?"), findsOneWidget);
+    expect(find.byKey(const ValueKey("chat_pinned_message")), findsNothing);
+    await tester.tap(find.byTooltip("Next highlight"));
     await tester.pumpAndSettle();
     final replyContext = find.byKey(const ValueKey("reply-context-rich-message"));
     expect(replyContext, findsOneWidget);
@@ -3070,6 +3087,23 @@ void main() {
     await tester.pumpAndSettle();
     expect(opened, ["https://example.com"]);
     expect(find.byTooltip("Expand pinned message"), findsOneWidget);
+    final collapsedInset =
+        (tester.widget<ListView>(find.byKey(const ValueKey("chat_messages"))).padding!
+                as EdgeInsets)
+            .top;
+    await tester.tap(find.byTooltip("Previous highlight"));
+    await tester.pumpAndSettle();
+    expect(find.text("Who wins?"), findsOneWidget);
+    expect(pin, findsNothing);
+    expect(
+      (tester.widget<ListView>(find.byKey(const ValueKey("chat_messages"))).padding! as EdgeInsets)
+          .top,
+      greaterThan(collapsedInset),
+    );
+    await tester.tap(find.byTooltip("Next highlight"));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip("Expand pinned message"), findsOneWidget);
+    expect(replyContext, findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -3880,10 +3914,11 @@ class _Client extends TwitchApiClient {
   final blocked = <String>[];
   final thread = <TwitchChatMessage>[];
   Future<List<TwitchChatMessage>>? pendingThread;
+  List<TwitchPrediction> predictionEvents = [];
 
   @override
   Future<TwitchChannelPredictions> fetchPredictions(String login) async =>
-      const TwitchChannelPredictions(channelId: "1", events: []);
+      TwitchChannelPredictions(channelId: "1", events: predictionEvents);
 
   @override
   Future<List<TwitchChatMessage>> fetchChatReplyThread(String messageId) async =>

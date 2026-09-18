@@ -10,6 +10,102 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  testWidgets("optional prediction setup failures keep the working pin subscription", (
+    tester,
+  ) async {
+    for (final reject in [true, false]) {
+      final socket = _Socket();
+      var updates = 0;
+      final pins = TwitchChatPins(
+        channelId: "123",
+        socketConnector: () async => socket,
+        loadInitial: () async => _initialPin,
+        onPredictionUpdate: () => updates++,
+      );
+      await tester.pump();
+      socket.welcome();
+      final pinRequest = socket.sent.first;
+      socket.receive({
+        "type": "subscribeResponse",
+        "parentId": pinRequest["id"],
+        "subscribeResponse": {"result": "ok"},
+      });
+      if (reject) {
+        socket.receive({
+          "type": "subscribeResponse",
+          "parentId": socket.sent.last["id"],
+          "subscribeResponse": {"result": "error"},
+        });
+      }
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 11));
+      expect(socket.closed, isFalse);
+      expect(updates, 0);
+      socket.event(
+        "pin-message",
+        _eventPin("live"),
+        subscriptionId: (pinRequest["subscribe"]! as Map)["id"] as String,
+      );
+      expect(pins.pin?.id, "live");
+      pins.dispose();
+      await tester.pump();
+    }
+  });
+
+  testWidgets("shares the pin socket with prediction updates and catches up after reconnect", (
+    tester,
+  ) async {
+    final sockets = <_Socket>[];
+    var updates = 0;
+    final pins = TwitchChatPins(
+      channelId: "123",
+      socketConnector: () async {
+        final socket = _Socket();
+        sockets.add(socket);
+        return socket;
+      },
+      loadInitial: () async => _initialPin,
+      onPredictionUpdate: () => updates++,
+    );
+    for (var connection = 0; connection < 2; connection++) {
+      await tester.pump();
+      final socket = sockets.last;
+      socket.welcome();
+      expect(socket.sent, hasLength(2));
+      expect((socket.sent.last["subscribe"]! as Map)["pubsub"], {
+        "topic": "predictions-channel-v1.123",
+      });
+      socket.receive({
+        "type": "subscribeResponse",
+        "parentId": socket.sent.first["id"],
+        "subscribeResponse": {"result": "ok"},
+      });
+      await tester.pump();
+      expect(pins.pin?.id, "initial-pin");
+      final before = updates;
+      socket.acknowledge();
+      expect(updates, before + 1);
+      socket.event("event-created", {
+        "event": {"id": "prediction"},
+      });
+      socket.event("event-updated", {
+        "event": {"status": "RESOLVED", "winning_outcome_id": "winner"},
+      });
+      expect(updates, before + 3);
+      socket.event("event-updated", {}, subscriptionId: "other-channel");
+      socket.event("unknown", {});
+      expect(updates, before + 3);
+      expect(pins.pin?.id, "initial-pin");
+      if (connection == 0) {
+        socket.receive({"type": "reconnect"});
+        await tester.pump(const Duration(seconds: 1));
+      }
+    }
+    expect(sockets, hasLength(2));
+    pins.dispose();
+    await tester.pump();
+  });
+
   test("fetches fresh initial pin content with native badges, emotes, and reply context", () async {
     var requests = 0;
     final client = TwitchApiClient(

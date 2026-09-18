@@ -20,6 +20,7 @@ class TwitchPrediction {
     required this.title,
     required this.status,
     required this.outcomes,
+    required this.createdAt,
     required this.closesAt,
     this.restriction,
     this.viewerStateAvailable = false,
@@ -32,6 +33,7 @@ class TwitchPrediction {
   final String title;
   final String status;
   final List<TwitchPredictionOutcome> outcomes;
+  final DateTime createdAt;
   final DateTime closesAt;
   final String? restriction;
   final bool viewerStateAvailable;

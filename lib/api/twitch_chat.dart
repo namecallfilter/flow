@@ -44,6 +44,7 @@ class TwitchChatController extends ChangeNotifier {
   final bool loadPrivateNotices;
   final bool loadRecentHistory;
   TwitchChatPins? _pins;
+  final predictionUpdates = ChangeNotifier();
   TwitchPrivateChatNotices? _privateNotices;
   String? _privateUserId;
   ({String accessToken, String? gqlAccessToken})? _sessionCredentials;
@@ -853,6 +854,7 @@ class TwitchChatController extends ChangeNotifier {
               channelId: channelId,
               socketConnector: pinSocketConnector,
               loadInitial: () async => (await clientLoader()).fetchPinnedChat(channelId),
+              onPredictionUpdate: predictionUpdates.notifyListeners,
             )..addListener(_scheduleNotify);
           }
           final userId = currentUserId;
@@ -1402,6 +1404,7 @@ class TwitchChatController extends ChangeNotifier {
     _closeSocket();
     _notifyTimer?.cancel();
     _pins?.dispose();
+    predictionUpdates.dispose();
     super.dispose();
   }
 }

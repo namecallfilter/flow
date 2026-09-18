@@ -2382,6 +2382,12 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
     final moderationNotices = _moderationNoticeIds(messages);
     final unread = (controller?.receivedMessageCount ?? 0) - _receivedWhenPaused;
     final pinned = controller?.pinnedChat;
+    final visiblePin =
+        pinned != null &&
+            pinned.id != _dismissedPinId &&
+            !_blockedLogins.value.contains(pinned.message.login.toLowerCase())
+        ? pinned
+        : null;
     final watchNotice = controller?.recentHistory.reversed
         .where((message) => message.isPrivate && message.noticeType == "watch-streak")
         .firstOrNull;
@@ -2548,10 +2554,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                         ],
                       ),
                     ),
-                    if (widget.isLive && controller != null ||
-                        pinned != null &&
-                            pinned.id != _dismissedPinId &&
-                            !_blockedLogins.value.contains(pinned.message.login.toLowerCase()))
+                    if (widget.isLive && controller != null || visiblePin != null)
                       Positioned(
                         top: widget.topPadding,
                         left: 8,
@@ -2581,15 +2584,18 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                         controller: controller,
                                         isVisible: widget.isVisible,
                                         showSheet: (builder) => _showSheet<void>(builder: builder),
-                                      ),
-                                    if (pinned != null &&
-                                        pinned.id != _dismissedPinId &&
-                                        !_blockedLogins.value.contains(
-                                          pinned.message.login.toLowerCase(),
-                                        ))
+                                        pinnedChat: visiblePin == null
+                                            ? null
+                                            : (
+                                                id: visiblePin.id,
+                                                createdAt: visiblePin.startsAt,
+                                                child: _pinnedChat(visiblePin, knownUsers),
+                                              ),
+                                      )
+                                    else if (visiblePin != null)
                                       Padding(
                                         padding: const EdgeInsets.symmetric(vertical: 4),
-                                        child: _pinnedChat(pinned, knownUsers),
+                                        child: _pinnedChat(visiblePin, knownUsers),
                                       ),
                                   ],
                                 ),

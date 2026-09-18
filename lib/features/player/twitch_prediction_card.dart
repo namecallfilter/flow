@@ -14,12 +14,14 @@ class TwitchPredictionCard extends StatefulWidget {
     required this.controller,
     required this.isVisible,
     required this.showSheet,
+    this.pinnedChat,
     super.key,
   });
 
   final TwitchChatController controller;
   final bool isVisible;
   final Future<void> Function(WidgetBuilder builder) showSheet;
+  final ({String id, DateTime? createdAt, Widget child})? pinnedChat;
 
   @override
   State<TwitchPredictionCard> createState() => _TwitchPredictionCardState();
@@ -30,20 +32,27 @@ class TwitchPredictionCard extends StatefulWidget {
     properties.add(DiagnosticsProperty<TwitchChatController>("controller", controller));
     properties.add(FlagProperty("isVisible", value: isVisible, ifTrue: "visible"));
     properties.add(ObjectFlagProperty<Object>.has("showSheet", showSheet));
+    properties.add(ObjectFlagProperty<Object>.has("pinnedChat", pinnedChat));
   }
 }
 
 class _TwitchPredictionCardState extends State<TwitchPredictionCard> with WidgetsBindingObserver {
   final _snapshot = ValueNotifier<TwitchChannelPredictions?>(null);
+  final _pendingTransactions = <(String, String, String, String, int), String>{};
   Timer? _timer;
-  bool _loading = false;
-  bool _expanded = false;
+  (TwitchChatController, Object)? _loading;
+  String? _selected;
+  String? _newest;
+  String? _pinId;
+  DateTime? _pinSeenAt;
+  int _predictionRevision = 0;
   final _error = ValueNotifier<String?>(null);
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    widget.controller.predictionUpdates.addListener(_predictionChanged);
     _schedule();
   }
 
@@ -54,9 +63,13 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
   void didUpdateWidget(TwitchPredictionCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.predictionUpdates.removeListener(_predictionChanged);
+      widget.controller.predictionUpdates.addListener(_predictionChanged);
       _snapshot.value = null;
       _error.value = null;
-      _expanded = false;
+      _selected = null;
+      _newest = null;
+      _pinId = null;
     }
     if (oldWidget.controller != widget.controller || oldWidget.isVisible != widget.isVisible) {
       _schedule();
@@ -65,33 +78,53 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
 
   void _schedule() {
     _timer?.cancel();
-    if (widget.isVisible &&
-        (WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed) ==
-            AppLifecycleState.resumed) {
+    if (_isActive) {
       unawaited(_refresh());
-      // ponytail: five-second polling; use shared Hermes events when available.
+      // Reconcile after missed socket updates and update the closing countdown.
       _timer = Timer.periodic(const Duration(seconds: 5), (_) => unawaited(_refresh()));
     }
   }
 
+  bool get _isActive =>
+      widget.isVisible &&
+      (WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed) ==
+          AppLifecycleState.resumed;
+
+  void _predictionChanged() {
+    _predictionRevision++;
+    if (_isActive) {
+      unawaited(_refresh());
+    }
+  }
+
   Future<void> _refresh() async {
-    if (_loading) {
+    final controller = widget.controller;
+    if (_loading?.$1 == controller) {
       return;
     }
-    final controller = widget.controller;
-    _loading = true;
+    final operation = (controller, Object());
+    final revision = _predictionRevision;
+    _loading = operation;
     try {
       final data = await (await controller.clientLoader()).fetchPredictions(controller.channel);
-      if (mounted && controller == widget.controller) {
+      if (mounted && _loading == operation && controller == widget.controller) {
         _error.value = null;
         _snapshot.value = data;
       }
     } on Object {
-      if (mounted && controller == widget.controller) {
+      if (mounted && _loading == operation && controller == widget.controller) {
         _error.value = "Could not refresh predictions.";
       }
     } finally {
-      _loading = false;
+      if (_loading == operation) {
+        _loading = null;
+        if (mounted &&
+            controller == widget.controller &&
+            _isActive &&
+            revision != _predictionRevision) {
+          unawaited(_refresh());
+        }
+      }
     }
   }
 
@@ -104,6 +137,7 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
         snapshot: _snapshot,
         refresh: _refresh,
         refreshError: _error,
+        pendingTransactions: _pendingTransactions,
       ),
     );
   }
@@ -111,6 +145,7 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    widget.controller.predictionUpdates.removeListener(_predictionChanged);
     _timer?.cancel();
     _snapshot.dispose();
     _error.dispose();
@@ -123,109 +158,161 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
     builder: (context, _) {
       final snapshot = _snapshot.value;
       final events = snapshot?.events ?? const <TwitchPrediction>[];
-      if (events.isEmpty) {
+      final pin = widget.pinnedChat;
+      if (_pinId != pin?.id) {
+        _pinId = pin?.id;
+        _pinSeenAt = DateTime.now();
+      }
+      final entries =
+          <({String id, DateTime createdAt, TwitchPrediction? event})>[
+            if (pin != null)
+              (id: "pin-${pin.id}", createdAt: pin.createdAt ?? _pinSeenAt!, event: null),
+            for (final event in events)
+              (id: "prediction-${event.id}", createdAt: event.createdAt, event: event),
+          ]..sort((a, b) {
+            final order = b.createdAt.compareTo(a.createdAt);
+            return order == 0 ? a.id.compareTo(b.id) : order;
+          });
+      if (entries.isEmpty) {
+        _selected = null;
+        _newest = null;
         if (_error.value case final error?) {
-          return Material(
-            color: Theme.of(context).scaffoldBackgroundColor,
-            child: ListTile(
-              dense: true,
-              title: Text(error, maxLines: 2, overflow: TextOverflow.ellipsis),
-              trailing: IconButton(
-                tooltip: "Retry predictions",
-                onPressed: () => unawaited(_refresh()),
-                icon: const Icon(Icons.refresh),
-              ),
-            ),
-          );
+          return _retry(context, error);
         }
         return const SizedBox.shrink();
       }
-      final colors = Theme.of(context).colorScheme;
+      if (_newest != entries.first.id || !entries.any((entry) => entry.id == _selected)) {
+        _newest = entries.first.id;
+        _selected = _newest;
+      }
+      final index = entries.indexWhere((entry) => entry.id == _selected);
+      final event = entries[index].event;
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (events.length > 1)
-              TextButton(
-                onPressed: () => setState(() => _expanded = !_expanded),
-                child: Text(_expanded ? "Show less" : "View All (${events.length})"),
-              ),
-            for (final event in _expanded ? events : events.take(1))
-              Card.outlined(
-                key: ValueKey("prediction-${event.id}"),
-                margin: const EdgeInsets.only(bottom: 4),
+            if (entries.length > 1)
+              Material(
                 color: Theme.of(context).scaffoldBackgroundColor,
-                child: Padding(
-                  padding: const EdgeInsets.all(10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  "Predict with Channel Points",
-                                  style: Theme.of(context).textTheme.labelSmall,
-                                ),
-                                Text(
-                                  event.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(context).textTheme.titleSmall,
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          FilledButton(
-                            onPressed: () => unawaited(_open(event)),
-                            child: Text(event.isOpen ? "Predict" : "Results"),
-                          ),
-                        ],
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    IconButton(
+                      tooltip: "Previous highlight",
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => setState(
+                        () => _selected = entries[(index - 1) % entries.length].id,
                       ),
-                      for (final outcome in event.outcomes.take(2))
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                outcome.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              _points(outcome.points),
-                              style: TextStyle(color: colors.onSurfaceVariant),
-                            ),
-                          ],
-                        ),
-                      if (event.outcomes.length > 2)
-                        Text(
-                          "+${event.outcomes.length - 2} outcomes",
-                          style: Theme.of(context).textTheme.labelSmall,
-                        ),
-                      const SizedBox(height: 6),
-                      Text(
-                        _status(event),
-                        style: Theme.of(
-                          context,
-                        ).textTheme.labelSmall?.copyWith(color: colors.primary),
+                      icon: const Icon(Icons.chevron_left),
+                    ),
+                    Text("${index + 1} / ${entries.length}"),
+                    IconButton(
+                      tooltip: "Next highlight",
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => setState(
+                        () => _selected = entries[(index + 1) % entries.length].id,
                       ),
-                    ],
-                  ),
+                      icon: const Icon(Icons.chevron_right),
+                    ),
+                  ],
                 ),
               ),
+            if (event == null) pin!.child else _prediction(context, event),
+            if (events.isEmpty && _error.value != null) _retry(context, _error.value!),
           ],
         ),
       );
     },
   );
+
+  Widget _retry(BuildContext context, String error) => Material(
+    color: Theme.of(context).scaffoldBackgroundColor,
+    child: ListTile(
+      dense: true,
+      title: Text(error, maxLines: 2, overflow: TextOverflow.ellipsis),
+      trailing: IconButton(
+        tooltip: "Retry predictions",
+        onPressed: () => unawaited(_refresh()),
+        icon: const Icon(Icons.refresh),
+      ),
+    ),
+  );
+
+  Widget _prediction(BuildContext context, TwitchPrediction event) {
+    final colors = Theme.of(context).colorScheme;
+    return Card.outlined(
+      key: ValueKey("prediction-${event.id}"),
+      margin: const EdgeInsets.only(bottom: 4),
+      color: Theme.of(context).scaffoldBackgroundColor,
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "Predict with Channel Points",
+                        style: Theme.of(context).textTheme.labelSmall,
+                      ),
+                      Text(
+                        event.title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: () => unawaited(_open(event)),
+                  child: Text(event.isOpen ? "Predict" : "Results"),
+                ),
+              ],
+            ),
+            for (final outcome in event.outcomes.take(2))
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      outcome.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    _points(outcome.points),
+                    style: TextStyle(color: colors.onSurfaceVariant),
+                  ),
+                ],
+              ),
+            if (event.outcomes.length > 2)
+              Text(
+                "+${event.outcomes.length - 2} outcomes",
+                style: Theme.of(context).textTheme.labelSmall,
+              ),
+            if (_status(event) case final status?) ...[
+              const SizedBox(height: 6),
+              Text(
+                status,
+                style: Theme.of(
+                  context,
+                ).textTheme.labelSmall?.copyWith(color: colors.primary),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _PredictionSheet extends StatefulWidget {
@@ -235,6 +322,7 @@ class _PredictionSheet extends StatefulWidget {
     required this.snapshot,
     required this.refresh,
     required this.refreshError,
+    required this.pendingTransactions,
   });
 
   final TwitchPrediction event;
@@ -242,6 +330,7 @@ class _PredictionSheet extends StatefulWidget {
   final ValueNotifier<TwitchChannelPredictions?> snapshot;
   final Future<void> Function() refresh;
   final ValueListenable<String?> refreshError;
+  final Map<(String, String, String, String, int), String> pendingTransactions;
 
   @override
   State<_PredictionSheet> createState() => _PredictionSheetState();
@@ -256,6 +345,7 @@ class _PredictionSheet extends StatefulWidget {
     );
     properties.add(ObjectFlagProperty<Object>.has("refresh", refresh));
     properties.add(ObjectFlagProperty<Object>.has("refreshError", refreshError));
+    properties.add(ObjectFlagProperty<Object>.has("pendingTransactions", pendingTransactions));
   }
 }
 
@@ -263,8 +353,6 @@ class _PredictionSheetState extends State<_PredictionSheet> {
   final _amount = TextEditingController();
   String? _outcome;
   String? _error;
-  String? _transactionId;
-  (String, int)? _transactionChoice;
   bool _acceptTerms = false;
   bool _submitting = false;
   bool _submitted = false;
@@ -281,16 +369,15 @@ class _PredictionSheetState extends State<_PredictionSheet> {
     if (_submitting || _outcome == null || points == null) {
       return;
     }
-    final choice = (_outcome!, points);
-    if (_transactionChoice != choice) {
+    final outcomeId = _outcome!;
+    final choice = (snapshot.viewerId!, snapshot.channelId, event.id, outcomeId, points);
+    final transactionId = widget.pendingTransactions.putIfAbsent(choice, () {
       final hex = List.generate(
         4,
         (_) => Random.secure().nextInt(1 << 32).toRadixString(16).padLeft(8, "0"),
       ).join();
-      _transactionId =
-          "${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}";
-      _transactionChoice = choice;
-    }
+      return "${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}";
+    });
     setState(() {
       _submitting = true;
       _error = null;
@@ -300,12 +387,15 @@ class _PredictionSheetState extends State<_PredictionSheet> {
       await client.makePrediction(
         channelLogin: widget.controller.channel,
         eventId: event.id,
-        outcomeId: choice.$1,
-        points: choice.$2,
-        transactionId: _transactionId!,
+        outcomeId: outcomeId,
+        points: points,
+        transactionId: transactionId,
         viewerId: snapshot.viewerId!,
         acceptTerms: _acceptTerms,
       );
+      if (widget.pendingTransactions[choice] == transactionId) {
+        widget.pendingTransactions.remove(choice);
+      }
       if (mounted) {
         setState(() => _submitted = true);
       }
@@ -377,7 +467,7 @@ class _PredictionSheetState extends State<_PredictionSheet> {
             children: [
               Text("Predict with Channel Points", style: Theme.of(context).textTheme.labelMedium),
               Text(event.title, style: Theme.of(context).textTheme.titleLarge),
-              Text(_status(event)),
+              if (_status(event) case final status?) Text(status),
               const SizedBox(height: 12),
               for (final outcome in event.outcomes)
                 ListTile(
@@ -476,17 +566,6 @@ class _PredictionSheetState extends State<_PredictionSheet> {
                 const Text("Prediction submitted.", semanticsLabel: "Prediction submitted"),
               if (_error ?? widget.refreshError.value case final error?)
                 Text(error, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-              TextButton(
-                onPressed: _submitting
-                    ? null
-                    : () async {
-                        await widget.refresh();
-                        if (mounted) {
-                          setState(() {});
-                        }
-                      },
-                child: const Text("Refresh"),
-              ),
             ],
           ),
         ),
@@ -498,7 +577,7 @@ class _PredictionSheetState extends State<_PredictionSheet> {
 String _points(int value) =>
     value.toString().replaceAllMapped(RegExp(r"\B(?=(\d{3})+(?!\d))"), (_) => ",");
 
-String _status(TwitchPrediction event) {
+String? _status(TwitchPrediction event) {
   if (event.isOpen) {
     return "Closes in ${event.closesAt.difference(DateTime.now()).inSeconds}s";
   }
@@ -510,5 +589,5 @@ String _status(TwitchPrediction event) {
   }
   return event.status == "CANCELED" || event.status == "CANCEL_PENDING"
       ? "Canceled · points returned"
-      : "Locked · awaiting result";
+      : null;
 }

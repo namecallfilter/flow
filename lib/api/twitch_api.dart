@@ -965,6 +965,7 @@ class TwitchApiClient {
           id: _stringValue(event["id"]),
           title: _stringValue(event["title"]),
           status: _stringValue(event["status"]),
+          createdAt: createdAt,
           closesAt: createdAt.add(Duration(seconds: window)),
           restriction: _mapValue(event["self"])?["restriction"] as String?,
           viewerStateAvailable: event["self"] != null && self?["recentPredictions"] is List,
