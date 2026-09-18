@@ -55,6 +55,11 @@ void main() {
     await tester.pumpWidget(panel(controller));
     await tester.pumpAndSettle();
     expect(client.calls, 1);
+    expect(
+      (tester.widget<ListView>(find.byKey(const ValueKey("chat_messages"))).padding! as EdgeInsets)
+          .top,
+      8,
+    );
     await tester.pump(const Duration(seconds: 5));
     await tester.pumpAndSettle();
     expect(client.calls, 2);

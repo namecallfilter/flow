@@ -4,6 +4,7 @@ import "dart:ui" as ui;
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_chat.dart";
 import "package:flow/api/twitch_chat_assets.dart";
+import "package:flow/api/twitch_predictions.dart";
 import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/theme.dart";
 import "package:flow/features/player/chat_username.dart";
@@ -3013,6 +3014,9 @@ void main() {
           displayName: "Viewer",
           text: "Kappa Party @viewer example.com",
           emotes: [TwitchChatEmote(id: "25", start: 0, end: 5)],
+          parentMessageId: "parent",
+          parentLogin: "parent",
+          parentText: "Parent preview",
         ),
       );
     final assets = _Assets(client);
@@ -3029,8 +3033,11 @@ void main() {
     );
     await tester.pumpWidget(_panel(controller, assets: assets));
     await tester.pumpAndSettle();
+    final replyContext = find.byKey(const ValueKey("reply-context-rich-message"));
+    expect(replyContext, findsOneWidget);
     await tester.tap(find.byTooltip("Minimize pinned message"));
     await tester.pumpAndSettle();
+    expect(replyContext, findsNothing);
     final pin = find.byKey(const ValueKey("chat_pinned_message"));
     final body = find.descendant(
       of: pin,
@@ -3873,6 +3880,10 @@ class _Client extends TwitchApiClient {
   final blocked = <String>[];
   final thread = <TwitchChatMessage>[];
   Future<List<TwitchChatMessage>>? pendingThread;
+
+  @override
+  Future<TwitchChannelPredictions> fetchPredictions(String login) async =>
+      const TwitchChannelPredictions(channelId: "1", events: []);
 
   @override
   Future<List<TwitchChatMessage>> fetchChatReplyThread(String messageId) async =>

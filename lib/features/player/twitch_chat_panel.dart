@@ -2573,26 +2573,25 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                 return false;
                               },
                               child: SizeChangedLayoutNotifier(
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(vertical: 4),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      if (widget.isLive && controller != null)
-                                        TwitchPredictionCard(
-                                          controller: controller,
-                                          isVisible: widget.isVisible,
-                                          showSheet: (builder) =>
-                                              _showSheet<void>(builder: builder),
-                                        ),
-                                      if (pinned != null &&
-                                          pinned.id != _dismissedPinId &&
-                                          !_blockedLogins.value.contains(
-                                            pinned.message.login.toLowerCase(),
-                                          ))
-                                        _pinnedChat(pinned, knownUsers),
-                                    ],
-                                  ),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (widget.isLive && controller != null)
+                                      TwitchPredictionCard(
+                                        controller: controller,
+                                        isVisible: widget.isVisible,
+                                        showSheet: (builder) => _showSheet<void>(builder: builder),
+                                      ),
+                                    if (pinned != null &&
+                                        pinned.id != _dismissedPinId &&
+                                        !_blockedLogins.value.contains(
+                                          pinned.message.login.toLowerCase(),
+                                        ))
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(vertical: 4),
+                                        child: _pinnedChat(pinned, knownUsers),
+                                      ),
+                                  ],
                                 ),
                               ),
                             ),

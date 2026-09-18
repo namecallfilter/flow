@@ -6,6 +6,39 @@ import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  testWidgets("an initial prediction failure offers retry and clears after recovery", (
+    tester,
+  ) async {
+    final client = _Client()..failRefresh = true;
+    final controller = TwitchChatController(
+      clientLoader: () async => client,
+      channel: "channel",
+      autoConnect: false,
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TwitchPredictionCard(
+            controller: controller,
+            isVisible: true,
+            showSheet: (_) async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text("Could not refresh predictions."), findsOneWidget);
+    expect(find.text("Who wins?"), findsNothing);
+    client.failRefresh = false;
+    await tester.tap(find.byTooltip("Retry predictions"));
+    await tester.pumpAndSettle();
+    expect(find.text("Could not refresh predictions."), findsNothing);
+    expect(find.text("Who wins?"), findsOneWidget);
+    expect(client.transactions, isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets("empty balances and regional picks show accurate participation text", (tester) async {
     final client = _Client()..balance = 0;
     final controller = TwitchChatController(
@@ -133,7 +166,7 @@ class _Client extends TwitchApiClient {
   @override
   Future<TwitchChannelPredictions> fetchPredictions(String login) async {
     if (failRefresh) {
-      throw TwitchApiException("Could not refresh predictions.");
+      throw TwitchApiException("ServerException: internal transport details");
     }
     return TwitchChannelPredictions(
       channelId: "1",

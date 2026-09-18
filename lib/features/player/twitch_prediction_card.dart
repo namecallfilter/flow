@@ -55,6 +55,7 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
       _snapshot.value = null;
+      _error.value = null;
       _expanded = false;
     }
     if (oldWidget.controller != widget.controller || oldWidget.isVisible != widget.isVisible) {
@@ -85,11 +86,9 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
         _error.value = null;
         _snapshot.value = data;
       }
-    } on Object catch (error) {
+    } on Object {
       if (mounted && controller == widget.controller) {
-        _error.value = error is TwitchApiException
-            ? error.message
-            : "Could not refresh predictions.";
+        _error.value = "Could not refresh predictions.";
       }
     } finally {
       _loading = false;
@@ -119,16 +118,31 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
   }
 
   @override
-  Widget build(BuildContext context) => ValueListenableBuilder<TwitchChannelPredictions?>(
-    valueListenable: _snapshot,
-    builder: (context, snapshot, _) {
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: Listenable.merge([_snapshot, _error]),
+    builder: (context, _) {
+      final snapshot = _snapshot.value;
       final events = snapshot?.events ?? const <TwitchPrediction>[];
       if (events.isEmpty) {
+        if (_error.value case final error?) {
+          return Material(
+            color: Theme.of(context).scaffoldBackgroundColor,
+            child: ListTile(
+              dense: true,
+              title: Text(error, maxLines: 2, overflow: TextOverflow.ellipsis),
+              trailing: IconButton(
+                tooltip: "Retry predictions",
+                onPressed: () => unawaited(_refresh()),
+                icon: const Icon(Icons.refresh),
+              ),
+            ),
+          );
+        }
         return const SizedBox.shrink();
       }
       final colors = Theme.of(context).colorScheme;
       return Padding(
-        padding: const EdgeInsets.only(bottom: 4),
+        padding: const EdgeInsets.symmetric(vertical: 4),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
