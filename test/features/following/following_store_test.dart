@@ -73,12 +73,32 @@ void main() {
 
       final pendingClient = Completer<TwitchApiClient>();
       final pending = store.refreshLiveChannels(() => pendingClient.future);
-      await store.refreshLiveChannels(() => throw StateError("Refresh must not overlap"));
+      var overlappingCalls = 0;
+      Future<TwitchApiClient> overlappingLoader() async {
+        overlappingCalls++;
+        return client;
+      }
+
+      await store.refreshLiveChannels(overlappingLoader);
+      expect(overlappingCalls, 0);
       final replacement = _connection("other-user");
       store.applyConnection(replacement);
+      final replacementClient = Completer<TwitchApiClient>();
+      var replacementCalls = 0;
+      final replacementRefresh = store.refreshLiveChannels(() {
+        replacementCalls++;
+        return replacementClient.future;
+      });
+      expect(replacementCalls, 1);
       pendingClient.complete(client);
       await pending;
       expect(store.connection, same(replacement));
+      await store.refreshLiveChannels(overlappingLoader);
+      expect(overlappingCalls, 0);
+      replacementClient.complete(client);
+      await replacementRefresh;
+      expect(store.connection!.user.id, replacement.user.id);
+      expect(store.liveChannels.single.name, "AussieAntics");
     },
   );
 

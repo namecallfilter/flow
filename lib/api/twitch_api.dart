@@ -1109,7 +1109,7 @@ class TwitchApiClient {
           broadcasterName: _stringValue(item["displayName"]),
           gameName: _stringValue(game?["displayName"]),
           gameId: _stringValue(game?["id"]),
-          title: _stringValue(broadcastSettings?["title"]),
+          title: _stringValue(broadcastSettings?["title"]).trim(),
           lastBroadcastStartedAt: _dateTimeValue(_mapValue(item["lastBroadcast"])?["startedAt"]),
         );
         channels[channel.broadcasterId] = channel;
@@ -2494,7 +2494,7 @@ class TwitchApiClient {
       login: _stringValue(user["login"]),
       displayName: _stringValue(user["displayName"]),
       description: _stringValue(user["description"]),
-      title: _stringValue(_mapValue(user["broadcastSettings"])?["title"]),
+      title: _stringValue(_mapValue(user["broadcastSettings"])?["title"]).trim(),
       followers: _intValue(followers?["totalCount"]),
       isPartner: user["isPartner"] == true,
       profileImageUrl: user["profileImageURL"] as String?,

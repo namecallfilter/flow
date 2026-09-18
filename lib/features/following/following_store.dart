@@ -40,7 +40,7 @@ abstract class FollowingStoreBase with Store {
   bool _loadInBackground = false;
   bool _queuedRefreshInBackground = false;
   int _sessionRevision = 0;
-  bool _liveRefreshInFlight = false;
+  int? _liveRefreshRevision;
 
   @observable
   TwitchAuthConnection? connection;
@@ -123,11 +123,13 @@ abstract class FollowingStoreBase with Store {
 
   Future<void> refreshLiveChannels(TwitchApiClientLoader clientLoader) async {
     final current = connection;
-    if (current == null || _savedConnectionLoad != null || _liveRefreshInFlight) {
+    if (current == null ||
+        _savedConnectionLoad != null ||
+        _liveRefreshRevision == _sessionRevision) {
       return;
     }
     final revision = _sessionRevision;
-    _liveRefreshInFlight = true;
+    _liveRefreshRevision = revision;
     try {
       final client = await clientLoader();
       final streams = await client.fetchFollowedStreams(current.user.id);
@@ -146,7 +148,9 @@ abstract class FollowingStoreBase with Store {
     } on Object {
       // The full session refresh handles authentication and reports persistent errors.
     } finally {
-      _liveRefreshInFlight = false;
+      if (_liveRefreshRevision == revision) {
+        _liveRefreshRevision = null;
+      }
     }
   }
 

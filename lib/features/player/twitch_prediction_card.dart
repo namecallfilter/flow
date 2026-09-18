@@ -33,18 +33,22 @@ class TwitchPredictionCard extends StatefulWidget {
   }
 }
 
-class _TwitchPredictionCardState extends State<TwitchPredictionCard> {
+class _TwitchPredictionCardState extends State<TwitchPredictionCard> with WidgetsBindingObserver {
   final _snapshot = ValueNotifier<TwitchChannelPredictions?>(null);
   Timer? _timer;
   bool _loading = false;
   bool _expanded = false;
-  String? _error;
+  final _error = ValueNotifier<String?>(null);
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _schedule();
   }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) => _schedule();
 
   @override
   void didUpdateWidget(TwitchPredictionCard oldWidget) {
@@ -60,7 +64,9 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> {
 
   void _schedule() {
     _timer?.cancel();
-    if (widget.isVisible) {
+    if (widget.isVisible &&
+        (WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed) ==
+            AppLifecycleState.resumed) {
       unawaited(_refresh());
       // ponytail: five-second polling; use shared Hermes events when available.
       _timer = Timer.periodic(const Duration(seconds: 5), (_) => unawaited(_refresh()));
@@ -76,11 +82,15 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> {
     try {
       final data = await (await controller.clientLoader()).fetchPredictions(controller.channel);
       if (mounted && controller == widget.controller) {
-        _error = null;
+        _error.value = null;
         _snapshot.value = data;
       }
     } on Object catch (error) {
-      _error = error is TwitchApiException ? error.message : "Could not refresh predictions.";
+      if (mounted && controller == widget.controller) {
+        _error.value = error is TwitchApiException
+            ? error.message
+            : "Could not refresh predictions.";
+      }
     } finally {
       _loading = false;
     }
@@ -94,15 +104,17 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> {
         controller: widget.controller,
         snapshot: _snapshot,
         refresh: _refresh,
-        refreshError: () => _error,
+        refreshError: _error,
       ),
     );
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _snapshot.dispose();
+    _error.dispose();
     super.dispose();
   }
 
@@ -215,7 +227,7 @@ class _PredictionSheet extends StatefulWidget {
   final TwitchChatController controller;
   final ValueNotifier<TwitchChannelPredictions?> snapshot;
   final Future<void> Function() refresh;
-  final String? Function() refreshError;
+  final ValueListenable<String?> refreshError;
 
   @override
   State<_PredictionSheet> createState() => _PredictionSheetState();
@@ -306,9 +318,10 @@ class _PredictionSheetState extends State<_PredictionSheet> {
   }
 
   @override
-  Widget build(BuildContext context) => ValueListenableBuilder<TwitchChannelPredictions?>(
-    valueListenable: widget.snapshot,
-    builder: (context, snapshot, _) {
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: Listenable.merge([widget.snapshot, widget.refreshError]),
+    builder: (context, _) {
+      final snapshot = widget.snapshot.value;
       final current = snapshot?.events.where((event) => event.id == widget.event.id).firstOrNull;
       final event = current ?? widget.event;
       final remaining = 250000 - event.pointsSpent;
@@ -447,7 +460,7 @@ class _PredictionSheetState extends State<_PredictionSheet> {
               ],
               if (_submitted)
                 const Text("Prediction submitted.", semanticsLabel: "Prediction submitted"),
-              if (_error ?? widget.refreshError() case final error?)
+              if (_error ?? widget.refreshError.value case final error?)
                 Text(error, style: TextStyle(color: Theme.of(context).colorScheme.error)),
               TextButton(
                 onPressed: _submitting

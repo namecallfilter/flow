@@ -1,5 +1,5 @@
 mutation FlowAcceptPredictionTerms {
-  updateUserPredictionSettings(input: {hasAcceptedTOS: true, isTemporaryChatBadgeEnabled: true}) {
+  updateUserPredictionSettings(input: {hasAcceptedTOS: true}) {
     error { code }
     settings { hasAcceptedTOS }
   }

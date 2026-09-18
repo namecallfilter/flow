@@ -4,6 +4,7 @@ import "dart:ui" as ui;
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_chat.dart";
 import "package:flow/api/twitch_chat_assets.dart";
+import "package:flow/api/twitch_predictions.dart";
 import "package:flow/api/twitch_vod_chat.dart";
 import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/theme.dart";
@@ -43,6 +44,47 @@ void main() {
       ),
     ),
   );
+
+  testWidgets("prediction polling stops without paused frames and resumes immediately", (
+    tester,
+  ) async {
+    final client = _PredictionClient();
+    final controller = _ChatController(client: client);
+    addTearDown(controller.dispose);
+    addTearDown(() => tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed));
+    await tester.pumpWidget(panel(controller));
+    await tester.pumpAndSettle();
+    expect(client.calls, 1);
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+    expect(client.calls, 2);
+
+    for (final state in [
+      AppLifecycleState.inactive,
+      AppLifecycleState.hidden,
+      AppLifecycleState.paused,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(state);
+    }
+    expect(tester.binding.framesEnabled, isFalse);
+    await tester.pump(const Duration(seconds: 16));
+    expect(client.calls, 2);
+    for (final state in [
+      AppLifecycleState.hidden,
+      AppLifecycleState.inactive,
+      AppLifecycleState.resumed,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(state);
+    }
+    await tester.pumpAndSettle();
+    expect(client.calls, 3);
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+    expect(client.calls, 4);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 10));
+    expect(client.calls, 4);
+  });
 
   testWidgets(
     "sub anniversary shares an optional message, retries failures, and can be dismissed",
@@ -3278,6 +3320,18 @@ class _ChatController extends TwitchChatController {
   }
 
   void update() => notifyListeners();
+}
+
+class _PredictionClient extends TwitchApiClient {
+  _PredictionClient() : super(clientId: "test", accessToken: "");
+
+  int calls = 0;
+
+  @override
+  Future<TwitchChannelPredictions> fetchPredictions(String login) async {
+    calls++;
+    return const TwitchChannelPredictions(channelId: "1", events: []);
+  }
 }
 
 class _ChattersClient extends TwitchApiClient {

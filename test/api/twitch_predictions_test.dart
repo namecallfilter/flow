@@ -34,6 +34,8 @@ void main() {
           return _response(_data(terms: false));
         }
         if (operation == "FlowAcceptPredictionTerms") {
+          expect(body["query"], contains("hasAcceptedTOS: true"));
+          expect(body["query"], isNot(contains("isTemporaryChatBadgeEnabled")));
           return _response({
             "updateUserPredictionSettings": {
               "error": null,

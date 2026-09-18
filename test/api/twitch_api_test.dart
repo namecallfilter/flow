@@ -857,7 +857,7 @@ void main() {
                 "displayName": "Creator",
                 "lastBroadcast": {"startedAt": "2026-09-02T02:37:34.734703Z"},
                 "broadcastSettings": {
-                  "title": "Back later",
+                  "title": "  Back later \n",
                   "game": {"id": "509658", "displayName": "Just Chatting"},
                 },
               },
@@ -882,6 +882,7 @@ void main() {
     );
     expect(channels["creator-1"]?.gameId, "509658");
     expect(channels["creator-1"]?.gameName, "Just Chatting");
+    expect(channels["creator-1"]?.title, "Back later");
     expect(channels["creator-2"]?.lastBroadcastStartedAt, isNull);
     expect(channels["creator-2"]?.gameId, isEmpty);
   });
@@ -1175,6 +1176,7 @@ void main() {
 
   test("fetches channel details with live status and past broadcasts", () async {
     late http.Request capturedRequest;
+    var broadcastTitle = "  Back tomorrow \n";
     final client = TwitchApiClient(
       clientId: "client-123",
       accessToken: "token-123",
@@ -1187,6 +1189,7 @@ void main() {
               "login": "jason",
               "displayName": "Jason",
               "description": "Hi Im Jason",
+              "broadcastSettings": {"title": broadcastTitle},
               "profileImageURL": "https://static-cdn.jtvnw.net/creator-1.png",
               "followers": {"totalCount": 2300000},
               "stream": {
@@ -1242,6 +1245,7 @@ void main() {
     expect(channel.login, "jason");
     expect(channel.displayName, "Jason");
     expect(channel.description, "Hi Im Jason");
+    expect(channel.title, "Back tomorrow");
     expect(channel.profileImageUrl, "https://static-cdn.jtvnw.net/creator-1.png");
     expect(channel.followers, 2300000);
     expect(channel.liveStream?.title, "Live with chat");
@@ -1254,6 +1258,8 @@ void main() {
     expect(channel.pastBroadcasts.single.category, "Just Chatting");
     expect(channel.pastBroadcasts.single.duration, const Duration(seconds: 17999));
     expect(channel.pastBroadcasts.single.viewCount, 91234);
+    broadcastTitle = " \n\t ";
+    expect((await client.fetchChannelDetails("jason")).title, isEmpty);
   });
 
   test("builds a signed Twitch live HLS playback URI", () async {

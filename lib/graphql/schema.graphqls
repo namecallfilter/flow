@@ -2438,8 +2438,8 @@ type MakePredictionPayload {
 }
 
 input UpdateUserPredictionSettingsInput {
-  hasAcceptedTOS: Boolean!
-  isTemporaryChatBadgeEnabled: Boolean!
+  hasAcceptedTOS: Boolean
+  isTemporaryChatBadgeEnabled: Boolean
 }
 
 type UpdateUserPredictionSettingsPayload {

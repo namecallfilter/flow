@@ -2581,7 +2581,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                       if (widget.isLive && controller != null)
                                         TwitchPredictionCard(
                                           controller: controller,
-                                          isVisible: _chatIsVisible,
+                                          isVisible: widget.isVisible,
                                           showSheet: (builder) =>
                                               _showSheet<void>(builder: builder),
                                         ),

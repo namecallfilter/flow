@@ -84,6 +84,16 @@ void main() {
     await tester.tap(find.text("Predict"));
     await tester.pumpAndSettle();
     expect(client.transactions, isEmpty);
+    client.failRefresh = true;
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pump();
+    expect(find.text("Could not refresh predictions."), findsOneWidget);
+    expect(find.widgetWithText(ListTile, "Lions"), findsOneWidget);
+    client.failRefresh = false;
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pump();
+    expect(find.text("Could not refresh predictions."), findsNothing);
+    expect(client.transactions, isEmpty);
     final submit = find.widgetWithText(FilledButton, "Predict with … points");
     expect(tester.widget<FilledButton>(submit).onPressed, isNull);
     await tester.tap(find.widgetWithText(ListTile, "Lions"));
@@ -118,40 +128,46 @@ class _Client extends TwitchApiClient {
   final transactions = <String>[];
   int balance = 1000;
   bool regional = false;
+  bool failRefresh = false;
 
   @override
-  Future<TwitchChannelPredictions> fetchPredictions(String login) async => TwitchChannelPredictions(
-    channelId: "1",
-    viewerId: "2",
-    balance: balance,
-    hasAcceptedTerms: true,
-    events: [
-      TwitchPrediction(
-        id: "event",
-        title: "Who wins?",
-        status: "ACTIVE",
-        closesAt: DateTime.now().add(const Duration(minutes: 5)),
-        viewerStateAvailable: true,
-        restriction: regional ? "REGION_LOCKED" : null,
-        outcomes: const [
-          TwitchPredictionOutcome(
-            id: "blue",
-            title: "Lions",
-            points: 3911760,
-            users: 42,
-            color: "BLUE",
-          ),
-          TwitchPredictionOutcome(
-            id: "pink",
-            title: "Bills",
-            points: 7887357,
-            users: 55,
-            color: "PINK",
-          ),
-        ],
-      ),
-    ],
-  );
+  Future<TwitchChannelPredictions> fetchPredictions(String login) async {
+    if (failRefresh) {
+      throw TwitchApiException("Could not refresh predictions.");
+    }
+    return TwitchChannelPredictions(
+      channelId: "1",
+      viewerId: "2",
+      balance: balance,
+      hasAcceptedTerms: true,
+      events: [
+        TwitchPrediction(
+          id: "event",
+          title: "Who wins?",
+          status: "ACTIVE",
+          closesAt: DateTime.now().add(const Duration(minutes: 5)),
+          viewerStateAvailable: true,
+          restriction: regional ? "REGION_LOCKED" : null,
+          outcomes: const [
+            TwitchPredictionOutcome(
+              id: "blue",
+              title: "Lions",
+              points: 3911760,
+              users: 42,
+              color: "BLUE",
+            ),
+            TwitchPredictionOutcome(
+              id: "pink",
+              title: "Bills",
+              points: 7887357,
+              users: 55,
+              color: "PINK",
+            ),
+          ],
+        ),
+      ],
+    );
+  }
 
   @override
   Future<void> makePrediction({
