@@ -271,6 +271,24 @@ void main() {
     expect(find.byKey(const ValueKey("channel_page_offlineone")), findsOneWidget);
   });
 
+  testWidgets("Me opens the signed-in channel directly", (tester) async {
+    await tester.pumpWidget(
+      _followingScreen(
+        apiCache: _channelApiCache(),
+        openTwitchLogin: (_, _) async => _connection(),
+      ),
+    );
+    await _logInFromMe(tester);
+    await tester.tap(find.byKey(const ValueKey("profile_auth_button")));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey("channel_page_flowtester")), findsOneWidget);
+
+    Navigator.of(tester.element(find.byKey(const ValueKey("channel_page_flowtester")))).pop();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("following_title")), findsOneWidget);
+  });
+
   testWidgets("offline categories receive their own tap without opening the channel", (
     tester,
   ) async {
@@ -282,6 +300,7 @@ void main() {
       name: "OfflineOne",
       initials: "OO",
       lastLive: "Last live today",
+      title: "Back tomorrow with a new game",
       category: "Just Chatting",
       categoryId: "509658",
       avatarColors: [Colors.purple, Colors.pink],
@@ -301,6 +320,7 @@ void main() {
     );
 
     final categoryFinder = find.byKey(const ValueKey("offline_channel_category_OfflineOne"));
+    expect(find.text("Back tomorrow with a new game"), findsOneWidget);
     await tester.tap(categoryFinder);
     await tester.pump();
     expect(categorySelections, 1);

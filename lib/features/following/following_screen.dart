@@ -207,6 +207,14 @@ class _FollowingScreenState extends State<FollowingScreen> {
       return;
     }
     if (_store.isLoggedIn) {
+      final user = _store.profileUser!;
+      _openChannel(
+        ChannelPreview(
+          login: user.login,
+          displayName: user.displayName,
+          avatarImageUrl: user.profileImageUrl,
+        ),
+      );
       return;
     }
     unawaited(_offerTwitchAuth());
@@ -1301,7 +1309,7 @@ class OfflineChannelRow extends StatelessWidget {
                         ),
                         const SizedBox(height: 3),
                         Text(
-                          channel.lastLive,
+                          channel.title.isEmpty ? channel.lastLive : channel.title,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodyMedium?.copyWith(

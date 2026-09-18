@@ -31,6 +31,7 @@ enum PlaybackMode { expanded, mini, pip }
 
 /// Keeps a single platform view mounted above the app's navigation stack.
 class PlaybackHost extends NavigatorObserver {
+  final pictureInPictureAllowed = ValueNotifier(false);
   OverlayEntry? _entry;
   StreamPlayerScreen? _screen;
   PageRoute<void>? _playerRoute;
@@ -88,14 +89,14 @@ class PlaybackHost extends NavigatorObserver {
 
   void finishBackGesture({required bool commit}) {
     final route = _playerBackRoute;
-    _playerBackRoute = null;
     _backProgress = 0;
-    _changed();
     if (commit) {
       route?.handleCommitBackGesture();
     } else {
       route?.handleCancelBackGesture();
     }
+    _playerBackRoute = null;
+    _changed();
   }
 
   void setInlineBackHandler(VoidCallback? onClose) {
@@ -317,6 +318,7 @@ class PlaybackHost extends NavigatorObserver {
     _inlineHistory?.remove();
     final entry = _entry;
     _entry = null;
+    pictureInPictureAllowed.value = false;
     entry?.remove();
     entry?.dispose();
     _screen = null;
@@ -348,6 +350,12 @@ class PlaybackHost extends NavigatorObserver {
   }
 
   void _changed() {
+    pictureInPictureAllowed.value =
+        _entry != null &&
+        !_dragging &&
+        _playerBackRoute == null &&
+        !_dismissing &&
+        (!_browsingFromPlayer || _mode != PlaybackMode.expanded);
     _entry?.markNeedsBuild();
   }
 

@@ -179,6 +179,21 @@ void main() {
     expect(client.changes, isEmpty);
   });
 
+  testWidgets("own channel hides follow and restores it after switching accounts", (tester) async {
+    var client = _FollowClient()..ownChannel = true;
+    await tester.pumpWidget(_followApp(() async => client));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("channel_follow_button")), findsNothing);
+    expect(client.statusChecks, 0);
+    expect(client.changes, isEmpty);
+
+    client = _FollowClient(token: "other-account");
+    await tester.widget<FlowPullToRefresh>(find.byType(FlowPullToRefresh)).onRefresh();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("channel_follow_button")), findsOneWidget);
+    expect(find.text("Follow"), findsOneWidget);
+  });
+
   testWidgets("follow refreshes retained accounts and rejects stale account actions and results", (
     tester,
   ) async {
@@ -777,6 +792,7 @@ void main() {
     tester,
   ) async {
     final host = PlaybackHost();
+    var online = false;
     final settings = AppSettingsStore(preferences: MemoryFlowPreferences());
     await tester.pumpWidget(
       MaterialApp(
@@ -789,7 +805,7 @@ void main() {
               clientId: "client-123",
               accessToken: "token-123",
               httpClient: MockClient(
-                (_) async => _channelDetailsResponse(isLive: false),
+                (_) async => _channelDetailsResponse(isLive: online),
               ),
             ),
           ),
@@ -805,6 +821,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey("channel_live_badge")), findsNothing);
+    expect(find.text("Back tomorrow"), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey("channel_profile_avatar")));
     await tester.pumpAndSettle();
 
@@ -816,11 +833,20 @@ void main() {
       isTrue,
     );
     expect(find.byKey(const ValueKey("player_chat_header")), findsOneWidget);
+    expect(
+      tester.widget<StreamPlayerScreen>(find.byType(StreamPlayerScreen)).channel.title,
+      "Back tomorrow",
+    );
     expect(find.byKey(const ValueKey("player_viewport")), findsNothing);
     await tester.tap(find.byTooltip("Back").hitTestable());
     await tester.pumpAndSettle();
     expect(find.byType(StreamPlayerScreen), findsNothing);
     expect(find.byKey(const ValueKey("channel_chat_button")), findsOneWidget);
+    online = true;
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("channel_live_metadata")), findsOneWidget);
+    expect(find.byKey(const ValueKey("channel_chat_button")), findsNothing);
   });
 
   testWidgets("loads more past broadcasts when scrolling near the bottom", (tester) async {
@@ -900,12 +926,20 @@ class _FollowClient extends TwitchApiClient {
       );
 
   bool following = false;
+  bool ownChannel = false;
   bool failStatus = false;
   bool failChange = false;
   int statusChecks = 0;
   final changes = <bool>[];
   Completer<void>? changeGate;
   Completer<void>? statusGate;
+
+  @override
+  Future<TwitchUser> fetchCurrentUser() async => TwitchUser(
+    id: ownChannel ? "123" : "viewer",
+    login: ownChannel ? "Jason" : "viewer",
+    displayName: ownChannel ? "Jason" : "Viewer",
+  );
 
   @override
   Future<TwitchChatAccess> fetchChatAccess(String login) async {
@@ -967,6 +1001,7 @@ http.Response _channelDetailsResponse({
           "displayName": "Jason",
           "isPartner": isPartner,
           "description": "Hi Im Jason",
+          "broadcastSettings": {"title": "Back tomorrow"},
           "profileImageURL": "https://static-cdn.jtvnw.net/creator-1.png",
           "followers": {"totalCount": 2300000},
           "stream": isLive

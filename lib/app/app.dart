@@ -8,6 +8,7 @@ import "package:flow/shared/external_url_opener.dart";
 import "package:flow/shared/preferences/preferences.dart";
 import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
+import "package:flutter/services.dart";
 import "package:flutter_mobx/flutter_mobx.dart";
 import "package:mobx/mobx.dart";
 
@@ -41,6 +42,7 @@ class FlowApp extends StatefulWidget {
 }
 
 class _FlowAppState extends State<FlowApp> {
+  static const _keyboard = MethodChannel("flow/keyboard");
   final _playbackHost = PlaybackHost();
   late final FlowPreferences _preferences;
   late final AppSettingsStore _settingsStore;
@@ -49,6 +51,11 @@ class _FlowAppState extends State<FlowApp> {
   @override
   void initState() {
     super.initState();
+    _keyboard.setMethodCallHandler((call) async {
+      if (call.method == "dismissFocus") {
+        FocusManager.instance.primaryFocus?.unfocus();
+      }
+    });
     _preferences =
         widget.preferences ??
         widget.settingsStore?.preferences ??
@@ -70,6 +77,7 @@ class _FlowAppState extends State<FlowApp> {
 
   @override
   void dispose() {
+    _keyboard.setMethodCallHandler(null);
     _playbackSettingsReaction();
     super.dispose();
   }
@@ -85,6 +93,17 @@ class _FlowAppState extends State<FlowApp> {
         theme: buildFlowTheme(Brightness.light),
         darkTheme: buildFlowTheme(Brightness.dark),
         themeMode: _settingsStore.themeMode,
+        builder: (_, child) => Actions(
+          actions: {
+            EditableTextTapUpOutsideIntent: CallbackAction<EditableTextTapUpOutsideIntent>(
+              onInvoke: (intent) {
+                intent.focusNode.unfocus();
+                return null;
+              },
+            ),
+          },
+          child: child!,
+        ),
         home: FlowTabsScreen(
           preferences: _preferences,
           settingsStore: _settingsStore,

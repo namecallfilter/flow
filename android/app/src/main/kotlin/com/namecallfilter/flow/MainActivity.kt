@@ -25,7 +25,12 @@ import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Rational
+import android.view.WindowInsets
 import android.webkit.CookieManager
+import android.window.BackEvent
+import android.window.OnBackAnimationCallback
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.media3.common.util.UnstableApi
@@ -45,6 +50,8 @@ class MainActivity : FlutterActivity() {
     }
     private var activePlayer: TwitchPlayerView? = null
     private var chatMentionSound: Ringtone? = null
+    private var keyboardBackCallback: OnBackInvokedCallback? = null
+    private var keyboardBackRegistered = false
     private var wasInPictureInPicture = false
     private var playbackVisible = false
     private var playbackResumed = false
@@ -102,6 +109,42 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         window.decorView.viewTreeObserver.addOnPreDrawListener(::pictureInPictureFrameReady)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val keyboardChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "flow/keyboard")
+            val callback = object : OnBackAnimationCallback {
+                private var edgeGesture = false
+
+                override fun onBackStarted(backEvent: BackEvent) {
+                    edgeGesture = backEvent.swipeEdge == BackEvent.EDGE_LEFT ||
+                        backEvent.swipeEdge == BackEvent.EDGE_RIGHT
+                }
+
+                override fun onBackCancelled() {
+                    edgeGesture = false
+                }
+
+                override fun onBackInvoked() {
+                    window.insetsController?.hide(WindowInsets.Type.ime())
+                    if (edgeGesture) keyboardChannel.invokeMethod("dismissFocus", null)
+                    edgeGesture = false
+                }
+            }
+            keyboardBackCallback = callback
+            window.decorView.setOnApplyWindowInsetsListener { view, insets ->
+                val visible = insets.isVisible(WindowInsets.Type.ime())
+                if (visible != keyboardBackRegistered) {
+                    keyboardBackRegistered = visible
+                    if (visible) {
+                        onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                            OnBackInvokedDispatcher.PRIORITY_OVERLAY, callback,
+                        )
+                    } else {
+                        onBackInvokedDispatcher.unregisterOnBackInvokedCallback(callback)
+                    }
+                }
+                view.onApplyWindowInsets(insets)
+            }
+        }
 
         flutterEngine.platformViewsController.registry.registerViewFactory(
             "flow/twitch_player",
@@ -250,6 +293,10 @@ class MainActivity : FlutterActivity() {
         if (!supportsPictureInPicture()) return
         val videoRect = activePlayer?.pictureInPictureSourceRect()
         if (isInPictureInPictureMode) {
+            if (activePlayer?.hasPictureInPictureContent != true) {
+                moveTaskToBack(true)
+                return
+            }
             pictureInPictureVideoRect = videoRect
             val actionState = activePlayer?.let { it.pictureInPicturePlaying to it.canSeekInPictureInPicture }
             if (actionState != pictureInPictureActionState) {
@@ -257,6 +304,10 @@ class MainActivity : FlutterActivity() {
                     PictureInPictureParams.Builder().setActions(pictureInPictureActions()).build(),
                 )
             }
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && activePlayer?.canEnterPictureInPicture != true) {
+            setPictureInPictureParams(PictureInPictureParams.Builder().setAutoEnterEnabled(false).build())
             return
         }
         if (!playbackResumed || enteringPictureInPicture) return
@@ -383,6 +434,7 @@ class MainActivity : FlutterActivity() {
         enteringPictureInPicture = active
         if (active) wasInPictureInPicture = true
         activePlayer?.setPictureInPicture(active)
+        if (active && activePlayer?.hasPictureInPictureContent != true) moveTaskToBack(true)
     }
 
     override fun onStart() {
@@ -418,6 +470,10 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            keyboardBackCallback?.let(onBackInvokedDispatcher::unregisterOnBackInvokedCallback)
+            window.decorView.setOnApplyWindowInsetsListener(null)
+        }
         chatMentionSound?.stop()
         if (audioMediaSession.isInitialized()) audioMediaSession.value.release()
         stopService(Intent(this, AudioPlaybackService::class.java))

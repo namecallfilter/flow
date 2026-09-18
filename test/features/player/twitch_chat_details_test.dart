@@ -1875,6 +1875,16 @@ void main() {
     final client = _Client();
     final controller = _Controller(client);
     final assets = _PaintAssets(client);
+    controller.history.add(
+      const TwitchChatMessage(
+        id: "pinner-color",
+        userId: "99",
+        login: "pinner",
+        displayName: "日本語",
+        color: "#00FF7F",
+        text: "",
+      ),
+    );
     controller.pin = TwitchPinnedChat(
       id: "painted-pin",
       pinnedBy: (id: "99", login: "pinner", displayName: "日本語"),
@@ -1896,7 +1906,8 @@ void main() {
     expect(_paintName(pin, "日本語"), findsOneWidget);
     expect(_paintName(pin, "アレンン"), findsOneWidget);
     expect(_span(tester, pin, " (pinner)").style!.fontWeight, FontWeight.w400);
-    expect(_span(tester, pin, " (viewer)").style!.color, isNull);
+    expect(_span(tester, pin, " (pinner)").style!.color, const Color(0xFF00FF7F));
+    expect(_span(tester, pin, " (viewer)").style!.color, const Color(0xFF00FF00));
     expect(_span(tester, pin, " (viewer)").style!.fontWeight, FontWeight.w400);
     expect(_span(tester, pin, "Pinned by ").style, isNull);
     for (final entry in {
@@ -2882,6 +2893,141 @@ void main() {
     },
   );
 
+  testWidgets("collapsed pins keep emotes, mentions and links interactive in one line", (
+    tester,
+  ) async {
+    await _cacheImages(tester);
+    final client = _Client();
+    final controller = _Controller(client)
+      ..pin = const TwitchPinnedChat(
+        id: "rich-pin",
+        message: TwitchChatMessage(
+          id: "rich-message",
+          login: "viewer",
+          displayName: "Viewer",
+          text: "Kappa Party @viewer example.com",
+          emotes: [TwitchChatEmote(id: "25", start: 0, end: 5)],
+        ),
+      );
+    final assets = _Assets(client);
+    addTearDown(controller.dispose);
+    addTearDown(assets.dispose);
+    const external = MethodChannel("flow/external_url");
+    final opened = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(external, (call) async {
+      opened.add(call.arguments as String);
+      return true;
+    });
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(external, null),
+    );
+    await tester.pumpWidget(_panel(controller, assets: assets));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip("Minimize pinned message"));
+    await tester.pumpAndSettle();
+    final pin = find.byKey(const ValueKey("chat_pinned_message"));
+    final body = find.descendant(
+      of: pin,
+      matching: find.byWidgetPredicate(
+        (widget) => widget is Text && widget.textSpan?.toPlainText().contains("@viewer") == true,
+      ),
+    );
+    expect(tester.widget<Text>(body).maxLines, 1);
+    expect(tester.widget<Text>(body).overflow, TextOverflow.ellipsis);
+    for (final name in ["Kappa", "Party"]) {
+      final emote = find.descendant(
+        of: pin,
+        matching: find.byWidgetPredicate(
+          (widget) => widget is Image && widget.semanticLabel == name,
+        ),
+      );
+      expect(emote, findsOneWidget);
+      await tester.tap(emote);
+      await tester.pumpAndSettle();
+      expect(find.text("Copy image URL"), findsOneWidget);
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+    }
+    await tester.tapAt(_textPoint(tester, pin, "@viewer"));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("chat_user_name")), findsOneWidget);
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    await tester.tapAt(_textPoint(tester, pin, "example.com"));
+    await tester.pumpAndSettle();
+    expect(opened, ["https://example.com"]);
+    expect(find.byTooltip("Expand pinned message"), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets("chat names, aliases, mentions and pinned names open channels directly", (
+    tester,
+  ) async {
+    await _cacheImages(tester);
+    final client = _Client();
+    const message = TwitchChatMessage(
+      id: "direct-channel",
+      login: "viewer",
+      displayName: "日本語",
+      text: "Hello @someone",
+    );
+    final controller = _Controller(client)
+      ..items.add(message)
+      ..pin = const TwitchPinnedChat(
+        id: "direct-pin",
+        message: message,
+        pinnedBy: (id: "99", login: "pinner", displayName: "Pinner"),
+      );
+    final assets = _PaintAssets(client);
+    addTearDown(controller.dispose);
+    addTearDown(assets.dispose);
+    final opened = <String>[];
+    await tester.pumpWidget(
+      _panel(controller, assets: assets, onOpenChannel: (login) async => opened.add(login)),
+    );
+    await tester.pumpAndSettle();
+    final row = find.byKey(const ValueKey("direct-channel"));
+    final pin = find.byKey(const ValueKey("chat_pinned_message"));
+    for (final target in [
+      () => tester.getCenter(_paintName(row, "日本語")),
+      () => _textPoint(tester, row, " (viewer)"),
+      () => _textPoint(tester, row, "@"),
+      () => tester.getCenter(_paintName(pin, "Pinner")),
+      () => tester.getCenter(_paintName(pin, "日本語")),
+    ]) {
+      await tester.tapAt(target());
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey("chat_user_channel")), findsNothing);
+    }
+    expect(opened, ["viewer", "viewer", "someone", "pinner", "viewer"]);
+    expect(client.lookups, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets("long-press user details retains avatar and name channel shortcuts", (tester) async {
+    await _cacheImages(tester);
+    final client = _Client();
+    final controller = _Controller(client)..items.add(_message("profile", "Hello", minute: 1));
+    addTearDown(controller.dispose);
+    final opened = <String>[];
+    await tester.pumpWidget(_panel(controller, onOpenChannel: (login) async => opened.add(login)));
+    await tester.pumpAndSettle();
+    for (final target in [
+      find.byType(CircleAvatar),
+      find.byKey(const ValueKey("chat_user_name")),
+    ]) {
+      await tester.longPress(find.byKey(const ValueKey("profile")));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text("User details"));
+      await tester.pumpAndSettle();
+      await tester.tap(target);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey("chat_user_channel")), findsNothing);
+    }
+    expect(opened, ["viewer", "viewer"]);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets("a pinned reply shows its parent context and opens the thread", (tester) async {
     tester.view.physicalSize = const Size(400, 800);
     tester.view.devicePixelRatio = 1;
@@ -3452,6 +3598,7 @@ Widget _panel(
   _Controller controller, {
   TwitchChatAssets? assets,
   Future<void> Function(String)? onReportUser,
+  Future<void> Function(String)? onOpenChannel,
   AppSettingsStore? settingsStore,
   Brightness brightness = Brightness.dark,
   bool chatOnly = true,
@@ -3463,6 +3610,7 @@ Widget _panel(
       controller: controller,
       assets: assets,
       onReportUser: onReportUser,
+      onOpenChannel: onOpenChannel,
       preferences: MemoryFlowPreferences(),
       settingsStore: settingsStore,
       chatOnly: chatOnly,

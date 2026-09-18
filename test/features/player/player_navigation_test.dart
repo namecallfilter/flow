@@ -351,6 +351,54 @@ void main() {
     expect(player.disposals, 1);
   });
 
+  testWidgets("PiP is disabled before a hidden or dismissed player's next frame", (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    for (final videoId in [null, "123"]) {
+      for (final miniEnabled in [false, true]) {
+        final host = PlaybackHost()..setMiniPlayerEnabled(enabled: miniEnabled);
+        final player = _PlaybackProbe();
+        await tester.pumpWidget(
+          MaterialApp(
+            key: UniqueKey(),
+            navigatorObservers: [host],
+            home: const Scaffold(body: Text("Browse Flow")),
+          ),
+        );
+        await openStreamPlayer(
+          tester.element(find.text("Browse Flow")),
+          builder: (_) => player.screen("creator", videoId: videoId),
+        );
+        await tester.pumpAndSettle();
+        expect(player.pictureInPictureEnabled, isTrue);
+        host.minimize(forNavigation: true);
+        expect(player.pictureInPictureEnabled, miniEnabled);
+        host.restore();
+        expect(player.pictureInPictureEnabled, isTrue);
+        if (miniEnabled) {
+          host.minimize();
+          await tester.pumpAndSettle();
+        }
+        host.beginSwipe();
+        expect(player.pictureInPictureEnabled, isFalse);
+        host.cancelSwipe();
+        expect(player.pictureInPictureEnabled, isTrue);
+        host.beginSwipe();
+        expect(player.pictureInPictureEnabled, isFalse);
+        host.updateSwipe(150);
+        host.endSwipe(1000);
+        expect(player.pictureInPictureEnabled, isFalse);
+        expect(player.disposals, 0);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        expect(player.pictureInPictureEnabled, isFalse);
+        await tester.pumpAndSettle();
+        expect(find.byType(_PlayerSurface), findsNothing);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      }
+    }
+  });
+
   for (final miniEnabled in [true, false]) {
     testWidgets(
       "expanded chat stays above the keyboard and chat drags do not minimize playback (mini: $miniEnabled)",
@@ -1219,6 +1267,10 @@ void main() {
         final fullRect = tester.getRect(page);
         final disposals = player.disposals;
         final pauses = player.pauses;
+        final pipChanges = <bool>[];
+        host.pictureInPictureAllowed.addListener(
+          () => pipChanges.add(host.pictureInPictureAllowed.value),
+        );
         for (final action in ["cancelBackGesture", "commitBackGesture"]) {
           expect(
             await _sendBackGesture(tester, "startBackGesture", progress: 0, swipeEdge: swipeEdge),
@@ -1248,7 +1300,12 @@ void main() {
           expect(player.surfaces, 1);
           expect(player.disposals, disposals);
           expect(player.pauses, pauses);
+          expect(host.pictureInPictureAllowed.value, isFalse);
+          pipChanges.clear();
           await _sendBackGesture(tester, action);
+          if (action == "commitBackGesture" && (!miniEnabled || chatOnly)) {
+            expect(pipChanges, isEmpty);
+          }
           await tester.pumpAndSettle();
           if (action == "cancelBackGesture") {
             expect(host.mode, PlaybackMode.expanded);
@@ -1522,8 +1579,17 @@ void main() {
       expect(tester.getRect(page), beforePipVideo);
       expect(tester.getRect(find.byType(_PlayerSurface)), beforePipVideo);
       expect(background, findsNothing);
+      player.eventsController.add(
+        const TwitchPlaybackStateEvent(
+          isPlaying: false,
+          isBuffering: false,
+          playWhenReady: false,
+        ),
+      );
+      await tester.idle();
       tester.view.physicalSize = const Size(240, 135);
       await tester.pump();
+      expect(player.pictureInPictureEnabled, isTrue);
       expect(tester.getRect(page), const Rect.fromLTWH(0, 0, 240, 135));
       await tester.pump(const Duration(milliseconds: 140));
       expect(tester.getRect(page), const Rect.fromLTWH(0, 0, 240, 135));
@@ -1733,6 +1799,7 @@ class _PlaybackProbe implements TwitchPlayerController {
   int pauses = 0;
   int plays = 0;
   int disposals = 0;
+  bool? pictureInPictureEnabled;
 
   StreamPlayerScreen screen(String login, {String? videoId}) => StreamPlayerScreen(
     preferences: MemoryFlowPreferences(),
@@ -1801,7 +1868,9 @@ class _PlaybackProbe implements TwitchPlayerController {
   }
 
   @override
-  Future<void> setPictureInPictureEnabled({required bool enabled}) async {}
+  Future<void> setPictureInPictureEnabled({required bool enabled}) async {
+    pictureInPictureEnabled = enabled;
+  }
 
   @override
   Future<void> jumpToLive() async {}

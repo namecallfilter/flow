@@ -1,0 +1,3 @@
+mutation FlowMakePrediction($input: MakePredictionInput!) {
+  makePrediction(input: $input) { error { code } }
+}

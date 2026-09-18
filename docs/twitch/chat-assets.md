@@ -1,5 +1,12 @@
 # Chat asset references
 
+Predictions were checked against Twitch's deployed client on 2026-09-18:
+
+- The [prediction context](https://assets.twitch.tv/assets/pages.popout-predictions-92ac2eb4eac35ee35813.js) reads active, locked, and resolved prediction events plus `channel.self.recentPredictions`. Flow's combined query returned Lirik's real five-outcome event, totals, locked state, and then resolved winner from `https://gql.twitch.tv/gql` without credentials.
+- The [prediction checkout](https://assets.twitch.tv/assets/34355-d6eef977cc3be8eedd57.js) uses `makePrediction(input: MakePredictionInput!) { error { code } }` with event/outcome IDs, points, and a transaction ID. It accepts terms through `updateUserPredictionSettings`; Flow does so only after the viewer checks the terms box and explicitly submits. No real prediction or terms acceptance was performed during verification.
+- Flow refreshes visible live-chat predictions every five seconds, including while their sheet is open, and pauses polling when hidden. Recent results remain visible for five minutes. The form refreshes eligibility before spending, preserves the transaction ID when retrying the same submission, honors region-only zero-point participation, and rejects self-channel predictions, switched accounts/outcomes, insufficient balances, closed windows, and totals above 250,000 points.
+- These are Twitch website interfaces, not a documented third-party API contract. The [official prediction API](https://dev.twitch.tv/docs/api/predictions) provides broadcaster management; it does not provide viewer participation.
+
 Verified on 2026-09-07 with Twitch channel `lirik` (broadcaster ID `23161357`).
 
 - `FlowChatAssets.graphql` was verified against https://gql.twitch.tv/gql with the app's public client ID. Root `badges` supplies global badges; `user.broadcastBadges` overrides channel badges. Both return human-readable `title` metadata. `emoteSet(id: "0")`, subscription products, and local emote sets supply Twitch emote names. Receiving messages still uses Twitch's tagged emote positions, which distinguish actual emotes from plain text.

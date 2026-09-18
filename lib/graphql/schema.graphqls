@@ -540,6 +540,8 @@ interface VideoQuality {
 }
 
 type Mutation {
+  makePrediction(input: MakePredictionInput!): MakePredictionPayload
+  updateUserPredictionSettings(input: UpdateUserPredictionSettingsInput!): UpdateUserPredictionSettingsPayload
   useChatNotificationToken(input: UseChatNotificationTokenInput!): UseChatNotificationTokenPayload
   claimCommunityPoints(input: ClaimCommunityPointsInput!): ClaimCommunityPointsPayload
   addBrowserPushSubscription(input: AddBrowserPushSubscriptionInput!): AddBrowserPushSubscription
@@ -1478,6 +1480,9 @@ type ChampBadge {
 }
 
 type Channel {
+  activePredictionEvents: [PredictionEvent!]
+  lockedPredictionEvents: [PredictionEvent!]
+  resolvedPredictionEvents(first: Int): PredictionEventConnection
   activePremiumEvent: ActivePremiumEvent
   activeStreamEventCelebration: ActiveStreamEventCelebration
   activityFeed: ActivityFeed
@@ -2370,12 +2375,76 @@ type ClaimCommunityPointsError {
 }
 
 type CommunityPointsProperties {
+  balance: Int
   availableClaim: CommunityPointsClaim
 }
 
 type CommunityPointsClaim {
   id: ID
   pointsEarnedTotal: Int
+}
+
+type PredictionEvent {
+  id: ID
+  title: String
+  status: String
+  createdAt: Time
+  endedAt: Time
+  predictionWindowSeconds: Int
+  winningOutcome: PredictionOutcome
+  self: PredictionEventViewer
+  outcomes: [PredictionOutcome!]
+}
+
+type PredictionEventViewer {
+  restriction: String
+}
+
+type PredictionOutcome {
+  id: ID
+  title: String
+  color: String
+  totalPoints: Int
+  totalUsers: Int
+}
+
+type PredictionEventConnection {
+  edges: [PredictionEventEdge!]
+}
+
+type PredictionEventEdge {
+  node: PredictionEvent
+}
+
+type Prediction {
+  event: PredictionEvent
+  outcome: PredictionOutcome
+  points: Int
+}
+
+type UserPredictionSettings {
+  hasAcceptedTOS: Boolean
+}
+
+input MakePredictionInput {
+  eventID: ID!
+  outcomeID: ID!
+  points: Int!
+  transactionID: ID!
+}
+
+type MakePredictionPayload {
+  error: Error
+}
+
+input UpdateUserPredictionSettingsInput {
+  hasAcceptedTOS: Boolean!
+  isTemporaryChatBadgeEnabled: Boolean!
+}
+
+type UpdateUserPredictionSettingsPayload {
+  error: Error
+  settings: UserPredictionSettings
 }
 
 type FollowUser {
@@ -3627,6 +3696,7 @@ type SelectionSignal {
 }
 
 type Self {
+  recentPredictions: [Prediction!]
   resubNotification: ResubNotification
   chatRestrictedReasons: [String]
   lastRecentChatMessageAt: Time
@@ -4447,6 +4517,7 @@ type UseBit {
 }
 
 type User implements Curator & OnsiteNotificationContent & ShelfContentEdge_Node & TitleTokenEdge_Node & Token & UserResultByLogin {
+  predictionsSettings: UserPredictionSettings
   _empty: String
   accountConnections: [AccountConnection]
   accountHealth: AccountHealth

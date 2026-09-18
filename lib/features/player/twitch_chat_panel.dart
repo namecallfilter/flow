@@ -9,6 +9,7 @@ import "package:flow/api/twitch_vod_chat.dart";
 import "package:flow/app/app_settings_store.dart";
 import "package:flow/features/player/chat_username.dart";
 import "package:flow/features/player/twitch_emote_picker.dart";
+import "package:flow/features/player/twitch_prediction_card.dart";
 import "package:flow/features/player/twitch_report_screen.dart";
 import "package:flow/shared/chat_links.dart";
 import "package:flow/shared/chat_name_color.dart";
@@ -27,7 +28,7 @@ enum _ChatAction { video, refresh, reconnect, chatters, settings }
 
 enum _ChatUserAction { block, report }
 
-enum _ChatMessageAction { copy, paste, reply }
+enum _ChatMessageAction { copy, paste, reply, userDetails }
 
 class TwitchChatPanel extends StatefulWidget {
   const TwitchChatPanel({
@@ -42,6 +43,7 @@ class TwitchChatPanel extends StatefulWidget {
     this.preferences,
     this.settingsStore,
     this.onOpenSettings,
+    this.onOpenChannel,
     this.onReportUser,
     this.onSubscribe,
     this.onInlineBackHandlerChanged,
@@ -56,6 +58,7 @@ class TwitchChatPanel extends StatefulWidget {
   final FlowPreferences? preferences;
   final AppSettingsStore? settingsStore;
   final AsyncCallback? onOpenSettings;
+  final Future<void> Function(String login)? onOpenChannel;
   final Future<void> Function(String login)? onReportUser;
   final AsyncCallback? onSubscribe;
   final ValueChanged<VoidCallback?>? onInlineBackHandlerChanged;
@@ -83,6 +86,7 @@ class TwitchChatPanel extends StatefulWidget {
     properties.add(DiagnosticsProperty<FlowPreferences?>("preferences", preferences));
     properties.add(DiagnosticsProperty<AppSettingsStore?>("settingsStore", settingsStore));
     properties.add(ObjectFlagProperty<AsyncCallback?>.has("onOpenSettings", onOpenSettings));
+    properties.add(ObjectFlagProperty<Object?>.has("onOpenChannel", onOpenChannel));
     properties.add(ObjectFlagProperty<Object?>.has("onReportUser", onReportUser));
     properties.add(ObjectFlagProperty<Object?>.has("onSubscribe", onSubscribe));
     properties.add(
@@ -1645,11 +1649,17 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                 assets: widget.assets,
                 knownUsers: _knownUsers,
                 blockedLogins: _blockedLogins.value,
-                onUserTap: (message) => unawaited(_showUser(message)),
+                onUserTap: (message) => unawaited(_openUserChannel(message)),
                 onEmoteTap: (emote) => unawaited(_showEmote(emote)),
                 onBadgeTap: (badge) => unawaited(_showBadge(badge)),
               ),
               const Divider(),
+              ListTile(
+                leading: const Icon(Icons.person_outline_rounded),
+                title: const Text("User details"),
+                enabled: message.login.isNotEmpty,
+                onTap: () => Navigator.pop(context, _ChatMessageAction.userDetails),
+              ),
               ListTile(
                 leading: const Icon(Icons.copy_rounded),
                 title: const Text("Copy message"),
@@ -1684,6 +1694,11 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
     if (action == _ChatMessageAction.reply) {
       _closeSheets();
       _reply(message);
+      return;
+    }
+    if (action == _ChatMessageAction.userDetails) {
+      _closeSheets();
+      await _showUser(message);
       return;
     }
     final text = message.text.isEmpty ? message.noticeText ?? "" : message.text;
@@ -1751,12 +1766,23 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
         },
         settings: () => _settings,
         assets: widget.assets,
-        onUserTap: (message) => unawaited(_showUser(message)),
+        onUserTap: (message) => unawaited(_openUserChannel(message)),
         onEmoteTap: (emote) => unawaited(_showEmote(emote)),
         onBadgeTap: (badge) => unawaited(_showBadge(badge)),
         onMessageHold: (message) => unawaited(_showMessageActions(message)),
       ),
     );
+  }
+
+  Future<void> _openUserChannel(TwitchChatMessage message) async {
+    final open = widget.onOpenChannel;
+    if (open == null) {
+      await _showUser(message);
+      return;
+    }
+    FocusManager.instance.primaryFocus?.unfocus();
+    _closeSheets();
+    await open(message.login);
   }
 
   Future<void> _showUser(TwitchChatMessage message) async {
@@ -1801,10 +1827,16 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
         assets: widget.assets,
         onEmoteTap: (emote) => unawaited(_showEmote(emote)),
         onBadgeTap: (badge) => unawaited(_showBadge(badge)),
-        onUserTap: (message) => unawaited(_showUser(message)),
+        onUserTap: (message) => unawaited(_openUserChannel(message)),
         onThreadTap: (message) => unawaited(_showThread(message)),
         onMessageHold: (message) => unawaited(_showMessageActions(message)),
         onMore: () => unawaited(_userActions(message, profile)),
+        onOpenChannel: widget.onOpenChannel == null
+            ? null
+            : (login) {
+                _closeSheets();
+                unawaited(widget.onOpenChannel!(login));
+              },
         onReply: controller == null || message.id.startsWith("pending:")
             ? null
             : () {
@@ -2057,6 +2089,19 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
         ? pinner.login
         : pinner.displayName;
     final pinnerLabel = _chatDisplayName(pinnerName, pinner?.login);
+    final pinnerMessage = pinner == null
+        ? null
+        : knownUsers[pinner.login.toLowerCase()] ??
+              TwitchChatMessage(
+                id: "pinner-${pinner.id}",
+                userId: pinner.id,
+                login: pinner.login,
+                displayName: pinner.displayName,
+                text: "",
+              );
+    final pinnerColor = pinnerMessage == null
+        ? colors.onSurfaceVariant
+        : _chatNameColor(pinnerMessage, theme.brightness);
     final expanded = _minimizedPinId != pin.id;
     final fontSize = _settings.fontSize * _settings.messageScale;
     final startsAt = pin.startsAt;
@@ -2071,20 +2116,9 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
     final pinnerPaint = _settings.sevenTvPaints
         ? widget.assets?.userPaintsByLogin[pinner?.login.toLowerCase()]
         : null;
-    _pinnerTap.onTap = pinner == null
+    _pinnerTap.onTap = pinnerMessage == null
         ? null
-        : () => unawaited(
-            _showUser(
-              knownUsers[pinner.login.toLowerCase()] ??
-                  TwitchChatMessage(
-                    id: "pinner-${pinner.id}",
-                    userId: pinner.id,
-                    login: pinner.login,
-                    displayName: pinner.displayName,
-                    text: "",
-                  ),
-            ),
-          );
+        : () => unawaited(_openUserChannel(pinnerMessage));
     return NotificationListener<SizeChangedLayoutNotification>(
       onNotification: (_) {
         _updateChatLayout();
@@ -2156,7 +2190,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                     child: ChatUsername(
                                       name: pinnerName,
                                       style: theme.textTheme.labelLarge!.copyWith(
-                                        color: colors.onSurfaceVariant,
+                                        color: pinnerColor,
                                         fontSize: fontSize - 2,
                                       ),
                                       paint: pinnerPaint,
@@ -2166,12 +2200,13 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                 ),
                                 TextSpan(
                                   text: pinnerLabel.substring(pinnerName.length),
-                                  style: const TextStyle(fontWeight: FontWeight.w400),
+                                  style: TextStyle(color: pinnerColor, fontWeight: FontWeight.w400),
                                   recognizer: _pinnerTap,
                                 ),
                               ] else
                                 TextSpan(
                                   text: pinnerLabel,
+                                  style: TextStyle(color: pinnerColor),
                                   recognizer: _pinnerTap,
                                 ),
                           ],
@@ -2227,30 +2262,24 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                     onLongPress: expanded
                         ? null
                         : () => unawaited(_showMessageActions(pin.message)),
-                    child: expanded
-                        ? _ChatMessageRow(
-                            key: ValueKey("pinned-${pin.id}"),
-                            message: pin.message,
-                            isMention: _mentionsViewer(pin.message, widget._source),
-                            settings: _settings,
-                            assets: widget.assets,
-                            knownUsers: knownUsers,
-                            blockedLogins: _blockedLogins.value,
-                            pinned: true,
-                            bodyKey: _pinBodyKey,
-                            replyContextKey: _pinReplyKey,
-                            onThreadTap: (message) => unawaited(_showThread(message, pinned: true)),
-                            onUserTap: (message) => unawaited(_showUser(message)),
-                            onEmoteTap: (emote) => unawaited(_showEmote(emote)),
-                            onBadgeTap: (badge) => unawaited(_showBadge(badge)),
-                            onMessageHold: (message) => unawaited(_showMessageActions(message)),
-                          )
-                        : Text(
-                            pin.message.text.substring(_replyBodyStart(pin.message)),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodyMedium?.copyWith(fontSize: fontSize),
-                          ),
+                    child: _ChatMessageRow(
+                      key: ValueKey("pinned-${pin.id}"),
+                      message: pin.message,
+                      isMention: _mentionsViewer(pin.message, widget._source),
+                      settings: _settings,
+                      assets: widget.assets,
+                      knownUsers: knownUsers,
+                      blockedLogins: _blockedLogins.value,
+                      pinned: true,
+                      collapsed: !expanded,
+                      bodyKey: _pinBodyKey,
+                      replyContextKey: _pinReplyKey,
+                      onThreadTap: (message) => unawaited(_showThread(message, pinned: true)),
+                      onUserTap: (message) => unawaited(_openUserChannel(message)),
+                      onEmoteTap: (emote) => unawaited(_showEmote(emote)),
+                      onBadgeTap: (badge) => unawaited(_showBadge(badge)),
+                      onMessageHold: (message) => unawaited(_showMessageActions(message)),
+                    ),
                   ),
                 ),
                 if (startsAt != null && endsAt != null && endsAt.isAfter(startsAt))
@@ -2513,7 +2542,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                 showModeration: moderationNotices.contains(
                                   messages[messages.length - index - 1].id,
                                 ),
-                                onUserTap: (message) => unawaited(_showUser(message)),
+                                onUserTap: (message) => unawaited(_openUserChannel(message)),
                                 onThreadTap: (message) => unawaited(_showThread(message)),
                                 onEmoteTap: (emote) => unawaited(_showEmote(emote)),
                                 onBadgeTap: (badge) => unawaited(_showBadge(badge)),
@@ -2547,14 +2576,16 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                         ],
                       ),
                     ),
-                    if (pinned != null &&
-                        pinned.id != _dismissedPinId &&
-                        !_blockedLogins.value.contains(pinned.message.login.toLowerCase()))
+                    if (widget.isLive && controller != null ||
+                        pinned != null &&
+                            pinned.id != _dismissedPinId &&
+                            !_blockedLogins.value.contains(pinned.message.login.toLowerCase()))
                       Positioned(
                         top: widget.topPadding,
                         left: 8,
                         right: 8,
                         child: ConstrainedBox(
+                          key: _pinLayoutKey,
                           constraints: BoxConstraints(
                             maxHeight:
                                 (constraints.maxHeight - widget.topPadding).clamp(
@@ -2563,10 +2594,36 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                 ) *
                                 0.6,
                           ),
-                          child: Padding(
-                            key: _pinLayoutKey,
-                            padding: const EdgeInsets.symmetric(vertical: 4),
-                            child: _pinnedChat(pinned, knownUsers),
+                          child: SingleChildScrollView(
+                            child: NotificationListener<SizeChangedLayoutNotification>(
+                              onNotification: (_) {
+                                _updateChatLayout();
+                                return false;
+                              },
+                              child: SizeChangedLayoutNotifier(
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 4),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (widget.isLive && controller != null)
+                                        TwitchPredictionCard(
+                                          controller: controller,
+                                          isVisible: _chatIsVisible,
+                                          showSheet: (builder) =>
+                                              _showSheet<void>(builder: builder),
+                                        ),
+                                      if (pinned != null &&
+                                          pinned.id != _dismissedPinId &&
+                                          !_blockedLogins.value.contains(
+                                            pinned.message.login.toLowerCase(),
+                                          ))
+                                        _pinnedChat(pinned, knownUsers),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       ),
@@ -2586,98 +2643,100 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               if (completion != null)
-                                ConstrainedBox(
-                                  key: ValueKey(
-                                    completion.users.isEmpty
-                                        ? "chat_emote_autocomplete"
-                                        : "chat_username_autocomplete",
-                                  ),
-                                  constraints: BoxConstraints(
-                                    maxHeight: (constraints.maxHeight * 0.4).clamp(0.0, 240.0),
-                                  ),
-                                  child: Material(
-                                    type: MaterialType.transparency,
-                                    child: ListView.builder(
-                                      shrinkWrap: true,
-                                      padding: EdgeInsets.zero,
-                                      itemExtent: completion.users.isEmpty ? 48 : 32,
-                                      itemCount: completion.users.isEmpty
-                                          ? completion.emotes.length
-                                          : completion.users.length,
-                                      itemBuilder: (context, index) {
-                                        if (completion.users.isNotEmpty) {
-                                          final user = completion.users[index];
-                                          final name = user.displayName.isEmpty
-                                              ? user.login
-                                              : user.displayName;
-                                          final style = theme.textTheme.bodyMedium!.copyWith(
-                                            fontWeight: FontWeight.w700,
-                                            color: _chatNameColor(user, theme.brightness),
-                                          );
-                                          final paint = _settings.sevenTvPaints
-                                              ? widget.assets?.userPaintsByLogin[user.login
-                                                    .toLowerCase()]
-                                              : null;
-                                          return ListTile(
-                                            minTileHeight: 32,
-                                            dense: true,
-                                            contentPadding: const EdgeInsets.symmetric(
-                                              horizontal: 12,
-                                            ),
-                                            title: paint == null
-                                                ? Text(
-                                                    name,
-                                                    style: style,
-                                                    maxLines: 1,
-                                                    overflow: TextOverflow.ellipsis,
-                                                  )
-                                                : ChatUsername(
-                                                    name: name,
-                                                    style: style,
-                                                    paint: paint,
-                                                    animated: _settings.animatedPaints,
-                                                  ),
-                                            onTap: () {
-                                              _insertCompletion(
-                                                "@${user.login}",
-                                                replacement: completion.selection,
-                                              );
-                                              _draftFocus.requestFocus();
-                                            },
-                                          );
-                                        }
-                                        final emote = completion.emotes[index];
-                                        return Tooltip(
-                                          message: emote.name,
-                                          child: ListTile(
-                                            contentPadding: const EdgeInsets.symmetric(
-                                              horizontal: 12,
-                                            ),
-                                            leading: Image.network(
-                                              emote.urlForBrightness(theme.brightness),
-                                              width: 80,
-                                              height: 40,
-                                              fit: BoxFit.contain,
-                                              errorBuilder: (_, _, _) => const Icon(
-                                                Icons.sentiment_satisfied_alt_rounded,
-                                                size: 40,
+                                TextFieldTapRegion(
+                                  child: ConstrainedBox(
+                                    key: ValueKey(
+                                      completion.users.isEmpty
+                                          ? "chat_emote_autocomplete"
+                                          : "chat_username_autocomplete",
+                                    ),
+                                    constraints: BoxConstraints(
+                                      maxHeight: (constraints.maxHeight * 0.4).clamp(0.0, 240.0),
+                                    ),
+                                    child: Material(
+                                      type: MaterialType.transparency,
+                                      child: ListView.builder(
+                                        shrinkWrap: true,
+                                        padding: EdgeInsets.zero,
+                                        itemExtent: completion.users.isEmpty ? 48 : 32,
+                                        itemCount: completion.users.isEmpty
+                                            ? completion.emotes.length
+                                            : completion.users.length,
+                                        itemBuilder: (context, index) {
+                                          if (completion.users.isNotEmpty) {
+                                            final user = completion.users[index];
+                                            final name = user.displayName.isEmpty
+                                                ? user.login
+                                                : user.displayName;
+                                            final style = theme.textTheme.bodyMedium!.copyWith(
+                                              fontWeight: FontWeight.w700,
+                                              color: _chatNameColor(user, theme.brightness),
+                                            );
+                                            final paint = _settings.sevenTvPaints
+                                                ? widget.assets?.userPaintsByLogin[user.login
+                                                      .toLowerCase()]
+                                                : null;
+                                            return ListTile(
+                                              minTileHeight: 32,
+                                              dense: true,
+                                              contentPadding: const EdgeInsets.symmetric(
+                                                horizontal: 12,
                                               ),
-                                            ),
-                                            title: Text(
-                                              emote.name,
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                            onTap: () {
-                                              _insertCompletion(
+                                              title: paint == null
+                                                  ? Text(
+                                                      name,
+                                                      style: style,
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
+                                                    )
+                                                  : ChatUsername(
+                                                      name: name,
+                                                      style: style,
+                                                      paint: paint,
+                                                      animated: _settings.animatedPaints,
+                                                    ),
+                                              onTap: () {
+                                                _insertCompletion(
+                                                  "@${user.login}",
+                                                  replacement: completion.selection,
+                                                );
+                                                _draftFocus.requestFocus();
+                                              },
+                                            );
+                                          }
+                                          final emote = completion.emotes[index];
+                                          return Tooltip(
+                                            message: emote.name,
+                                            child: ListTile(
+                                              contentPadding: const EdgeInsets.symmetric(
+                                                horizontal: 12,
+                                              ),
+                                              leading: Image.network(
+                                                emote.urlForBrightness(theme.brightness),
+                                                width: 80,
+                                                height: 40,
+                                                fit: BoxFit.contain,
+                                                errorBuilder: (_, _, _) => const Icon(
+                                                  Icons.sentiment_satisfied_alt_rounded,
+                                                  size: 40,
+                                                ),
+                                              ),
+                                              title: Text(
                                                 emote.name,
-                                                replacement: completion.selection,
-                                              );
-                                              _draftFocus.requestFocus();
-                                            },
-                                          ),
-                                        );
-                                      },
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                              onTap: () {
+                                                _insertCompletion(
+                                                  emote.name,
+                                                  replacement: completion.selection,
+                                                );
+                                                _draftFocus.requestFocus();
+                                              },
+                                            ),
+                                          );
+                                        },
+                                      ),
                                     ),
                                   ),
                                 ),
@@ -3031,6 +3090,7 @@ class _ChatUserSheet extends StatefulWidget {
     required this.settings,
     required this.assets,
     required this.onMore,
+    required this.onOpenChannel,
     required this.onReply,
     required this.onEmoteTap,
     required this.onBadgeTap,
@@ -3048,6 +3108,7 @@ class _ChatUserSheet extends StatefulWidget {
   final ChatPreferences Function() settings;
   final TwitchChatAssets? assets;
   final VoidCallback onMore;
+  final ValueChanged<String>? onOpenChannel;
   final VoidCallback? onReply;
   final ValueChanged<ChatAssetEmote> onEmoteTap;
   final ValueChanged<ChatAssetBadge> onBadgeTap;
@@ -3070,6 +3131,7 @@ class _ChatUserSheet extends StatefulWidget {
     properties.add(ObjectFlagProperty<Object>.has("settings", settings));
     properties.add(DiagnosticsProperty<TwitchChatAssets?>("assets", assets));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onMore", onMore));
+    properties.add(ObjectFlagProperty<Object?>.has("onOpenChannel", onOpenChannel));
     properties.add(ObjectFlagProperty<VoidCallback?>.has("onReply", onReply));
     properties.add(ObjectFlagProperty<Object>.has("onEmoteTap", onEmoteTap));
     properties.add(ObjectFlagProperty<Object>.has("onBadgeTap", onBadgeTap));
@@ -3209,6 +3271,10 @@ class _ChatUserSheetState extends State<_ChatUserSheet> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         ListTile(
+                          key: const ValueKey("chat_user_channel"),
+                          onTap: widget.onOpenChannel == null
+                              ? null
+                              : () => widget.onOpenChannel!(profile?.login ?? observed.login),
                           leading: CircleAvatar(
                             child: profile?.profileImageUrl == null
                                 ? const Icon(Icons.person_rounded)
@@ -3318,7 +3384,8 @@ class _ChatUserSheetState extends State<_ChatUserSheet> {
                   blockedLogins: widget.blockedLogins,
                   showModeration: moderationNotices.contains(logs[index].id),
                   onUserTap: (message) {
-                    if (message.login.toLowerCase() != widget.message.login.toLowerCase()) {
+                    if (widget.onOpenChannel != null ||
+                        message.login.toLowerCase() != widget.message.login.toLowerCase()) {
                       widget.onUserTap(message);
                     }
                   },
@@ -3823,6 +3890,7 @@ class _ChatMessageRow extends StatefulWidget {
     this.showTimestamps,
     this.showReplyContext = true,
     this.pinned = false,
+    this.collapsed = false,
     this.horizontalPadding = 0,
     this.bodyKey,
     this.replyContextKey,
@@ -3846,6 +3914,7 @@ class _ChatMessageRow extends StatefulWidget {
   final bool? showTimestamps;
   final bool showReplyContext;
   final bool pinned;
+  final bool collapsed;
   final double horizontalPadding;
   final Key? bodyKey;
   final Key? replyContextKey;
@@ -3879,6 +3948,7 @@ class _ChatMessageRow extends StatefulWidget {
       FlagProperty("showReplyContext", value: showReplyContext, ifTrue: "show reply context"),
     );
     properties.add(FlagProperty("pinned", value: pinned, ifTrue: "pinned message"));
+    properties.add(FlagProperty("collapsed", value: collapsed, ifTrue: "collapsed message"));
     properties.add(DoubleProperty("horizontalPadding", horizontalPadding));
     properties.add(DiagnosticsProperty<Key?>("bodyKey", bodyKey));
     properties.add(DiagnosticsProperty<Key?>("replyContextKey", replyContextKey));
@@ -4374,6 +4444,15 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
       offset = end;
     }
     _appendText(content, message.text.substring(offset).replaceFirst(RegExp(r"[\s\u034f]+$"), ""));
+    if (widget.collapsed) {
+      return Text.rich(
+        key: widget.bodyKey,
+        TextSpan(children: content),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: theme.textTheme.bodyMedium?.copyWith(fontSize: _fontSize),
+      );
+    }
     if (widget.previewPrefix case final prefix?) {
       return IgnorePointer(
         child: Text.rich(
@@ -4507,7 +4586,7 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
             : [
                 TextSpan(
                   text: senderSuffix,
-                  style: const TextStyle(fontWeight: FontWeight.w400),
+                  style: TextStyle(color: nameColor, fontWeight: FontWeight.w400),
                   recognizer: onUserTap == null ? null : _nameTap,
                 ),
                 TextSpan(text: nameSeparator),

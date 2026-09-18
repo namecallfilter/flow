@@ -975,7 +975,19 @@ void main() {
     await settings.load();
     addTearDown(controller.dispose);
     addTearDown(assets.dispose);
-    await tester.pumpWidget(panel(controller, assets: assets, settingsStore: settings));
+    await tester.pumpWidget(
+      Actions(
+        actions: {
+          EditableTextTapUpOutsideIntent: CallbackAction<EditableTextTapUpOutsideIntent>(
+            onInvoke: (intent) {
+              intent.focusNode.unfocus();
+              return null;
+            },
+          ),
+        },
+        child: panel(controller, assets: assets, settingsStore: settings),
+      ),
+    );
     await tester.pumpAndSettle();
     final input = find.byKey(const ValueKey("chat_message_input"));
     final field = tester.widget<TextField>(input);
@@ -2962,7 +2974,7 @@ void main() {
       return true;
     });
     expect(nameStyle!.color, const Color(0xFF007B00));
-    expect(suffix!.style!.color, isNull);
+    expect(suffix!.style!.color, nameStyle!.color);
     expect(suffix!.style!.fontWeight, FontWeight.w400);
     final offset = paragraph.text.toPlainText().indexOf("(user00)");
     final box = paragraph

@@ -409,8 +409,11 @@ void main() {
 
   for (final (chatOnly, buttonKey, destinationKey) in [
     (true, "player_chat_category_button", "category_streams_page_Just Chatting"),
+    (true, "player_chat_profile_button", "channel_page_creator"),
+    (true, "player_chat_name_button", "channel_page_creator"),
     (false, "player_category_button", "category_streams_page_Just Chatting"),
     (false, "player_profile_button", "channel_page_creator"),
+    (false, "player_name_button", "channel_page_creator"),
   ]) {
     for (final miniEnabled in [true, false]) {
       for (final videoId in <String?>[null, "123456"]) {
@@ -632,7 +635,7 @@ void main() {
     expect(playbackLoads, 1);
 
     online = true;
-    await tester.pump(const Duration(seconds: 30));
+    await tester.pump(const Duration(seconds: 2));
     await tester.pump();
     await tester.pump();
     expect(find.text("Offline"), findsNothing);
@@ -1802,7 +1805,7 @@ void main() {
     );
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 2500));
-    for (final key in ["player_orientation_button", "player_name_and_title"]) {
+    for (final key in ["player_orientation_button", "player_live_duration"]) {
       await tester.tap(find.byKey(ValueKey(key)));
       await tester.pump(const Duration(milliseconds: 750));
       expect(_controlsOpacity(tester), 1);

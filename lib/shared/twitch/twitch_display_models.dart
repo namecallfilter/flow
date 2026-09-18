@@ -45,6 +45,7 @@ class OfflineChannel {
     required this.avatarColors,
     this.id = "",
     this.login = "",
+    this.title = "",
     this.categoryId = "",
     this.avatarImageUrl,
   });
@@ -54,6 +55,7 @@ class OfflineChannel {
   final String name;
   final String initials;
   final String lastLive;
+  final String title;
   final String category;
   final String categoryId;
   final List<Color> avatarColors;

@@ -235,6 +235,13 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
 
   bool get _isLive => widget.videoId == null;
 
+  bool get _canEnterPictureInPicture =>
+      _pictureInPictureEnabled && !_streamEnded && (_host?.pictureInPictureAllowed.value ?? true);
+
+  void _syncPictureInPicture() => unawaited(
+    _playerController?.setPictureInPictureEnabled(enabled: _canEnterPictureInPicture),
+  );
+
   bool get _appIsResumed => _appLifecycleState == AppLifecycleState.resumed;
 
   bool get _playbackSupported =>
@@ -260,8 +267,9 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     });
     unawaited(_loadSeekMetadata());
     unawaited(_refreshViewerCount());
-    _viewerTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      if (_appIsResumed) {
+    // ponytail: 2s polling; use push updates if a suitable event source becomes available.
+    _viewerTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      if (_appIsResumed && (_streamEnded || timer.tick % 15 == 0)) {
         unawaited(_refreshViewerCount());
       }
     });
@@ -444,7 +452,12 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   void didChangeDependencies() {
     super.didChangeDependencies();
     final presentation = PlaybackPresentation.maybeOf(context);
-    _host = presentation?.host;
+    if (_host != presentation?.host) {
+      _host?.pictureInPictureAllowed.removeListener(_syncPictureInPicture);
+      _host = presentation?.host;
+      _host?.pictureInPictureAllowed.addListener(_syncPictureInPicture);
+      _syncPictureInPicture();
+    }
     _playerIsForeground = presentation?.isForeground ?? true;
     _hideChrome = presentation?.hideChrome ?? false;
     _miniPlayerEnabled = presentation?.miniPlayerEnabled ?? false;
@@ -457,9 +470,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
           (_) => settings.pictureInPictureEnabled,
           (enabled) {
             _pictureInPictureEnabled = enabled;
-            unawaited(
-              _playerController?.setPictureInPictureEnabled(enabled: enabled && !_streamEnded),
-            );
+            _syncPictureInPicture();
           },
           fireImmediately: true,
         );
@@ -496,6 +507,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _host?.pictureInPictureAllowed.removeListener(_syncPictureInPicture);
     _chat?.dispose();
     _replay?.dispose();
     _chatAssets?.dispose();
@@ -859,9 +871,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     unawaited(_playerEvents?.cancel());
     _playerController?.dispose();
     _playerController = controller;
-    unawaited(
-      controller.setPictureInPictureEnabled(enabled: _pictureInPictureEnabled && !_streamEnded),
-    );
+    _syncPictureInPicture();
     _playerEvents = controller.events.listen(
       (event) {
         if (playbackSessionGeneration == _playbackSessionGeneration) {
@@ -1102,11 +1112,17 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     }
   }
 
-  Future<void> _openChannel() async {
-    final login = widget.channel.login.trim().isEmpty
-        ? widget.channel.name.trim()
-        : widget.channel.login.trim();
-    if (login.isEmpty) {
+  Future<void> _openChannel([ChannelPreview? channel]) async {
+    channel ??= ChannelPreview(
+      login: widget.channel.login.trim().isEmpty
+          ? widget.channel.name.trim()
+          : widget.channel.login.trim(),
+      displayName: widget.channel.name,
+      avatarImageUrl: widget.channel.avatarImageUrl,
+      isPartner: widget.channel.isPartner,
+      isLive: _isLive && !_streamEnded,
+    );
+    if (channel.login.isEmpty) {
       return;
     }
 
@@ -1115,13 +1131,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         MaterialPageRoute<void>(
           builder: (_) => ChannelScreen(
             apiCache: widget.apiCache,
-            initialChannel: ChannelPreview(
-              login: login,
-              displayName: widget.channel.name,
-              avatarImageUrl: widget.channel.avatarImageUrl,
-              isPartner: widget.channel.isPartner,
-              isLive: _isLive && !_streamEnded,
-            ),
+            initialChannel: channel!,
           ),
         ),
       );
@@ -1301,7 +1311,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
       audioOnly: _audioOnly,
       isLive: _isLive,
       streamEnded: _streamEnded,
-      pictureInPictureEnabled: _pictureInPictureEnabled && !_streamEnded,
+      pictureInPictureEnabled: _canEnterPictureInPicture,
       miniPlayerEnabled: _miniPlayerEnabled,
       position: _seekPosition ?? _position,
       duration: _duration,
@@ -1409,6 +1419,9 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
                 onToggleChatOnly: _toggleChatOnly,
                 onOpenSettings: _openChatSettings,
                 onReportUser: _reportUser,
+                onOpenChannel: (login) => _openChannel(
+                  ChannelPreview(login: login, displayName: login),
+                ),
                 onSubscribe: () => _openOverlayPage(
                   (_) => TwitchReportScreen.subscribe(login: widget.channel.login),
                 ),
@@ -1577,11 +1590,19 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
           icon: const Icon(Icons.arrow_back_rounded),
         ),
         const SizedBox(width: 4),
-        AvatarRing(
-          initials: widget.channel.initials,
-          size: 36,
-          avatarColors: widget.channel.avatarColors,
-          imageUrl: widget.channel.avatarImageUrl,
+        Semantics(
+          button: true,
+          label: "Open ${widget.channel.name} channel",
+          child: GestureDetector(
+            key: const ValueKey("player_chat_profile_button"),
+            onTap: () => unawaited(_openChannel()),
+            child: AvatarRing(
+              initials: widget.channel.initials,
+              size: 36,
+              avatarColors: widget.channel.avatarColors,
+              imageUrl: widget.channel.avatarImageUrl,
+            ),
+          ),
         ),
         const SizedBox(width: 10),
         Expanded(
@@ -1589,24 +1610,33 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Tooltip(
-                message: _channel.title.isEmpty ? _channel.name : _channel.title,
-                showDuration: const Duration(seconds: 5),
-                enableFeedback: true,
-                child: Text.rich(
-                  TextSpan(
-                    children: [
+              Semantics(
+                button: true,
+                label: "Open ${widget.channel.name} channel",
+                child: GestureDetector(
+                  key: const ValueKey("player_chat_name_button"),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => unawaited(_openChannel()),
+                  child: Tooltip(
+                    message: _channel.title.isEmpty ? _channel.name : _channel.title,
+                    showDuration: const Duration(seconds: 5),
+                    enableFeedback: true,
+                    child: Text.rich(
                       TextSpan(
-                        text: widget.channel.name,
-                        style: const TextStyle(fontWeight: FontWeight.w700),
+                        children: [
+                          TextSpan(
+                            text: widget.channel.name,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          TextSpan(text: "  ${_channel.title}"),
+                        ],
                       ),
-                      TextSpan(text: "  ${_channel.title}"),
-                    ],
+                      key: const ValueKey("player_chat_name_and_title"),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
                   ),
-                  key: const ValueKey("player_chat_name_and_title"),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleSmall,
                 ),
               ),
               const SizedBox(height: 2),
@@ -2364,33 +2394,42 @@ class _PlayerHeader extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Tooltip(
-              message: channel.title.isEmpty ? channel.name : channel.title,
-              showDuration: const Duration(seconds: 5),
-              enableFeedback: true,
-              child: Text.rich(
-                TextSpan(
-                  children: [
+            Semantics(
+              button: true,
+              label: "Open ${channel.name} channel",
+              child: GestureDetector(
+                key: const ValueKey("player_name_button"),
+                behavior: HitTestBehavior.opaque,
+                onTap: onProfileTap,
+                child: Tooltip(
+                  message: channel.title.isEmpty ? channel.name : channel.title,
+                  showDuration: const Duration(seconds: 5),
+                  enableFeedback: true,
+                  child: Text.rich(
                     TextSpan(
-                      text: channel.name,
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                    if (channel.title.isNotEmpty)
-                      TextSpan(
-                        text: "  ${channel.title}",
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.82),
-                          fontWeight: FontWeight.w600,
+                      children: [
+                        TextSpan(
+                          text: channel.name,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
                         ),
-                      ),
-                  ],
-                ),
-                key: const ValueKey("player_name_and_title"),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 15,
+                        if (channel.title.isNotEmpty)
+                          TextSpan(
+                            text: "  ${channel.title}",
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.82),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                      ],
+                    ),
+                    key: const ValueKey("player_name_and_title"),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                    ),
+                  ),
                 ),
               ),
             ),

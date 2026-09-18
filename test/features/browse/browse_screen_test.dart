@@ -579,6 +579,16 @@ void main() {
     expect(find.byKey(const ValueKey("browse_search_history_mine")), findsNothing);
     expect(find.text("No recent searches"), findsOneWidget);
     expect(searchHistoryStore.history, isEmpty);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    final searchEntry = tester.widget<EditableText>(
+      find.descendant(
+        of: find.byKey(const ValueKey("browse_search_field")),
+        matching: find.byType(EditableText),
+      ),
+    );
+    expect(searchEntry.focusNode.hasFocus, isFalse);
   });
 
   testWidgets("shows partner badges and preserves search result navigation", (

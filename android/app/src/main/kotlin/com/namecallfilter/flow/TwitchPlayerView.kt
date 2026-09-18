@@ -140,8 +140,10 @@ internal class TwitchPlayerView(
                 )
                 .build()
         }
+    val hasPictureInPictureContent: Boolean
+        get() = pictureInPictureEnabled && !isAudioOnly && !disposed
     val canEnterPictureInPicture: Boolean
-        get() = pictureInPictureEnabled && !isAudioOnly && !disposed && initialized && player.playWhenReady &&
+        get() = hasPictureInPictureContent && initialized && player.playWhenReady &&
             player.playbackState != Player.STATE_IDLE && player.playbackState != Player.STATE_ENDED &&
             player.playerError == null
     val pictureInPicturePlaying: Boolean
@@ -729,7 +731,7 @@ internal class TwitchPlayerView(
         correctionRequestedAtRealtimeMs = null
         latencyCorrection.reset()
         Log.d(LOG_TAG, "reloading playback: $reason")
-        if (isAudioOnly) {
+        if (isAudioOnly || pictureInPicture) {
             val generation = sessionGeneration
             methodChannel.invokeMethod("refreshPlaybackUri", null, object : MethodChannel.Result {
                 override fun success(result: Any?) {
