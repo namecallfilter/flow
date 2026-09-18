@@ -1970,7 +1970,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets("pinned sender and pinner paints keep their own profile targets", (tester) async {
+  testWidgets("pinner stays neutral while sender paint and both profile targets are preserved", (
+    tester,
+  ) async {
     await _cacheImages(tester);
     final client = _Client();
     final controller = _Controller(client);
@@ -2003,14 +2005,19 @@ void main() {
     await tester.pumpWidget(_panel(controller, assets: assets));
     await tester.pumpAndSettle();
     final pin = find.byKey(const ValueKey("chat_pinned_message"));
-    expect(_paintName(pin, "日本語"), findsOneWidget);
+    expect(_paintName(pin, "日本語"), findsNothing);
     expect(_paintName(pin, "アレンン"), findsOneWidget);
-    expect(_span(tester, pin, " (pinner)").style!.fontWeight, FontWeight.w400);
+    final header = find.descendant(
+      of: pin,
+      matching: find.byWidgetPredicate(
+        (widget) => widget is Text && widget.textSpan?.toPlainText().contains("Pinned by ") == true,
+      ),
+    );
     expect(
-      tester.widget<ChatUsername>(_paintName(pin, "日本語")).style.color,
+      tester.widget<Text>(header).style!.color,
       buildFlowTheme(Brightness.dark).colorScheme.onSurfaceVariant,
     );
-    expect(_span(tester, pin, " (pinner)").style!.color, isNull);
+    expect(_span(tester, pin, "日本語 (pinner)").style, isNull);
     expect(
       _span(tester, pin, " (viewer)").style!.color,
       const Color(0xFF00FF00).withValues(alpha: 0.7),
@@ -2024,9 +2031,9 @@ void main() {
       " (viewer)": (userId: "1234", login: "viewer"),
     }.entries) {
       final tap = await tester.startGesture(
-        entry.key.startsWith(" ")
-            ? _textPoint(tester, pin, entry.key)
-            : tester.getCenter(_paintName(pin, entry.key)),
+        entry.key == "アレンン"
+            ? tester.getCenter(_paintName(pin, entry.key))
+            : _textPoint(tester, pin, entry.key),
       );
       await tester.pump(const Duration(milliseconds: 40));
       controller.update();
@@ -3139,7 +3146,7 @@ void main() {
       () => tester.getCenter(_paintName(row, "日本語")),
       () => _textPoint(tester, row, " (viewer)"),
       () => _textPoint(tester, row, "@"),
-      () => tester.getCenter(_paintName(pin, "Pinner")),
+      () => _textPoint(tester, pin, "Pinner"),
       () => tester.getCenter(_paintName(pin, "日本語")),
     ]) {
       await tester.tapAt(target());

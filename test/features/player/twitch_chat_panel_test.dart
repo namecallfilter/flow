@@ -635,7 +635,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets("long pins collapse after five seconds and respect a manual expansion", (
+  testWidgets("two-line pins collapse after five seconds and respect a manual expansion", (
     tester,
   ) async {
     tester.view.physicalSize = const Size(400, 800);
@@ -643,13 +643,13 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final controller = _ChatController()
-      ..pin = TwitchPinnedChat(
+      ..pin = const TwitchPinnedChat(
         id: "long",
         message: TwitchChatMessage(
           id: "long-message",
           login: "viewer",
           displayName: "Viewer",
-          text: List.filled(35, "A longer pinned message").join(" "),
+          text: "First line\nSecond line",
         ),
       );
     addTearDown(controller.dispose);
@@ -688,6 +688,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     const emoteUrl = "https://static-cdn.jtvnw.net/emoticons/v2/25/default/light/2.0";
+    const emoteCount = 12;
     await tester.runAsync(() async {
       final recorder = ui.PictureRecorder();
       ui.Canvas(recorder).drawColor(Colors.white, ui.BlendMode.src);
@@ -710,9 +711,9 @@ void main() {
           id: "emote-message",
           login: "viewer",
           displayName: "Viewer",
-          text: List.filled(16, "E").join(" "),
+          text: List.filled(emoteCount, "E").join(" "),
           emotes: [
-            for (var index = 0; index < 16; index++)
+            for (var index = 0; index < emoteCount; index++)
               TwitchChatEmote(id: "25", start: index * 2, end: index * 2 + 1),
           ],
         ),
@@ -724,14 +725,17 @@ void main() {
       of: find.byKey(const ValueKey("chat_pinned_message")),
       matching: find.byType(Image),
     );
-    expect(images, findsNWidgets(16));
+    expect(images, findsNWidgets(emoteCount));
     final tops = {
-      for (var index = 0; index < 16; index++) tester.getTopLeft(images.at(index)).dy,
+      for (var index = 0; index < emoteCount; index++) tester.getTopLeft(images.at(index)).dy,
     };
     expect(tops.length, greaterThan(2));
     await tester.pump(const Duration(seconds: 4));
     await settings.setChatPreferences(settings.chatPreferences.copyWith(emoteScale: 0.5));
     await tester.pumpAndSettle();
+    expect({
+      for (var index = 0; index < emoteCount; index++) tester.getTopLeft(images.at(index)).dy,
+    }, hasLength(1));
     await tester.pump(const Duration(seconds: 2));
     expect(find.byTooltip("Minimize pinned message"), findsOneWidget);
     await settings.setChatPreferences(settings.chatPreferences.copyWith(emoteScale: 2));

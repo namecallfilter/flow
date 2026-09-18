@@ -2088,9 +2088,6 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
         ? "broadcaster/1"
         : "moderator/1";
     final badgeUrl = widget.assets?.badgeUrls[role];
-    final pinnerPaint = _settings.sevenTvPaints
-        ? widget.assets?.userPaintsByLogin[pinner?.login.toLowerCase()]
-        : null;
     _pinnerTap.onTap = pinnerMessage == null ? null : () => unawaited(_showUser(pinnerMessage));
     return NotificationListener<SizeChangedLayoutNotification>(
       onNotification: (_) {
@@ -2153,34 +2150,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                   ),
                                 ),
                               ),
-                            if (pinner != null)
-                              if (pinnerPaint != null) ...[
-                                WidgetSpan(
-                                  alignment: PlaceholderAlignment.baseline,
-                                  baseline: TextBaseline.alphabetic,
-                                  child: GestureDetector(
-                                    onTap: _pinnerTap.onTap,
-                                    child: ChatUsername(
-                                      name: pinnerName,
-                                      style: theme.textTheme.labelLarge!.copyWith(
-                                        color: colors.onSurfaceVariant,
-                                        fontSize: fontSize - 2,
-                                      ),
-                                      paint: pinnerPaint,
-                                      animated: _settings.animatedPaints,
-                                    ),
-                                  ),
-                                ),
-                                TextSpan(
-                                  text: pinnerLabel.substring(pinnerName.length),
-                                  style: const TextStyle(fontWeight: FontWeight.w400),
-                                  recognizer: _pinnerTap,
-                                ),
-                              ] else
-                                TextSpan(
-                                  text: pinnerLabel,
-                                  recognizer: _pinnerTap,
-                                ),
+                            if (pinner != null) TextSpan(text: pinnerLabel, recognizer: _pinnerTap),
                           ],
                         ),
                         maxLines: 1,
@@ -2276,16 +2246,16 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
     );
   }
 
-  void _schedulePinCollapse(String id, bool exceedsTwoLines) {
+  void _schedulePinCollapse(String id, bool hasMultipleLines) {
     if (_autoCollapsePinId == id) {
-      if (!exceedsTwoLines && _pinCollapseTimer?.isActive == true) {
+      if (!hasMultipleLines && _pinCollapseTimer?.isActive == true) {
         _pinCollapseTimer!.cancel();
         _autoCollapsePinId = null;
       }
       return;
     }
     _pinCollapseTimer?.cancel();
-    if (!exceedsTwoLines) {
+    if (!hasMultipleLines) {
       return;
     }
     _autoCollapsePinId = id;
@@ -2353,7 +2323,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                   .length,
             )
             .fold(0, (total, count) => total + count);
-        _schedulePinCollapse(pin.id, lines > 2);
+        _schedulePinCollapse(pin.id, lines >= 2);
       }
       widget.assets?.precacheMessages(context, [
         ..._presentedMessages.reversed.take(30),
