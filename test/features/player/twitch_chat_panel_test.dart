@@ -2974,7 +2974,7 @@ void main() {
       return true;
     });
     expect(nameStyle!.color, const Color(0xFF007B00));
-    expect(suffix!.style!.color, nameStyle!.color);
+    expect(suffix!.style!.color, nameStyle!.color!.withValues(alpha: 0.7));
     expect(suffix!.style!.fontWeight, FontWeight.w400);
     final offset = paragraph.text.toPlainText().indexOf("(user00)");
     final box = paragraph

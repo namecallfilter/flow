@@ -26,11 +26,8 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.util.Rational
 import android.view.WindowInsets
+import android.view.WindowInsetsAnimation
 import android.webkit.CookieManager
-import android.window.BackEvent
-import android.window.OnBackAnimationCallback
-import android.window.OnBackInvokedCallback
-import android.window.OnBackInvokedDispatcher
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.media3.common.util.UnstableApi
@@ -50,8 +47,6 @@ class MainActivity : FlutterActivity() {
     }
     private var activePlayer: TwitchPlayerView? = null
     private var chatMentionSound: Ringtone? = null
-    private var keyboardBackCallback: OnBackInvokedCallback? = null
-    private var keyboardBackRegistered = false
     private var wasInPictureInPicture = false
     private var playbackVisible = false
     private var playbackResumed = false
@@ -109,41 +104,34 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         window.decorView.viewTreeObserver.addOnPreDrawListener(::pictureInPictureFrameReady)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val keyboardChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "flow/keyboard")
-            val callback = object : OnBackAnimationCallback {
-                private var edgeGesture = false
+            window.decorView.setWindowInsetsAnimationCallback(
+                object : WindowInsetsAnimation.Callback(DISPATCH_MODE_CONTINUE_ON_SUBTREE) {
+                    private var hiddenGesture: WindowInsetsAnimation? = null
 
-                override fun onBackStarted(backEvent: BackEvent) {
-                    edgeGesture = backEvent.swipeEdge == BackEvent.EDGE_LEFT ||
-                        backEvent.swipeEdge == BackEvent.EDGE_RIGHT
-                }
-
-                override fun onBackCancelled() {
-                    edgeGesture = false
-                }
-
-                override fun onBackInvoked() {
-                    window.insetsController?.hide(WindowInsets.Type.ime())
-                    if (edgeGesture) keyboardChannel.invokeMethod("dismissFocus", null)
-                    edgeGesture = false
-                }
-            }
-            keyboardBackCallback = callback
-            window.decorView.setOnApplyWindowInsetsListener { view, insets ->
-                val visible = insets.isVisible(WindowInsets.Type.ime())
-                if (visible != keyboardBackRegistered) {
-                    keyboardBackRegistered = visible
-                    if (visible) {
-                        onBackInvokedDispatcher.registerOnBackInvokedCallback(
-                            OnBackInvokedDispatcher.PRIORITY_OVERLAY, callback,
-                        )
-                    } else {
-                        onBackInvokedDispatcher.unregisterOnBackInvokedCallback(callback)
+                    override fun onProgress(
+                        insets: WindowInsets,
+                        runningAnimations: MutableList<WindowInsetsAnimation>,
+                    ): WindowInsets {
+                        // Android's predictive IME animation is user-controlled (duration -1).
+                        // Ordinary minimize-button animations have a fixed duration.
+                        runningAnimations.firstOrNull {
+                            it.typeMask and WindowInsets.Type.ime() != 0 && it.durationMillis == -1L
+                        }?.let {
+                            hiddenGesture = if (insets.isVisible(WindowInsets.Type.ime())) null else it
+                        }
+                        return insets
                     }
-                }
-                view.onApplyWindowInsets(insets)
-            }
+
+                    override fun onEnd(animation: WindowInsetsAnimation) {
+                        if (animation === hiddenGesture) {
+                            hiddenGesture = null
+                            keyboardChannel.invokeMethod("dismissFocus", null)
+                        }
+                    }
+                },
+            )
         }
 
         flutterEngine.platformViewsController.registry.registerViewFactory(
@@ -470,9 +458,8 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            keyboardBackCallback?.let(onBackInvokedDispatcher::unregisterOnBackInvokedCallback)
-            window.decorView.setOnApplyWindowInsetsListener(null)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.decorView.setWindowInsetsAnimationCallback(null)
         }
         chatMentionSound?.stop()
         if (audioMediaSession.isInitialized()) audioMediaSession.value.release()

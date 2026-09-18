@@ -28,7 +28,7 @@ enum _ChatAction { video, refresh, reconnect, chatters, settings }
 
 enum _ChatUserAction { block, report }
 
-enum _ChatMessageAction { copy, paste, reply, userDetails }
+enum _ChatMessageAction { copy, paste, reply }
 
 class TwitchChatPanel extends StatefulWidget {
   const TwitchChatPanel({
@@ -1649,17 +1649,11 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                 assets: widget.assets,
                 knownUsers: _knownUsers,
                 blockedLogins: _blockedLogins.value,
-                onUserTap: (message) => unawaited(_openUserChannel(message)),
+                onUserTap: (message) => unawaited(_showUser(message)),
                 onEmoteTap: (emote) => unawaited(_showEmote(emote)),
                 onBadgeTap: (badge) => unawaited(_showBadge(badge)),
               ),
               const Divider(),
-              ListTile(
-                leading: const Icon(Icons.person_outline_rounded),
-                title: const Text("User details"),
-                enabled: message.login.isNotEmpty,
-                onTap: () => Navigator.pop(context, _ChatMessageAction.userDetails),
-              ),
               ListTile(
                 leading: const Icon(Icons.copy_rounded),
                 title: const Text("Copy message"),
@@ -1694,11 +1688,6 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
     if (action == _ChatMessageAction.reply) {
       _closeSheets();
       _reply(message);
-      return;
-    }
-    if (action == _ChatMessageAction.userDetails) {
-      _closeSheets();
-      await _showUser(message);
       return;
     }
     final text = message.text.isEmpty ? message.noticeText ?? "" : message.text;
@@ -1766,23 +1755,12 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
         },
         settings: () => _settings,
         assets: widget.assets,
-        onUserTap: (message) => unawaited(_openUserChannel(message)),
+        onUserTap: (message) => unawaited(_showUser(message)),
         onEmoteTap: (emote) => unawaited(_showEmote(emote)),
         onBadgeTap: (badge) => unawaited(_showBadge(badge)),
         onMessageHold: (message) => unawaited(_showMessageActions(message)),
       ),
     );
-  }
-
-  Future<void> _openUserChannel(TwitchChatMessage message) async {
-    final open = widget.onOpenChannel;
-    if (open == null) {
-      await _showUser(message);
-      return;
-    }
-    FocusManager.instance.primaryFocus?.unfocus();
-    _closeSheets();
-    await open(message.login);
   }
 
   Future<void> _showUser(TwitchChatMessage message) async {
@@ -1827,7 +1805,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
         assets: widget.assets,
         onEmoteTap: (emote) => unawaited(_showEmote(emote)),
         onBadgeTap: (badge) => unawaited(_showBadge(badge)),
-        onUserTap: (message) => unawaited(_openUserChannel(message)),
+        onUserTap: (message) => unawaited(_showUser(message)),
         onThreadTap: (message) => unawaited(_showThread(message)),
         onMessageHold: (message) => unawaited(_showMessageActions(message)),
         onMore: () => unawaited(_userActions(message, profile)),
@@ -2099,9 +2077,6 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                 displayName: pinner.displayName,
                 text: "",
               );
-    final pinnerColor = pinnerMessage == null
-        ? colors.onSurfaceVariant
-        : _chatNameColor(pinnerMessage, theme.brightness);
     final expanded = _minimizedPinId != pin.id;
     final fontSize = _settings.fontSize * _settings.messageScale;
     final startsAt = pin.startsAt;
@@ -2116,9 +2091,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
     final pinnerPaint = _settings.sevenTvPaints
         ? widget.assets?.userPaintsByLogin[pinner?.login.toLowerCase()]
         : null;
-    _pinnerTap.onTap = pinnerMessage == null
-        ? null
-        : () => unawaited(_openUserChannel(pinnerMessage));
+    _pinnerTap.onTap = pinnerMessage == null ? null : () => unawaited(_showUser(pinnerMessage));
     return NotificationListener<SizeChangedLayoutNotification>(
       onNotification: (_) {
         _updateChatLayout();
@@ -2190,7 +2163,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                     child: ChatUsername(
                                       name: pinnerName,
                                       style: theme.textTheme.labelLarge!.copyWith(
-                                        color: pinnerColor,
+                                        color: colors.onSurfaceVariant,
                                         fontSize: fontSize - 2,
                                       ),
                                       paint: pinnerPaint,
@@ -2200,13 +2173,12 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                 ),
                                 TextSpan(
                                   text: pinnerLabel.substring(pinnerName.length),
-                                  style: TextStyle(color: pinnerColor, fontWeight: FontWeight.w400),
+                                  style: const TextStyle(fontWeight: FontWeight.w400),
                                   recognizer: _pinnerTap,
                                 ),
                               ] else
                                 TextSpan(
                                   text: pinnerLabel,
-                                  style: TextStyle(color: pinnerColor),
                                   recognizer: _pinnerTap,
                                 ),
                           ],
@@ -2275,7 +2247,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                       bodyKey: _pinBodyKey,
                       replyContextKey: _pinReplyKey,
                       onThreadTap: (message) => unawaited(_showThread(message, pinned: true)),
-                      onUserTap: (message) => unawaited(_openUserChannel(message)),
+                      onUserTap: (message) => unawaited(_showUser(message)),
                       onEmoteTap: (emote) => unawaited(_showEmote(emote)),
                       onBadgeTap: (badge) => unawaited(_showBadge(badge)),
                       onMessageHold: (message) => unawaited(_showMessageActions(message)),
@@ -2542,7 +2514,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                 showModeration: moderationNotices.contains(
                                   messages[messages.length - index - 1].id,
                                 ),
-                                onUserTap: (message) => unawaited(_openUserChannel(message)),
+                                onUserTap: (message) => unawaited(_showUser(message)),
                                 onThreadTap: (message) => unawaited(_showThread(message)),
                                 onEmoteTap: (emote) => unawaited(_showEmote(emote)),
                                 onBadgeTap: (badge) => unawaited(_showBadge(badge)),
@@ -3384,8 +3356,7 @@ class _ChatUserSheetState extends State<_ChatUserSheet> {
                   blockedLogins: widget.blockedLogins,
                   showModeration: moderationNotices.contains(logs[index].id),
                   onUserTap: (message) {
-                    if (widget.onOpenChannel != null ||
-                        message.login.toLowerCase() != widget.message.login.toLowerCase()) {
+                    if (message.login.toLowerCase() != widget.message.login.toLowerCase()) {
                       widget.onUserTap(message);
                     }
                   },
@@ -3661,17 +3632,18 @@ class _ChatThreadSheetState extends State<_ChatThreadSheet> {
                     itemBuilder: (context, index) => Padding(
                       key: ValueKey("thread-item-${thread[index].id}"),
                       padding: EdgeInsets.only(
-                        left: ((depths[thread[index].id]! - 1) * 16.0).clamp(
+                        left: ((depths[thread[index].id]! - 1) * 24.0).clamp(
                           0.0,
-                          MediaQuery.sizeOf(context).width * 0.4,
+                          (MediaQuery.sizeOf(context).width * 0.4 / 24).floor() * 24.0,
                         ),
                       ),
                       child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.baseline,
+                        textBaseline: TextBaseline.alphabetic,
                         children: [
                           if (thread[index].id != root)
-                            Padding(
-                              padding: const EdgeInsets.only(left: 4, top: 5, right: 12),
+                            SizedBox(
+                              width: 24,
                               child: Icon(
                                 Icons.subdirectory_arrow_right_rounded,
                                 size: 20,
@@ -4586,7 +4558,10 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
             : [
                 TextSpan(
                   text: senderSuffix,
-                  style: TextStyle(color: nameColor, fontWeight: FontWeight.w400),
+                  style: TextStyle(
+                    color: nameColor.withValues(alpha: 0.7),
+                    fontWeight: FontWeight.w400,
+                  ),
                   recognizer: onUserTap == null ? null : _nameTap,
                 ),
                 TextSpan(text: nameSeparator),

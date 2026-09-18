@@ -1496,6 +1496,105 @@ void main() {
     },
   );
 
+  testWidgets("branching reply arrows share a gutter and align with scaled multiline rows", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    final client = _Client();
+    final controller = _Controller(client);
+    final settings = AppSettingsStore(preferences: MemoryFlowPreferences());
+    const sibling = TwitchChatMessage(
+      id: "sibling",
+      login: "second",
+      displayName: "Second",
+      text: "Another reply to the root",
+      parentMessageId: "root",
+      threadRootId: "root",
+    );
+    client.thread.addAll([
+      const TwitchChatMessage(
+        id: "root",
+        login: "parent",
+        displayName: "Parent",
+        text: "Root question",
+      ),
+      for (var depth = 1; depth <= 10; depth++)
+        TwitchChatMessage(
+          id: "nested-$depth",
+          login: "chatter$depth",
+          displayName: "Chatter$depth",
+          text: depth == 1
+              ? "A long answer that wraps onto several lines while the next reply stays aligned."
+              : "Nested answer $depth",
+          parentMessageId: depth == 1 ? "root" : "nested-${depth - 1}",
+          threadRootId: "root",
+        ),
+      sibling,
+    ]);
+    controller.items.add(sibling);
+    addTearDown(controller.dispose);
+    for (final scale in [1.0, 1.6]) {
+      tester.platformDispatcher.textScaleFactorTestValue = scale;
+      await settings.setChatPreferences(settings.chatPreferences.copyWith(fontSize: 20));
+      await tester.pumpWidget(_panel(controller, settingsStore: settings));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey("reply-context-sibling")));
+      await tester.pumpAndSettle();
+      final thread = find.byKey(const ValueKey("chat_reply_thread"));
+      final scrollable = find.descendant(of: thread, matching: find.byType(Scrollable));
+      final firstLeft = tester.getTopLeft(find.byKey(const ValueKey("thread-nested-1"))).dx;
+      for (var depth = 1; depth <= 10; depth++) {
+        final row = find.byKey(ValueKey("thread-nested-$depth"));
+        await tester.scrollUntilVisible(row, 150, scrollable: scrollable);
+        final item = find.byKey(ValueKey("thread-item-nested-$depth"));
+        final arrow = find.descendant(
+          of: item,
+          matching: find.byIcon(Icons.subdirectory_arrow_right_rounded),
+        );
+        final rowBox = tester.renderObject<RenderBox>(row);
+        final arrowBox = tester.renderObject<RenderBox>(arrow);
+        expect(
+          arrowBox
+              .localToGlobal(
+                Offset(
+                  0,
+                  arrowBox.getDryBaseline(
+                    BoxConstraints.tight(arrowBox.size),
+                    TextBaseline.alphabetic,
+                  )!,
+                ),
+              )
+              .dy,
+          closeTo(
+            rowBox
+                .localToGlobal(
+                  Offset(
+                    0,
+                    rowBox.getDryBaseline(
+                      BoxConstraints.tight(rowBox.size),
+                      TextBaseline.alphabetic,
+                    )!,
+                  ),
+                )
+                .dy,
+            0.01,
+          ),
+        );
+        expect(tester.getTopLeft(row).dx, firstLeft + (depth - 1).clamp(0, 6) * 24);
+        expect(tester.getSize(row).width, greaterThanOrEqualTo(190));
+      }
+      final siblingRow = find.byKey(const ValueKey("thread-sibling"));
+      await tester.scrollUntilVisible(siblingRow, 150, scrollable: scrollable);
+      expect(tester.getTopLeft(siblingRow).dx, firstLeft);
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.byTooltip("Close thread"));
+      await tester.pumpAndSettle();
+    }
+  });
+
   testWidgets("thread bodies omit the parent mention and share feed colors and emote offsets", (
     tester,
   ) async {
@@ -1906,8 +2005,15 @@ void main() {
     expect(_paintName(pin, "日本語"), findsOneWidget);
     expect(_paintName(pin, "アレンン"), findsOneWidget);
     expect(_span(tester, pin, " (pinner)").style!.fontWeight, FontWeight.w400);
-    expect(_span(tester, pin, " (pinner)").style!.color, const Color(0xFF00FF7F));
-    expect(_span(tester, pin, " (viewer)").style!.color, const Color(0xFF00FF00));
+    expect(
+      tester.widget<ChatUsername>(_paintName(pin, "日本語")).style.color,
+      buildFlowTheme(Brightness.dark).colorScheme.onSurfaceVariant,
+    );
+    expect(_span(tester, pin, " (pinner)").style!.color, isNull);
+    expect(
+      _span(tester, pin, " (viewer)").style!.color,
+      const Color(0xFF00FF00).withValues(alpha: 0.7),
+    );
     expect(_span(tester, pin, " (viewer)").style!.fontWeight, FontWeight.w400);
     expect(_span(tester, pin, "Pinned by ").style, isNull);
     for (final entry in {
@@ -2960,7 +3066,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets("chat names, aliases, mentions and pinned names open channels directly", (
+  testWidgets("chat names, aliases, mentions and pinned names open user details first", (
     tester,
   ) async {
     await _cacheImages(tester);
@@ -2997,14 +3103,22 @@ void main() {
     ]) {
       await tester.tapAt(target());
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey("chat_user_channel")), findsNothing);
+      expect(find.byKey(const ValueKey("chat_user_channel")), findsOneWidget);
+      expect(opened, isEmpty);
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
     }
-    expect(opened, ["viewer", "viewer", "someone", "pinner", "viewer"]);
-    expect(client.lookups, isEmpty);
+    expect(client.lookups.map((lookup) => lookup.login), [
+      "viewer",
+      "viewer",
+      "someone",
+      "pinner",
+      "viewer",
+    ]);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets("long-press user details retains avatar and name channel shortcuts", (tester) async {
+  testWidgets("user details avatar and name open the channel", (tester) async {
     await _cacheImages(tester);
     final client = _Client();
     final controller = _Controller(client)..items.add(_message("profile", "Hello", minute: 1));
@@ -3016,10 +3130,7 @@ void main() {
       find.byType(CircleAvatar),
       find.byKey(const ValueKey("chat_user_name")),
     ]) {
-      await tester.longPress(find.byKey(const ValueKey("profile")));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text("User details"));
-      await tester.pumpAndSettle();
+      await _tapName(tester, "profile");
       await tester.tap(target);
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey("chat_user_channel")), findsNothing);
