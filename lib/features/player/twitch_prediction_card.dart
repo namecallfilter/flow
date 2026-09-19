@@ -273,6 +273,7 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
           .toList();
       final pollData = _pollSnapshot.value;
       final poll = pollData?.poll;
+      final error = (events.isEmpty ? _error.value : null) ?? (poll == null ? _pollError : null);
       final pin = widget.pinnedChat;
       if (_pinId != pin?.id) {
         _pinId = pin?.id;
@@ -297,7 +298,7 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
       if (entries.isEmpty) {
         _selected = null;
         _newest = null;
-        if (_error.value ?? _pollError case final error?) {
+        if (error != null) {
           return _retry(context, error);
         }
         return const SizedBox.shrink();
@@ -372,7 +373,7 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
               )
             else
               card(index),
-            if (events.isEmpty && _error.value != null) _retry(context, _error.value!),
+            if (error != null) _retry(context, error),
           ],
         ),
       );
@@ -385,7 +386,7 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
       dense: true,
       title: Text(error, maxLines: 2, overflow: TextOverflow.ellipsis),
       trailing: IconButton(
-        tooltip: "Retry predictions",
+        tooltip: "Retry",
         onPressed: () => unawaited(_refresh()),
         icon: const Icon(Icons.refresh),
       ),

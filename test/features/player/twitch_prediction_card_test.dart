@@ -408,8 +408,53 @@ void main() {
     client.pendingRefresh!.completeError(TwitchApiException("Unavailable"));
     await tester.pumpAndSettle();
     expect(find.text("Pinned message"), findsOneWidget);
-    expect(find.byTooltip("Retry predictions"), findsOneWidget);
+    expect(find.byTooltip("Retry"), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets("poll failures remain visible beside a prediction or pin and retry clears them", (
+    tester,
+  ) async {
+    for (final showPin in [false, true]) {
+      final client = _Client()
+        ..failPollRefresh = true
+        ..status = showPin ? "LOCKED" : "ACTIVE";
+      final controller = TwitchChatController(
+        clientLoader: () async => client,
+        channel: "channel",
+        autoConnect: false,
+      );
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: TwitchPredictionCard(
+              controller: controller,
+              isVisible: true,
+              showSheet: (_) async {},
+              pinnedChat: showPin
+                  ? (id: "pin", createdAt: null, child: const Text("Pinned message"))
+                  : null,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final highlight = showPin
+          ? find.text("Pinned message")
+          : find.byKey(const ValueKey("prediction-event"));
+      expect(highlight, findsOneWidget);
+      expect(find.text("Could not refresh poll."), findsOneWidget);
+      client.failPollRefresh = false;
+      final fetches = client.fetches;
+      await tester.tap(find.byTooltip("Retry"));
+      await tester.pumpAndSettle();
+      expect(client.fetches, fetches + 1);
+      expect(find.text("Could not refresh poll."), findsNothing);
+      expect(find.byTooltip("Retry"), findsNothing);
+      expect(highlight, findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
   });
 
   testWidgets("results update while open without a refresh button or waiting label", (
@@ -565,7 +610,7 @@ void main() {
     expect(find.text("Could not refresh predictions."), findsOneWidget);
     expect(find.text("Who wins?"), findsNothing);
     client.failRefresh = false;
-    await tester.tap(find.byTooltip("Retry predictions"));
+    await tester.tap(find.byTooltip("Retry"));
     await tester.pumpAndSettle();
     expect(find.text("Could not refresh predictions."), findsNothing);
     expect(find.text("Who wins?"), findsOneWidget);
@@ -750,14 +795,19 @@ class _Client extends TwitchApiClient {
   List<TwitchPredictionOutcome>? outcomes;
   bool regional = false;
   bool failRefresh = false;
+  bool failPollRefresh = false;
   String status = "ACTIVE";
   int fetches = 0;
   DateTime closesAt = DateTime.now().add(const Duration(minutes: 5));
   Completer<TwitchChannelPredictions>? pendingRefresh;
 
   @override
-  Future<TwitchChannelPoll> fetchPoll(String login) async =>
-      const TwitchChannelPoll(channelId: "1");
+  Future<TwitchChannelPoll> fetchPoll(String login) async {
+    if (failPollRefresh) {
+      throw TwitchApiException("Poll unavailable");
+    }
+    return const TwitchChannelPoll(channelId: "1");
+  }
 
   @override
   Future<TwitchChannelPredictions> fetchPredictions(String login) async {
