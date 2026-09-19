@@ -51,7 +51,7 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
   String? _pinId;
   DateTime? _pinSeenAt;
   bool _showAll = false;
-  String? _expandedPrediction;
+  final _collapsedPredictions = <String>{};
   bool _showTotals = false;
   final _predictionPhases = <String, String>{};
   final _predictionHighlights = <String, ({DateTime shownAt, DateTime expiresAt})>{};
@@ -85,7 +85,7 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
       _newest = null;
       _pinId = null;
       _showAll = false;
-      _expandedPrediction = null;
+      _collapsedPredictions.clear();
       _showTotals = false;
       _predictionPhases.clear();
       _predictionHighlights.clear();
@@ -213,6 +213,7 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
       if (!eligible) {
         continue;
       }
+      _collapsedPredictions.remove(event.id);
       final expiresAt = phase == "result" ? now.add(const Duration(seconds: 120)) : event.closesAt;
       _predictionHighlights[event.id] = (
         shownAt: phase == "result" ? event.endedAt! : event.createdAt,
@@ -371,12 +372,6 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
               )
             else
               card(index),
-            if (entries.length > 1)
-              TextButton(
-                onPressed: () => setState(() => _showAll = !_showAll),
-                style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-                child: Text(_showAll ? "Show less" : "View All (${entries.length})"),
-              ),
             if (events.isEmpty && _error.value != null) _retry(context, _error.value!),
           ],
         ),
@@ -399,128 +394,146 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
 
   Widget _prediction(BuildContext context, TwitchPrediction event) {
     final colors = Theme.of(context).colorScheme;
-    final expanded = !_showAll && _expandedPrediction == event.id;
+    final expanded = !_showAll && !_collapsedPredictions.contains(event.id);
     final winner = event.outcomes
         .where((outcome) => outcome.id == event.winningOutcomeId)
         .firstOrNull;
-    final total = event.outcomes.fold(0, (sum, outcome) => sum + outcome.points);
-    final summary = winner != null
-        ? winner.topPredictorName != null
-              ? "${formatCompactCount(total)} go to ${winner.topPredictorName}${winner.users > 1 ? ' and ${winner.users - 1} others' : ''}"
-              : "${formatCompactCount(total)} points awarded"
-        : event.outcomes.map((outcome) => formatCompactCount(outcome.points)).join(" vs ");
+    final title =
+        winner?.title ??
+        (event.outcomes.length == 2 && _showTotals
+            ? event.outcomes.map((outcome) => formatCompactCount(outcome.points)).join(" vs ")
+            : event.title);
+    void toggleExpanded() => setState(() {
+      if (expanded) {
+        _collapsedPredictions.add(event.id);
+      } else {
+        _collapsedPredictions.remove(event.id);
+      }
+    });
     return Card.outlined(
       key: ValueKey("prediction-${event.id}"),
       margin: EdgeInsets.zero,
       color: Theme.of(context).scaffoldBackgroundColor,
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: () => setState(() => _expandedPrediction = expanded ? null : event.id),
+        onTap: toggleExpanded,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final narrow = constraints.maxWidth < 340;
+              final action = FilledButton(
+                onPressed: () => unawaited(_open(event)),
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: Text(event.isOpen ? "Predict" : "See Details"),
+              );
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          winner == null
-                              ? "Predict with Channel Points"
-                              : "${event.title} · ${winner.title}",
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.labelSmall,
-                        ),
-                        Text(
-                          winner != null || (!expanded && event.outcomes.length == 2 && _showTotals)
-                              ? summary
-                              : event.title,
-                          maxLines: expanded ? 3 : 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleSmall,
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  FilledButton(
-                    onPressed: () => unawaited(_open(event)),
-                    style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
-                    child: Text(event.isOpen ? "Predict" : "See Details"),
-                  ),
-                  IconButton(
-                    tooltip: expanded ? "Minimize prediction" : "Expand prediction",
-                    style: IconButton.styleFrom(
-                      minimumSize: const Size(32, 28),
-                      fixedSize: const Size(32, 28),
-                      padding: EdgeInsets.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    onPressed: () =>
-                        setState(() => _expandedPrediction = expanded ? null : event.id),
-                    icon: Icon(
-                      expanded
-                          ? Icons.keyboard_arrow_up_rounded
-                          : Icons.keyboard_arrow_down_rounded,
-                      size: 20,
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: "Close prediction",
-                    style: IconButton.styleFrom(
-                      minimumSize: const Size(32, 28),
-                      fixedSize: const Size(32, 28),
-                      padding: EdgeInsets.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    onPressed: () => _dismissPrediction(event.id),
-                    icon: const Icon(Icons.close_rounded, size: 20),
-                  ),
-                ],
-              ),
-              if (expanded) ...[
-                const SizedBox(height: 6),
-                for (final (index, outcome) in event.outcomes.indexed)
                   Row(
                     children: [
                       Expanded(
-                        child: Text(
-                          "${index + 1}. ${outcome.title}",
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        child: Row(
+                          children: [
+                            if (winner != null) ...[
+                              Transform.translate(
+                                offset: const Offset(-1.5, 0),
+                                child: const Icon(
+                                  Icons.emoji_events_outlined,
+                                  size: 20,
+                                  semanticLabel: "Winner",
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                            ],
+                            Expanded(
+                              child: Text(
+                                title,
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.titleSmall,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      Text(
-                        _points(outcome.points),
-                        style: TextStyle(color: colors.onSurfaceVariant),
+                      if (!narrow) ...[const SizedBox(width: 8), action],
+                      IconButton(
+                        tooltip: expanded ? "Minimize prediction" : "Expand prediction",
+                        style: IconButton.styleFrom(
+                          minimumSize: const Size(32, 28),
+                          fixedSize: const Size(32, 28),
+                          padding: EdgeInsets.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        onPressed: toggleExpanded,
+                        icon: Icon(
+                          expanded
+                              ? Icons.keyboard_arrow_up_rounded
+                              : Icons.keyboard_arrow_down_rounded,
+                          size: 20,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: "Close prediction",
+                        style: IconButton.styleFrom(
+                          minimumSize: const Size(32, 28),
+                          fixedSize: const Size(32, 28),
+                          padding: EdgeInsets.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        onPressed: () => _dismissPrediction(event.id),
+                        icon: const Icon(Icons.close_rounded, size: 20),
                       ),
                     ],
                   ),
-                const SizedBox(height: 8),
-              ],
-              const SizedBox(height: 4),
-              LinearProgressIndicator(
-                value:
-                    (_predictionHighlights[event.id]!.expiresAt
-                                .difference(DateTime.now())
-                                .inMilliseconds /
-                            (winner != null
-                                ? 120000
-                                : max(
-                                    1,
-                                    event.closesAt.difference(event.createdAt).inMilliseconds,
-                                  )))
-                        .clamp(0.0, 1.0),
-                minHeight: 3,
-                borderRadius: BorderRadius.circular(3),
-              ),
-            ],
+                  if (narrow) action,
+                  if (expanded) ...[
+                    const SizedBox(height: 6),
+                    for (final (index, outcome) in event.outcomes.indexed)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 10),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                "${index + 1}. ${outcome.title}",
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              _points(outcome.points),
+                              style: TextStyle(color: colors.onSurfaceVariant),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                  const SizedBox(height: 4),
+                  LinearProgressIndicator(
+                    value:
+                        (_predictionHighlights[event.id]!.expiresAt
+                                    .difference(DateTime.now())
+                                    .inMilliseconds /
+                                (winner != null
+                                    ? 120000
+                                    : max(
+                                        1,
+                                        event.closesAt.difference(event.createdAt).inMilliseconds,
+                                      )))
+                            .clamp(0.0, 1.0),
+                    minHeight: 3,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ],
+              );
+            },
           ),
         ),
       ),

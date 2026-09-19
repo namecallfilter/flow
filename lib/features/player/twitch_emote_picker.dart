@@ -215,6 +215,7 @@ class _TwitchEmotePickerState extends State<TwitchEmotePicker> {
           SliverToBoxAdapter(
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
               child: Row(
                 children: [
                   for (final entry in <ChatEmoteProvider?, String>{
@@ -254,6 +255,7 @@ class _TwitchEmotePickerState extends State<TwitchEmotePicker> {
             SliverToBoxAdapter(
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [

@@ -1,10 +1,12 @@
 package com.namecallfilter.flow
 
+import android.media.AudioManager
 import android.os.Handler
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.common.TrackGroup
 import androidx.media3.common.TrackSelectionOverride
@@ -29,6 +31,31 @@ import org.junit.Test
 
 @UnstableApi
 class TwitchPlayerQualityTest {
+    @Test
+    fun dictationKeepsMutedVideoMovingOnlyWhileTypingAndNeverOverridesPauseOrCalls() {
+        fun keepVideo(
+            keyboard: Boolean = true,
+            recording: Boolean = true,
+            playing: Boolean = true,
+            audioOnly: Boolean = false,
+            mode: Int = AudioManager.MODE_NORMAL,
+            suppression: Int = Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS,
+            active: Boolean = false,
+        ) = TwitchPlayerView.shouldKeepVideoDuringDictation(
+            keyboard, recording, playing, audioOnly, mode, suppression, active,
+        )
+
+        assertTrue(keepVideo())
+        assertTrue(keepVideo(suppression = Player.PLAYBACK_SUPPRESSION_REASON_NONE, active = true))
+        assertFalse(keepVideo(suppression = Player.PLAYBACK_SUPPRESSION_REASON_NONE))
+        assertFalse(keepVideo(keyboard = false, active = true))
+        assertFalse(keepVideo(recording = false, active = true))
+        assertFalse(keepVideo(playing = false, active = true))
+        assertFalse(keepVideo(audioOnly = true))
+        assertFalse(keepVideo(mode = AudioManager.MODE_IN_CALL, active = true))
+        assertFalse(keepVideo(mode = AudioManager.MODE_IN_COMMUNICATION, active = true))
+    }
+
     @Test
     fun vodKeepsLoadingPastOneLongSegmentSoAutoCanUpgrade() {
         val timeline = SinglePeriodTimeline(60_000_000L, true, false, false, null, MediaItem.EMPTY)

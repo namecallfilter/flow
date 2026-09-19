@@ -121,12 +121,14 @@ void main() {
     await tester.pumpWidget(_picker(assets, MemoryFlowPreferences()));
     await tester.pumpAndSettle();
     expect(find.text("Emotes you use will appear here."), findsOneWidget);
+    expect(tester.getTopLeft(find.widgetWithText(ChoiceChip, "Recent")).dx, 12);
     expect(assets.unlockedLoads, 0);
     await tester.tap(find.text("Twitch"));
     await tester.pumpAndSettle();
     expect(find.byTooltip("twitch-channel"), findsOneWidget);
     expect(find.byTooltip("twitch-global"), findsNothing);
     expect(find.text("Unlocked"), findsOneWidget);
+    expect(tester.getTopLeft(find.widgetWithText(ChoiceChip, "Channel")).dx, 12);
     final image = tester.widget<Image>(find.byType(Image));
     expect((image.image as NetworkImage).url, endsWith("/light/2.0"));
     await tester.tap(find.text("Global"));

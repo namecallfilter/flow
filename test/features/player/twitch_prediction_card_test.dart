@@ -10,6 +10,92 @@ import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  testWidgets("prediction headers stay aligned in sidechat and collapse survives refresh", (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final client = _Client()..status = "RESOLVED";
+    final controller = TwitchChatController(
+      clientLoader: () async => client,
+      channel: "channel",
+      autoConnect: false,
+    );
+    addTearDown(controller.dispose);
+    Widget app(double width) => MaterialApp(
+      home: Scaffold(
+        body: Align(
+          alignment: Alignment.topLeft,
+          child: SizedBox(
+            width: width,
+            child: TwitchPredictionCard(
+              controller: controller,
+              isVisible: true,
+              showSheet: (_) async {},
+            ),
+          ),
+        ),
+      ),
+    );
+    for (final width in [390.0, 240.0]) {
+      await tester.pumpWidget(app(width));
+      await tester.pumpAndSettle();
+      final close = tester.getRect(find.byTooltip("Close prediction"));
+      final minimize = tester.getRect(find.byTooltip("Minimize prediction"));
+      final action = tester.getRect(find.widgetWithText(FilledButton, "See Details"));
+      final title = tester.getRect(find.text("Lions"));
+      final card = tester.getRect(find.byKey(const ValueKey("prediction-event")));
+      final progress = tester.getRect(find.byType(LinearProgressIndicator));
+      expect(action.height, 32);
+      expect((width > 340 ? action.top : close.top) - card.top, 8);
+      expect(card.bottom - progress.bottom, 8);
+      expect(close.center.dy, minimize.center.dy);
+      final closeIcon = tester.getRect(
+        find.descendant(
+          of: find.byTooltip("Close prediction"),
+          matching: find.byIcon(Icons.close_rounded),
+        ),
+      );
+      expect(tester.getRect(find.text("3,911,760")).right, closeIcon.right - 4);
+      expect(
+        tester.getRect(find.text("1. Lions")).left,
+        tester.getRect(find.byIcon(Icons.emoji_events_outlined)).left + 1.5,
+      );
+      expect(title.center.dy, close.center.dy);
+      expect(tester.getRect(find.byIcon(Icons.emoji_events_outlined)).center.dy, close.center.dy);
+      expect(find.textContaining("points awarded"), findsNothing);
+      expect(find.textContaining("go to"), findsNothing);
+      expect(find.text("Who wins?"), findsNothing);
+      if (width > 340) {
+        expect(action.center.dy, close.center.dy);
+      } else {
+        expect(action.top, greaterThanOrEqualTo(title.bottom));
+      }
+      await tester.tap(find.byTooltip("Minimize prediction"));
+      await tester.pumpAndSettle();
+      expect(tester.getRect(find.byTooltip("Close prediction")), close);
+      expect(tester.getRect(find.widgetWithText(FilledButton, "See Details")), action);
+      expect(tester.getRect(find.text("Lions")), title);
+      expect(
+        tester.getRect(find.byKey(const ValueKey("prediction-event"))).bottom -
+            tester.getRect(find.byType(LinearProgressIndicator)).bottom,
+        8,
+      );
+      await tester.tap(find.byTooltip("Expand prediction"));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    }
+    await tester.tap(find.byTooltip("Minimize prediction"));
+    await tester.pumpAndSettle();
+    controller.predictionUpdates.notifyListeners();
+    await tester.pumpAndSettle();
+    expect(find.byTooltip("Expand prediction"), findsOneWidget);
+    expect(find.text("3,911,760"), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets("all ten prediction outcomes remain selectable on a narrow phone", (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
@@ -51,8 +137,12 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text("Who wins?"), findsOneWidget);
-    await tester.tap(find.byTooltip("Expand prediction"));
-    await tester.pumpAndSettle();
+    expect(find.text("Predict with Channel Points"), findsNothing);
+    expect(
+      tester.getCenter(find.text("Who wins?")).dy,
+      tester.getCenter(find.byTooltip("Minimize prediction")).dy,
+    );
+    expect(find.byTooltip("Minimize prediction"), findsOneWidget);
     for (var index = 1; index <= 10; index++) {
       expect(find.text("$index. Outcome $index"), findsOneWidget);
     }
@@ -91,18 +181,32 @@ void main() {
     addTearDown(controller.dispose);
     await tester.pumpWidget(
       MaterialApp(
-        home: TwitchPredictionCard(
-          controller: controller,
-          isVisible: true,
-          showSheet: (_) async {},
+        home: Align(
+          alignment: Alignment.topLeft,
+          child: SizedBox(
+            width: 240,
+            child: TwitchPredictionCard(
+              controller: controller,
+              isVisible: true,
+              showSheet: (_) async {},
+            ),
+          ),
         ),
       ),
     );
     await tester.pump();
     expect(find.text("Who wins?"), findsOneWidget);
+    await tester.tap(find.byTooltip("Minimize prediction"));
+    await tester.pump();
     await tester.pump(const Duration(seconds: 4));
     expect(find.text("Who wins?"), findsNothing);
     expect(find.text("3.9M vs 7.9M"), findsOneWidget);
+    final totals = tester.getRect(find.text("3.9M vs 7.9M"));
+    final action = tester.getRect(find.widgetWithText(FilledButton, "Predict"));
+    await tester.tap(find.byTooltip("Expand prediction"));
+    await tester.pump();
+    expect(tester.getRect(find.text("3.9M vs 7.9M")), totals);
+    expect(tester.getRect(find.widgetWithText(FilledButton, "Predict")), action);
     await tester.pump(const Duration(seconds: 4));
     expect(find.text("Who wins?"), findsOneWidget);
     await tester.pump(const Duration(seconds: 3));
@@ -162,8 +266,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byType(PopupMenuButton<String>), findsNothing);
-    await tester.tap(find.byTooltip("Expand prediction"));
-    await tester.pumpAndSettle();
+    expect(find.byTooltip("Minimize prediction"), findsOneWidget);
     expect(find.text("3,911,760"), findsOneWidget);
     await tester.tap(find.byTooltip("Minimize prediction"));
     await tester.pumpAndSettle();
@@ -177,8 +280,9 @@ void main() {
     client.status = "RESOLVE_PENDING";
     controller.predictionUpdates.notifyListeners();
     await tester.pumpAndSettle();
-    expect(find.text("Who wins? · Lions"), findsOneWidget);
+    expect(find.text("Lions"), findsOneWidget);
     expect(find.text("See Details"), findsOneWidget);
+    expect(find.byTooltip("Minimize prediction"), findsOneWidget);
     await tester.pump(const Duration(seconds: 60));
     client.status = "RESOLVED";
     controller.predictionUpdates.notifyListeners();
@@ -251,7 +355,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text("Who wins?"), findsOneWidget);
     expect(find.text("Pinned old"), findsNothing);
-    expect(find.text("View All (2)"), findsOneWidget);
+    expect(find.text("View All (2)"), findsNothing);
     final peek = tester.getRect(find.byKey(const ValueKey("highlight-stack-peek")));
     await tester.tapAt(Offset(peek.center.dx, peek.top + 4));
     await tester.pumpAndSettle();
@@ -267,8 +371,9 @@ void main() {
     await tester.pumpWidget(app(pin: "new", createdAt: DateTime.utc(2026, 9, 19)));
     await tester.pumpAndSettle();
     expect(find.text("Pinned new"), findsOneWidget);
-    expect(find.text("View All (2)"), findsOneWidget);
-    await tester.tap(find.text("View All (2)"));
+    expect(find.text("View All (2)"), findsNothing);
+    final nextPeek = tester.getRect(find.byKey(const ValueKey("highlight-stack-peek")));
+    await tester.tapAt(Offset(nextPeek.center.dx, nextPeek.top + 4));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey("highlight-select-prediction-event")));
     await tester.pumpAndSettle();
@@ -351,7 +456,13 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(find.text("Winner: Lions"), findsWidgets);
-    expect(find.byIcon(Icons.emoji_events_outlined), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.ancestor(of: find.text("Winner"), matching: find.byType(Row)).first,
+        matching: find.byIcon(Icons.emoji_events_outlined),
+      ),
+      findsOneWidget,
+    );
     expect(find.text("Winner"), findsOneWidget);
     expect(client.transactions, isEmpty);
     await tester.pumpWidget(const SizedBox.shrink());
@@ -387,7 +498,7 @@ void main() {
     pending.complete(await _Client().fetchPredictions("channel"));
     await tester.pumpAndSettle();
     expect(client.fetches, 2);
-    expect(find.text("Who wins? · Lions"), findsOneWidget);
+    expect(find.text("Lions"), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -536,9 +647,6 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text("Who wins?"), findsOneWidget);
-    expect(find.text("3,911,760"), findsNothing);
-    await tester.tap(find.text("Who wins?"));
-    await tester.pumpAndSettle();
     expect(find.text("3,911,760"), findsOneWidget);
     await tester.tap(find.text("Predict"));
     await tester.pumpAndSettle();

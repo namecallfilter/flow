@@ -655,11 +655,15 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
     final followers = int.tryParse(room["followers-only"] ?? "") ?? -1;
     final slow = int.tryParse(room["slow"] ?? "") ?? 0;
     final restrictions = [
-      if (followers >= 0) followers == 0 ? "Followers only" : "Followers · ${followers}m",
-      if (slow > 0) "Slow mode · ${slow}s",
-      if (room["subs-only"] == "1") "Subscribers only",
-      if (room["emote-only"] == "1") "Emotes only",
-      if (room["r9k"] == "1") "Unique chat",
+      if (followers >= 0)
+        (
+          Icons.favorite_outline_rounded,
+          followers == 0 ? "Followers only" : "Followers · ${followers}m",
+        ),
+      if (slow > 0) (Icons.timer_outlined, "Slow mode · ${slow}s"),
+      if (room["subs-only"] == "1") (Icons.star_outline_rounded, "Subscribers only"),
+      if (room["emote-only"] == "1") (Icons.sentiment_satisfied_alt_rounded, "Emotes only"),
+      if (room["r9k"] == "1") (Icons.fingerprint_rounded, "Unique chat"),
     ];
     final action = await _showSheet<_ChatAction>(
       builder: (context) => SafeArea(
@@ -667,6 +671,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               if (restrictions.isNotEmpty)
                 Padding(
@@ -674,7 +679,8 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                   child: Wrap(
                     spacing: 6,
                     children: [
-                      for (final restriction in restrictions) Chip(label: Text(restriction)),
+                      for (final (icon, label) in restrictions)
+                        Chip(avatar: Icon(icon, size: 18), label: Text(label)),
                     ],
                   ),
                 ),
@@ -2129,17 +2135,17 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
           ),
           clipBehavior: Clip.antiAlias,
           child: SingleChildScrollView(
-            padding: EdgeInsets.fromLTRB(8, 0, 8, expanded ? 12 : 9),
+            padding: const EdgeInsets.all(8),
             child: Column(
               mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
+                Stack(
+                  alignment: Alignment.centerLeft,
+                  clipBehavior: Clip.none,
                   children: [
-                    Icon(Icons.push_pin_rounded, size: 18, color: colors.onSurfaceVariant),
-                    const SizedBox(width: 8),
-                    Expanded(
+                    Padding(
+                      padding: const EdgeInsets.only(left: 26, right: 64),
                       child: Text.rich(
                         TextSpan(
                           children: [
@@ -2186,44 +2192,54 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                         ),
                       ),
                     ),
-                    IconButton(
-                      tooltip: expanded ? "Minimize pinned message" : "Expand pinned message",
-                      style: IconButton.styleFrom(
-                        minimumSize: const Size(32, 28),
-                        fixedSize: const Size(32, 28),
-                        padding: EdgeInsets.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      child: Row(
+                        children: [
+                          Icon(Icons.push_pin_rounded, size: 18, color: colors.onSurfaceVariant),
+                          const Spacer(),
+                          IconButton(
+                            tooltip: expanded ? "Minimize pinned message" : "Expand pinned message",
+                            style: IconButton.styleFrom(
+                              minimumSize: const Size(32, 28),
+                              fixedSize: const Size(32, 28),
+                              padding: EdgeInsets.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            onPressed: () {
+                              _pinCollapseTimer?.cancel();
+                              _autoCollapsePinId = pin.id;
+                              setState(() => _minimizedPinId = expanded ? pin.id : null);
+                            },
+                            icon: Icon(
+                              expanded
+                                  ? Icons.keyboard_arrow_up_rounded
+                                  : Icons.keyboard_arrow_down_rounded,
+                              size: 20,
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: "Close pinned message",
+                            style: IconButton.styleFrom(
+                              minimumSize: const Size(32, 28),
+                              fixedSize: const Size(32, 28),
+                              padding: EdgeInsets.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            onPressed: () {
+                              _pinCollapseTimer?.cancel();
+                              setState(() => _dismissedPinId = pin.id);
+                            },
+                            icon: const Icon(Icons.close_rounded, size: 20),
+                          ),
+                        ],
                       ),
-                      onPressed: () {
-                        _pinCollapseTimer?.cancel();
-                        _autoCollapsePinId = pin.id;
-                        setState(() => _minimizedPinId = expanded ? pin.id : null);
-                      },
-                      icon: Icon(
-                        expanded
-                            ? Icons.keyboard_arrow_up_rounded
-                            : Icons.keyboard_arrow_down_rounded,
-                        size: 20,
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: "Close pinned message",
-                      style: IconButton.styleFrom(
-                        minimumSize: const Size(32, 28),
-                        fixedSize: const Size(32, 28),
-                        padding: EdgeInsets.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      onPressed: () {
-                        _pinCollapseTimer?.cancel();
-                        setState(() => _dismissedPinId = pin.id);
-                      },
-                      icon: const Icon(Icons.close_rounded, size: 20),
                     ),
                   ],
                 ),
                 Padding(
-                  padding: const EdgeInsets.only(left: 26, top: 1, right: 4),
+                  padding: const EdgeInsets.only(left: 26, top: 4, right: 4),
                   child: GestureDetector(
                     onTap: () => unawaited(_showThread(pin.message, pinned: true)),
                     onLongPress: expanded
@@ -3632,34 +3648,48 @@ class _ChatThreadSheetState extends State<_ChatThreadSheet> {
                     ],
                   ),
                 Flexible(
-                  child: ListView.builder(
-                    key: const ValueKey("chat_reply_thread"),
-                    shrinkWrap: true,
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
-                    itemCount: thread.length,
-                    findChildIndexCallback: (key) => indices[key],
-                    itemBuilder: (context, index) => Padding(
-                      key: ValueKey("thread-item-${thread[index].id}"),
-                      padding: EdgeInsets.only(
-                        left: ((depths[thread[index].id]! - 1) * 24.0).clamp(
-                          0.0,
-                          (MediaQuery.sizeOf(context).width * 0.4 / 24).floor() * 24.0,
-                        ),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.baseline,
-                        textBaseline: TextBaseline.alphabetic,
-                        children: [
-                          if (thread[index].id != root)
-                            SizedBox(
-                              width: 24,
-                              child: Icon(
-                                Icons.subdirectory_arrow_right_rounded,
-                                size: 20,
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final maxDepth = (constraints.maxWidth * 0.4 / 24).floor();
+                      final visibleDepths = [
+                        for (final item in thread) depths[item.id]!.clamp(0, maxDepth),
+                      ];
+                      final rails = List.generate(thread.length, (_) => <int>{});
+                      final pending = <int>{};
+                      for (var index = thread.length - 1; index >= 0; index--) {
+                        final depth = visibleDepths[index];
+                        rails[index].addAll(pending.where((level) => level <= depth));
+                        pending.removeWhere((level) => level >= depth);
+                        if (depth > 0) {
+                          pending.add(depth);
+                        }
+                      }
+                      return ListView.builder(
+                        key: const ValueKey("chat_reply_thread"),
+                        shrinkWrap: true,
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+                        itemCount: thread.length,
+                        findChildIndexCallback: (key) => indices[key],
+                        itemBuilder: (context, index) => CustomPaint(
+                          key: ValueKey("thread-item-${thread[index].id}"),
+                          painter: _ReplyConnectors(
+                            depth: visibleDepths[index],
+                            rails: rails[index],
+                            hasReplies:
+                                index + 1 < thread.length &&
+                                visibleDepths[index + 1] > visibleDepths[index],
+                            branchY:
+                                preferences.messageSpacing / 2 +
+                                MediaQuery.textScalerOf(context).scale(
+                                      preferences.fontSize * preferences.messageScale,
+                                    ) *
+                                    0.7,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.outlineVariant.withValues(alpha: 0.7),
+                          ),
+                          child: Padding(
+                            padding: EdgeInsets.only(left: visibleDepths[index] * 24.0, bottom: 4),
                             child: _ChatMessageRow(
                               key: ValueKey("thread-${thread[index].id}"),
                               message: thread[index],
@@ -3677,9 +3707,9 @@ class _ChatThreadSheetState extends State<_ChatThreadSheet> {
                               onMessageHold: widget.onMessageHold,
                             ),
                           ),
-                        ],
-                      ),
-                    ),
+                        ),
+                      );
+                    },
                   ),
                 ),
               ],
@@ -3689,6 +3719,57 @@ class _ChatThreadSheetState extends State<_ChatThreadSheet> {
       ),
     ),
   );
+}
+
+class _ReplyConnectors extends CustomPainter {
+  const _ReplyConnectors({
+    required this.depth,
+    required this.rails,
+    required this.hasReplies,
+    required this.branchY,
+    required this.color,
+  });
+
+  final int depth;
+  final Set<int> rails;
+  final bool hasReplies;
+  final double branchY;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    for (final level in rails) {
+      final x = (level - 1) * 24.0;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+    }
+    if (depth > 0) {
+      final x = (depth - 1) * 24.0;
+      final radius = branchY.clamp(0.0, 16.0);
+      canvas.drawPath(
+        Path()
+          ..moveTo(x, 0)
+          ..lineTo(x, branchY - radius)
+          ..quadraticBezierTo(x, branchY, x + radius, branchY),
+        paint,
+      );
+    }
+    if (hasReplies) {
+      final x = depth * 24.0;
+      canvas.drawLine(Offset(x, size.height - 4), Offset(x, size.height), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ReplyConnectors oldDelegate) =>
+      depth != oldDelegate.depth ||
+      !setEquals(rails, oldDelegate.rails) ||
+      hasReplies != oldDelegate.hasReplies ||
+      branchY != oldDelegate.branchY ||
+      color != oldDelegate.color;
 }
 
 // Google Material Symbols, domino_mask (Apache-2.0).
@@ -4431,7 +4512,7 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
         TextSpan(children: content),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: theme.textTheme.bodyMedium?.copyWith(fontSize: _fontSize),
+        style: theme.textTheme.bodyMedium?.copyWith(height: 1.4, fontSize: _fontSize),
       );
     }
     if (widget.previewPrefix case final prefix?) {
@@ -4468,10 +4549,11 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
             : null);
     final system = message.noticeType == "system";
     final highlighted =
-        firstMessage ||
-        message.isHighlighted ||
-        (settings.highlightMentions && widget.isMention) ||
-        (notice != null && !system);
+        !widget.pinned &&
+        (firstMessage ||
+            message.isHighlighted ||
+            (settings.highlightMentions && widget.isMention) ||
+            (notice != null && !system));
     final watchStreak = message.noticeType == "watch-streak";
     final subscription =
         !message.isPrivate &&
@@ -4577,6 +4659,135 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
               ],
       ),
     ];
+    final replyContext = widget.showReplyContext && message.parentMessageId != null && !hidden
+        ? InkWell(
+            key: ValueKey("reply-context-${message.id}"),
+            onTap: widget.onThreadTap == null ? null : () => widget.onThreadTap!(message),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Transform.flip(
+                    flipX: true,
+                    flipY: true,
+                    child: Icon(
+                      Icons.format_quote_rounded,
+                      size: _fontSize + 2,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: widget.blockedLogins.contains(parentLogin?.toLowerCase())
+                        ? Text(
+                            "Blocked message",
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              fontSize: _fontSize - 2,
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          )
+                        : _ChatMessageRow(
+                            message: TwitchChatMessage(
+                              id: message.parentMessageId!,
+                              login: parentLogin ?? "",
+                              displayName: message.parentDisplayName ?? parentLogin ?? "Reply",
+                              text: message.parentText ?? "View thread",
+                              emotes: message.parentEmotes,
+                              gifs: message.parentGifs,
+                              isOwn: widget.knownUsers[parentLogin?.toLowerCase()]?.isOwn ?? false,
+                            ),
+                            settings: settings,
+                            assets: assets,
+                            knownUsers: widget.knownUsers,
+                            blockedLogins: widget.blockedLogins,
+                            bodyKey: widget.replyContextKey,
+                            previewPrefix:
+                                "${_chatDisplayName(message.parentDisplayName ?? parentLogin ?? 'Reply', parentLogin)}: ",
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          )
+        : null;
+    final messageContext = <Widget>[
+      if (message.isPrivate)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.lock_rounded,
+                size: _fontSize - 2,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  "Only visible to you",
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ?replyContext,
+      if (firstMessage)
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.auto_awesome, size: _fontSize),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text("First-time chatter", style: theme.textTheme.labelSmall),
+            ),
+          ],
+        ),
+      if (notice != null)
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (noticeImage != null || subscription || message.noticeType == "announcement") ...[
+              if (noticeImage != null)
+                SvgPicture.string(
+                  noticeImage.$1,
+                  width: _fontSize,
+                  height: _fontSize,
+                  colorFilter: ColorFilter.mode(
+                    theme.colorScheme.onSurface,
+                    BlendMode.srcIn,
+                  ),
+                  semanticsLabel: noticeImage.$2,
+                )
+              else
+                Icon(
+                  message.noticeType == "announcement"
+                      ? Icons.campaign
+                      : gift
+                      ? Icons.redeem
+                      : Icons.star_rounded,
+                  size: _fontSize,
+                ),
+              const SizedBox(width: 4),
+            ],
+            Expanded(
+              child: Text(
+                message.text.isEmpty && showTimestamps && timestamp != null
+                    ? "$timestamp $notice"
+                    : notice,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontSize: _fontSize - 2,
+                  color: system ? theme.colorScheme.onSurfaceVariant : null,
+                ),
+              ),
+            ),
+          ],
+        ),
+    ];
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onLongPressDown: widget.onMessageHold == null ? null : _onLongPressDown,
@@ -4629,136 +4840,7 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (message.isPrivate)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 4),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Icon(
-                            Icons.lock_rounded,
-                            size: _fontSize - 2,
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: Text(
-                              "Only visible to you",
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  if (widget.showReplyContext && message.parentMessageId != null && !hidden)
-                    InkWell(
-                      key: ValueKey("reply-context-${message.id}"),
-                      onTap: widget.onThreadTap == null ? null : () => widget.onThreadTap!(message),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 3),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Transform.flip(
-                              flipX: true,
-                              flipY: true,
-                              child: Icon(
-                                Icons.format_quote_rounded,
-                                size: _fontSize + 2,
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Expanded(
-                              child: widget.blockedLogins.contains(parentLogin?.toLowerCase())
-                                  ? Text(
-                                      "Blocked message",
-                                      style: theme.textTheme.bodySmall?.copyWith(
-                                        fontSize: _fontSize - 2,
-                                        color: theme.colorScheme.onSurfaceVariant,
-                                      ),
-                                    )
-                                  : _ChatMessageRow(
-                                      message: TwitchChatMessage(
-                                        id: message.parentMessageId!,
-                                        login: parentLogin ?? "",
-                                        displayName:
-                                            message.parentDisplayName ?? parentLogin ?? "Reply",
-                                        text: message.parentText ?? "View thread",
-                                        emotes: message.parentEmotes,
-                                        gifs: message.parentGifs,
-                                        isOwn:
-                                            widget.knownUsers[parentLogin?.toLowerCase()]?.isOwn ??
-                                            false,
-                                      ),
-                                      settings: settings,
-                                      assets: assets,
-                                      knownUsers: widget.knownUsers,
-                                      blockedLogins: widget.blockedLogins,
-                                      bodyKey: widget.replyContextKey,
-                                      previewPrefix:
-                                          "${_chatDisplayName(message.parentDisplayName ?? parentLogin ?? 'Reply', parentLogin)}: ",
-                                    ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  if (firstMessage)
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(Icons.auto_awesome, size: _fontSize),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text("First-time chatter", style: theme.textTheme.labelSmall),
-                        ),
-                      ],
-                    ),
-                  if (notice != null)
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (noticeImage != null ||
-                            subscription ||
-                            message.noticeType == "announcement") ...[
-                          if (noticeImage != null)
-                            SvgPicture.string(
-                              noticeImage.$1,
-                              width: _fontSize,
-                              height: _fontSize,
-                              colorFilter: ColorFilter.mode(
-                                theme.colorScheme.onSurface,
-                                BlendMode.srcIn,
-                              ),
-                              semanticsLabel: noticeImage.$2,
-                            )
-                          else
-                            Icon(
-                              message.noticeType == "announcement"
-                                  ? Icons.campaign
-                                  : gift
-                                  ? Icons.redeem
-                                  : Icons.star_rounded,
-                              size: _fontSize,
-                            ),
-                          const SizedBox(width: 4),
-                        ],
-                        Expanded(
-                          child: Text(
-                            message.text.isEmpty && showTimestamps && timestamp != null
-                                ? "$timestamp $notice"
-                                : notice,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              fontSize: _fontSize - 2,
-                              color: system ? theme.colorScheme.onSurfaceVariant : null,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
+                  if (!widget.pinned) ...messageContext,
                   if (message.text.isNotEmpty && !hidden && (!widget.pinned || art == null))
                     Text.rich(
                       TextSpan(
@@ -4790,6 +4872,7 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
                       style: theme.textTheme.bodyMedium?.copyWith(height: 1.4, fontSize: _fontSize),
                     ),
                   ?art,
+                  if (widget.pinned) ...messageContext,
                   if (message.noticeAction case final action? when message.isPrivate && !hidden)
                     TextButton(
                       onPressed: () async {

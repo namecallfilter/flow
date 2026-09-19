@@ -1442,7 +1442,7 @@ void main() {
       );
       expect(
         find.descendant(of: thread, matching: find.byIcon(Icons.subdirectory_arrow_right_rounded)),
-        findsNWidgets(3),
+        findsNothing,
       );
       controller.history.add(
         const TwitchChatMessage(
@@ -1498,7 +1498,7 @@ void main() {
     },
   );
 
-  testWidgets("branching reply arrows share a gutter and align with scaled multiline rows", (
+  testWidgets("reply rails connect nested siblings across scaled multiline rows", (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 1000);
@@ -1547,50 +1547,58 @@ void main() {
       await tester.pumpAndSettle();
       final thread = find.byKey(const ValueKey("chat_reply_thread"));
       final scrollable = find.descendant(of: thread, matching: find.byType(Scrollable));
+      final rootItem = find.byKey(const ValueKey("thread-item-root"));
+      final rootRow = find.byKey(const ValueKey("thread-root"));
+      final rootHeight = tester.getSize(rootItem).height;
+      expect(tester.getTopLeft(rootRow).dx, tester.getTopLeft(rootItem).dx);
+      expect(
+        rootItem,
+        paints..line(p1: Offset(0, rootHeight - 4), p2: Offset(0, rootHeight)),
+      );
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey("thread-nested-1"))).dy -
+            tester.getBottomLeft(rootRow).dy,
+        closeTo(4, 0.1),
+      );
       final firstLeft = tester.getTopLeft(find.byKey(const ValueKey("thread-nested-1"))).dx;
       for (var depth = 1; depth <= 10; depth++) {
         final row = find.byKey(ValueKey("thread-nested-$depth"));
         await tester.scrollUntilVisible(row, 150, scrollable: scrollable);
         final item = find.byKey(ValueKey("thread-item-nested-$depth"));
-        final arrow = find.descendant(
-          of: item,
-          matching: find.byIcon(Icons.subdirectory_arrow_right_rounded),
-        );
-        final rowBox = tester.renderObject<RenderBox>(row);
-        final arrowBox = tester.renderObject<RenderBox>(arrow);
+        final size = tester.getSize(item);
+        final inset = tester.getTopLeft(row).dx - tester.getTopLeft(item).dx;
         expect(
-          arrowBox
-              .localToGlobal(
-                Offset(
-                  0,
-                  arrowBox.getDryBaseline(
-                    BoxConstraints.tight(arrowBox.size),
-                    TextBaseline.alphabetic,
-                  )!,
-                ),
-              )
-              .dy,
-          closeTo(
-            rowBox
-                .localToGlobal(
-                  Offset(
-                    0,
-                    rowBox.getDryBaseline(
-                      BoxConstraints.tight(rowBox.size),
-                      TextBaseline.alphabetic,
-                    )!,
-                  ),
-                )
-                .dy,
-            0.01,
-          ),
+          item,
+          paints
+            ..line(p1: Offset.zero, p2: Offset(0, size.height))
+            ..something((method, arguments) {
+              if (method != #drawPath) {
+                return false;
+              }
+              final metric = (arguments.first as Path).computeMetrics().single;
+              final start = metric.getTangentForOffset(0)!;
+              final end = metric.getTangentForOffset(metric.length)!;
+              expect(start.position.dy, 0);
+              expect(start.vector.dx, 0);
+              expect(end.position.dx, closeTo(inset - 8, 0.01));
+              expect(end.position.dy, inInclusiveRange(10 * scale, 26 * scale));
+              expect(end.vector.dy, 0);
+              return true;
+            }),
         );
-        expect(tester.getTopLeft(row).dx, firstLeft + (depth - 1).clamp(0, 6) * 24);
+        expect(tester.getTopLeft(row).dx, firstLeft + (depth - 1).clamp(0, 5) * 24);
         expect(tester.getSize(row).width, greaterThanOrEqualTo(190));
       }
       final siblingRow = find.byKey(const ValueKey("thread-sibling"));
       await tester.scrollUntilVisible(siblingRow, 150, scrollable: scrollable);
       expect(tester.getTopLeft(siblingRow).dx, firstLeft);
+      expect(
+        find.byKey(const ValueKey("thread-item-sibling")),
+        paints..path(
+          color: buildFlowTheme(Brightness.dark).colorScheme.outlineVariant.withValues(alpha: 0.7),
+          strokeWidth: 1,
+        ),
+      );
       expect(tester.takeException(), isNull);
       await tester.tap(find.byTooltip("Close thread"));
       await tester.pumpAndSettle();
@@ -2460,7 +2468,7 @@ void main() {
     expect(_log(thread, "Live second answer"), findsOneWidget);
     expect(
       find.descendant(of: thread, matching: find.byIcon(Icons.subdirectory_arrow_right_rounded)),
-      findsNWidgets(2),
+      findsNothing,
     );
     await tester.longPress(find.byKey(const ValueKey("thread-reply")));
     await tester.pumpAndSettle();
@@ -2946,9 +2954,42 @@ void main() {
       final header = find.textContaining("Pinned by", findRichText: true);
       final body = find.textContaining("A pinned message", findRichText: true);
       final sender = find.textContaining("Viewer sent at", findRichText: true);
+      expect(tester.getTopLeft(header).dx, tester.getTopLeft(body).dx);
       final bodyGap = tester.getTopLeft(sender).dy - tester.getBottomLeft(body).dy;
       expect(bodyGap, closeTo(4, 0.1));
-      expect(tester.getTopLeft(body).dy - tester.getBottomLeft(header).dy, closeTo(1, 0.1));
+      expect(
+        tester.getTopLeft(body).dy - tester.getBottomLeft(header).dy,
+        closeTo(bodyGap, 0.1),
+      );
+      final pinIcon = find.descendant(of: box, matching: find.byIcon(Icons.push_pin_rounded));
+      EdgeInsets pinPadding() =>
+          tester
+                  .widget<SingleChildScrollView>(
+                    find.descendant(of: box, matching: find.byType(SingleChildScrollView)),
+                  )
+                  .padding!
+              as EdgeInsets;
+      expect(pinPadding().top, 8);
+      expect(pinPadding().top, pinPadding().bottom);
+      for (final tooltip in ["Minimize pinned message", "Close pinned message"]) {
+        expect(tester.getCenter(find.byTooltip(tooltip)).dy, tester.getCenter(pinIcon).dy);
+      }
+      expect(
+        tester.getBottomRight(find.byTooltip("Close pinned message")).dx,
+        closeTo(tester.getBottomRight(box).dx - pinPadding().right, 0.1),
+      );
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      tester.platformDispatcher.textScaleFactorTestValue = 1.6;
+      await tester.pump();
+      expect(
+        tester.getTopLeft(body).dy - tester.getBottomLeft(header).dy,
+        closeTo(tester.getTopLeft(sender).dy - tester.getBottomLeft(body).dy, 0.1),
+      );
+      for (final tooltip in ["Minimize pinned message", "Close pinned message"]) {
+        expect(tester.getCenter(find.byTooltip(tooltip)).dy, tester.getCenter(pinIcon).dy);
+      }
+      tester.platformDispatcher.clearTextScaleFactorTestValue();
+      await tester.pump();
       final feed = find.byKey(const ValueKey("spacing-feed"));
       final feedText = find.textContaining("An ordinary feed row", findRichText: true);
       expect(tester.getSize(feed).height - tester.getSize(feedText).height, closeTo(20, 0.1));
@@ -2962,12 +3003,25 @@ void main() {
       expect(find.text("@pinner"), findsOneWidget);
       await tester.tapAt(const Offset(10, 10));
       await tester.pumpAndSettle();
+      final headerTop = tester.getTopLeft(header);
+      final bodyTop = tester.getTopLeft(body);
+      final firstLineY = _textPoint(tester, box, "A pinned message").dy;
+      final controlsCenter = tester.getCenter(find.byTooltip("Minimize pinned message"));
       await tester.tap(find.byTooltip("Minimize pinned message"));
       await tester.pumpAndSettle();
       expect(find.textContaining("sent at", findRichText: true), findsNothing);
       expect(find.byTooltip("Expand pinned message"), findsOneWidget);
+      expect(pinPadding().top, 8);
+      expect(pinPadding().top, pinPadding().bottom);
+      expect(tester.getTopLeft(header), headerTop);
+      expect(tester.getTopLeft(body), bodyTop);
+      expect(_textPoint(tester, box, "A pinned message").dy, firstLineY);
+      expect(tester.getCenter(find.byTooltip("Expand pinned message")), controlsCenter);
       await tester.tap(find.byTooltip("Expand pinned message"));
       await tester.pumpAndSettle();
+      expect(tester.getTopLeft(header), headerTop);
+      expect(tester.getTopLeft(body), bodyTop);
+      expect(_textPoint(tester, box, "A pinned message").dy, firstLineY);
       final bodyTap = await tester.startGesture(_textPoint(tester, box, "A pinned message"));
       await tester.pump();
       expect(_highlight(tester, "pin").color?.a ?? 0, 0);
@@ -3056,7 +3110,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text("Who wins?"), findsOneWidget);
     expect(find.byKey(const ValueKey("chat_pinned_message")), findsNothing);
-    await tester.tap(find.text("View All (2)"));
+    var peek = tester.getRect(find.byKey(const ValueKey("highlight-stack-peek")));
+    await tester.tapAt(Offset(peek.center.dx, peek.top + 4));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey("highlight-select-pin-rich-pin")));
     await tester.pumpAndSettle();
@@ -3101,7 +3156,8 @@ void main() {
         (tester.widget<ListView>(find.byKey(const ValueKey("chat_messages"))).padding!
                 as EdgeInsets)
             .top;
-    await tester.tap(find.text("View All (2)"));
+    peek = tester.getRect(find.byKey(const ValueKey("highlight-stack-peek")));
+    await tester.tapAt(Offset(peek.center.dx, peek.top + 4));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey("highlight-select-prediction-prediction")));
     await tester.pumpAndSettle();
@@ -3112,7 +3168,8 @@ void main() {
           .top,
       isNot(collapsedInset),
     );
-    await tester.tap(find.text("View All (2)"));
+    peek = tester.getRect(find.byKey(const ValueKey("highlight-stack-peek")));
+    await tester.tapAt(Offset(peek.center.dx, peek.top + 4));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey("highlight-select-pin-rich-pin")));
     await tester.pumpAndSettle();
@@ -3194,7 +3251,9 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets("a pinned reply shows its parent context and opens the thread", (tester) async {
+  testWidgets("a highlighted pinned reply keeps its text fixed and opens the thread", (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(400, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -3212,6 +3271,8 @@ void main() {
       id: "pin-reply",
       login: "jay_xxi",
       displayName: "Jay_XXI",
+      isFirstMessage: true,
+      isHighlighted: true,
       text: r"@Chilligolf $26,235,610 pin it up",
       parentMessageId: "pin-parent",
       parentLogin: "chilligolf",
@@ -3242,6 +3303,14 @@ void main() {
     expect(transform.entry(1, 1), -1);
     expect(_log(pin, r"$26,235,610 pin it up"), findsOneWidget);
     expect(_log(pin, r"@Chilligolf $26"), findsNothing);
+    final header = find.descendant(of: pin, matching: find.text("Pinned message"));
+    final headerPosition = tester.getTopLeft(header);
+    final bodyPosition = _textPoint(tester, pin, r"$26");
+    final body = _log(pin, r"$26,235,610 pin it up");
+    expect(tester.getTopLeft(context).dy, greaterThanOrEqualTo(tester.getBottomLeft(body).dy));
+    expect(find.descendant(of: pin, matching: find.text("First-time chatter")), findsOneWidget);
+    expect(find.descendant(of: pin, matching: find.text("Highlighted message")), findsOneWidget);
+    expect(_highlight(tester, "pin-reply").border, isNull);
     await tester.tap(context);
     await tester.pumpAndSettle();
     expect(_log(find.byKey(const ValueKey("chat_reply_thread")), parent.text), findsOneWidget);
@@ -3251,10 +3320,16 @@ void main() {
     await tester.pumpAndSettle();
     expect(context, findsNothing);
     expect(find.text(r"$26,235,610 pin it up"), findsOneWidget);
+    expect(tester.getTopLeft(header), headerPosition);
+    expect(_textPoint(tester, pin, r"$26"), bodyPosition);
+    expect(find.descendant(of: pin, matching: find.text("First-time chatter")), findsNothing);
+    expect(find.descendant(of: pin, matching: find.text("Highlighted message")), findsNothing);
     await tester.tap(find.byTooltip("Expand pinned message"));
     await tester.pumpAndSettle();
     await tester.pump(const Duration(seconds: 6));
     expect(context, findsOneWidget);
+    expect(tester.getTopLeft(header), headerPosition);
+    expect(_textPoint(tester, pin, r"$26"), bodyPosition);
     expect(tester.takeException(), isNull);
   });
 

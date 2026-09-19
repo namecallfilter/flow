@@ -2594,15 +2594,24 @@ void main() {
       const Color(0xFF007B00),
     );
     await _openMenu(tester);
-    for (final mode in [
-      "Followers · 30m",
-      "Slow mode · 10s",
-      "Subscribers only",
-      "Emotes only",
-      "Unique chat",
+    for (final (mode, icon) in [
+      ("Followers · 30m", Icons.favorite_outline_rounded),
+      ("Slow mode · 10s", Icons.timer_outlined),
+      ("Subscribers only", Icons.star_outline_rounded),
+      ("Emotes only", Icons.sentiment_satisfied_alt_rounded),
+      ("Unique chat", Icons.fingerprint_rounded),
     ]) {
       expect(find.text(mode), findsOneWidget);
+      expect(tester.widget<Chip>(find.widgetWithText(Chip, mode)).avatar, isA<Icon>());
+      expect(
+        find.descendant(of: find.widgetWithText(Chip, mode), matching: find.byIcon(icon)),
+        findsOneWidget,
+      );
     }
+    expect(
+      tester.getTopLeft(find.widgetWithText(Chip, "Followers · 30m")).dx,
+      tester.getTopLeft(find.byKey(const ValueKey("chat_only_toggle"))).dx + 16,
+    );
     for (final label in [
       "Chat only",
       "Refresh emotes and badges",

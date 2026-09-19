@@ -39,7 +39,7 @@ class TwitchPollCard extends StatefulWidget {
 }
 
 class _TwitchPollCardState extends State<TwitchPollCard> {
-  bool _expanded = false;
+  bool _expanded = true;
   bool _submitting = false;
   String? _selected;
   String? _error;
@@ -48,6 +48,10 @@ class _TwitchPollCardState extends State<TwitchPollCard> {
   @override
   void didUpdateWidget(TwitchPollCard oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.data.poll?.id != widget.data.poll?.id ||
+        oldWidget.data.poll?.isOpen != widget.data.poll?.isOpen) {
+      _expanded = true;
+    }
     if (oldWidget.data.viewerId != widget.data.viewerId ||
         oldWidget.data.channelId != widget.data.channelId ||
         oldWidget.data.poll?.id != widget.data.poll?.id) {
@@ -135,192 +139,203 @@ class _TwitchPollCardState extends State<TwitchPollCard> {
       margin: EdgeInsets.zero,
       color: Theme.of(context).scaffoldBackgroundColor,
       clipBehavior: Clip.antiAlias,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          InkWell(
-            onTap: () => setState(() => _expanded = !_expanded),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          poll.isOpen ? "Current Poll" : "Poll Results",
-                          style: Theme.of(context).textTheme.labelSmall,
-                        ),
-                        Text(
-                          poll.title,
-                          maxLines: _expanded ? 3 : 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleSmall,
-                        ),
-                      ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            InkWell(
+              onTap: () => setState(() => _expanded = !_expanded),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(10, 0, 4, 0),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        poll.title,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
                     ),
-                  ),
-                  IconButton(
-                    tooltip: _expanded ? "Minimize poll" : "Expand poll",
-                    style: IconButton.styleFrom(
-                      minimumSize: const Size(32, 28),
-                      fixedSize: const Size(32, 28),
-                      padding: EdgeInsets.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    IconButton(
+                      tooltip: _expanded ? "Minimize poll" : "Expand poll",
+                      style: IconButton.styleFrom(
+                        minimumSize: const Size(32, 28),
+                        fixedSize: const Size(32, 28),
+                        padding: EdgeInsets.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      onPressed: () => setState(() => _expanded = !_expanded),
+                      icon: Icon(
+                        _expanded
+                            ? Icons.keyboard_arrow_up_rounded
+                            : Icons.keyboard_arrow_down_rounded,
+                        size: 20,
+                      ),
                     ),
-                    onPressed: () => setState(() => _expanded = !_expanded),
-                    icon: Icon(
-                      _expanded
-                          ? Icons.keyboard_arrow_up_rounded
-                          : Icons.keyboard_arrow_down_rounded,
-                      size: 20,
+                    IconButton(
+                      tooltip: "Close poll",
+                      style: IconButton.styleFrom(
+                        minimumSize: const Size(32, 28),
+                        fixedSize: const Size(32, 28),
+                        padding: EdgeInsets.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      onPressed: widget.dismiss,
+                      icon: const Icon(Icons.close_rounded, size: 20),
                     ),
-                  ),
-                  IconButton(
-                    tooltip: "Close poll",
-                    style: IconButton.styleFrom(
-                      minimumSize: const Size(32, 28),
-                      fixedSize: const Size(32, 28),
-                      padding: EdgeInsets.zero,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    onPressed: widget.dismiss,
-                    icon: const Icon(Icons.close_rounded, size: 20),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-          if (_expanded)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  for (final choice in poll.choices)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: Material(
-                          color: colors.surfaceContainerHigh,
-                          child: InkWell(
-                            key: ValueKey("poll-choice-${choice.id}"),
-                            onTap:
-                                poll.isOpen &&
-                                    !_submitting &&
-                                    unavailable == null &&
-                                    (poll.multichoiceEnabled ||
-                                        confirmedChoices.isEmpty ||
-                                        confirmedChoices.contains(choice.id))
-                                ? () => setState(() => _selected = choice.id)
-                                : null,
-                            child: Stack(
-                              children: [
-                                Positioned.fill(
-                                  child: Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: FractionallySizedBox(
-                                      widthFactor: total == 0
-                                          ? 0
-                                          : (choice.votes / total).clamp(0, 1),
-                                      child: ColoredBox(
-                                        color: colors.primary.withValues(alpha: .18),
-                                        child: const SizedBox.expand(),
+            if (_expanded)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 6, 10, 0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (final (index, choice) in poll.choices.indexed)
+                      Padding(
+                        padding: EdgeInsets.only(bottom: index == poll.choices.length - 1 ? 0 : 6),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(6),
+                          child: Material(
+                            color: colors.surfaceContainerHigh,
+                            child: InkWell(
+                              key: ValueKey("poll-choice-${choice.id}"),
+                              onTap:
+                                  poll.isOpen &&
+                                      !_submitting &&
+                                      unavailable == null &&
+                                      (poll.multichoiceEnabled ||
+                                          confirmedChoices.isEmpty ||
+                                          confirmedChoices.contains(choice.id))
+                                  ? () => setState(() => _selected = choice.id)
+                                  : null,
+                              child: Stack(
+                                children: [
+                                  Positioned.fill(
+                                    child: Align(
+                                      alignment: Alignment.centerLeft,
+                                      child: FractionallySizedBox(
+                                        widthFactor: total == 0
+                                            ? 0
+                                            : (choice.votes / total).clamp(0, 1),
+                                        child: ColoredBox(
+                                          color: colors.primary.withValues(alpha: .18),
+                                          child: const SizedBox.expand(),
+                                        ),
                                       ),
                                     ),
                                   ),
-                                ),
-                                Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                                  child: Row(
-                                    children: [
-                                      Icon(
-                                        confirmedChoices.contains(choice.id)
-                                            ? Icons.check_circle
-                                            : !poll.isOpen && choice.votes == maximum && maximum > 0
-                                            ? Icons.emoji_events_outlined
-                                            : _selected == choice.id
-                                            ? Icons.radio_button_checked
-                                            : Icons.radio_button_off,
-                                        size: 18,
-                                        color:
-                                            confirmedChoices.contains(choice.id) ||
-                                                _selected == choice.id
-                                            ? colors.primary
-                                            : colors.onSurfaceVariant,
-                                        semanticLabel: confirmedChoices.contains(choice.id)
-                                            ? "Voted"
-                                            : null,
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Expanded(
-                                        child: Text(
-                                          choice.title,
-                                          style: Theme.of(context).textTheme.bodySmall,
+                                  Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 10,
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          confirmedChoices.contains(choice.id)
+                                              ? Icons.check_circle
+                                              : !poll.isOpen &&
+                                                    choice.votes == maximum &&
+                                                    maximum > 0
+                                              ? Icons.emoji_events_outlined
+                                              : _selected == choice.id
+                                              ? Icons.radio_button_checked
+                                              : Icons.radio_button_off,
+                                          size: 18,
+                                          color:
+                                              confirmedChoices.contains(choice.id) ||
+                                                  _selected == choice.id
+                                              ? colors.primary
+                                              : colors.onSurfaceVariant,
+                                          semanticLabel: confirmedChoices.contains(choice.id)
+                                              ? "Voted"
+                                              : null,
                                         ),
-                                      ),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        "${total == 0 ? 0 : (choice.votes * 100 / total).round()}% (${formatCompactCount(choice.votes)})",
-                                        style: Theme.of(context).textTheme.labelMedium,
-                                      ),
-                                    ],
+                                        const SizedBox(width: 6),
+                                        Expanded(
+                                          child: Text(
+                                            choice.title,
+                                            style: Theme.of(context).textTheme.bodySmall,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                          "${total == 0 ? 0 : (choice.votes * 100 / total).round()}% (${formatCompactCount(choice.votes)})",
+                                          style: Theme.of(context).textTheme.labelMedium,
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                  if (poll.isOpen)
-                    Row(
-                      children: [
-                        Flexible(
-                          child: FilledButton(
-                            onPressed:
-                                !_submitting &&
-                                    (_selected != null || poll.votedChoiceIds.isNotEmpty) &&
-                                    unavailable == null &&
-                                    cost != null
-                                ? () => unawaited(_vote(cost))
-                                : null,
-                            style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
-                            child: Text(
-                              _submitting
-                                  ? "Voting…"
-                                  : (cost ?? 0) > 0
-                                  ? "Extra vote · $cost points"
-                                  : voted
-                                  ? "Voted"
-                                  : "Vote",
+                    if (poll.isOpen) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Flexible(
+                            child: FilledButton(
+                              onPressed:
+                                  !_submitting &&
+                                      (_selected != null || poll.votedChoiceIds.isNotEmpty) &&
+                                      unavailable == null &&
+                                      cost != null
+                                  ? () => unawaited(_vote(cost))
+                                  : null,
+                              style: FilledButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              child: Text(
+                                _submitting
+                                    ? "Voting…"
+                                    : (cost ?? 0) > 0
+                                    ? "Extra vote · $cost points"
+                                    : voted
+                                    ? "Voted"
+                                    : "Vote",
+                              ),
                             ),
                           ),
-                        ),
-                        if (unavailable != null && unavailable != "Voted") ...[
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(unavailable, style: Theme.of(context).textTheme.bodySmall),
-                          ),
+                          if (unavailable != null && unavailable != "Voted") ...[
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                unavailable,
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ),
+                          ],
                         ],
-                      ],
-                    ),
-                  if (_error != null) Text(_error!, style: TextStyle(color: colors.error)),
-                ],
+                      ),
+                    ],
+                    if (_error != null) Text(_error!, style: TextStyle(color: colors.error)),
+                  ],
+                ),
               ),
-            ),
-          if (poll.isOpen)
-            LinearProgressIndicator(
-              value:
-                  (poll.closesAt.difference(DateTime.now()).inMilliseconds /
-                          max(1, poll.closesAt.difference(poll.startedAt).inMilliseconds))
-                      .clamp(0.0, 1.0),
-              minHeight: 3,
-            ),
-        ],
+            if (poll.isOpen)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 4, 4, 0),
+                child: LinearProgressIndicator(
+                  value:
+                      (poll.closesAt.difference(DateTime.now()).inMilliseconds /
+                              max(1, poll.closesAt.difference(poll.startedAt).inMilliseconds))
+                          .clamp(0.0, 1.0),
+                  minHeight: 3,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
