@@ -1,0 +1,31 @@
+query FlowPoll($login: String!) {
+  user(login: $login) {
+    id
+    login
+    self { banStatus { isPermanent } }
+    channel { self { communityPoints { balance } } }
+    viewablePoll {
+      id
+      title
+      status
+      startedAt
+      endedAt
+      durationSeconds
+      remainingDurationMilliseconds
+      ownedBy { id }
+      votes { total }
+      choices { id title votes { total } }
+      settings {
+        multichoice { isEnabled }
+        communityPointsVotes { isEnabled cost }
+      }
+      self {
+        voter {
+          votes { base total }
+          choices { pollChoice { id } }
+        }
+      }
+    }
+  }
+  currentUser { id }
+}

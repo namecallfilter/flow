@@ -855,6 +855,7 @@ class TwitchChatController extends ChangeNotifier {
               socketConnector: pinSocketConnector,
               loadInitial: () async => (await clientLoader()).fetchPinnedChat(channelId),
               onPredictionUpdate: predictionUpdates.notifyListeners,
+              onPollUpdate: predictionUpdates.notifyListeners,
             )..addListener(_scheduleNotify);
           }
           final userId = currentUserId;

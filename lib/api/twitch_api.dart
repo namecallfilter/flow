@@ -4,6 +4,7 @@ import "dart:math" as math;
 
 import "package:flow/api/twitch_chat_message.dart";
 import "package:flow/api/twitch_cookie_extractor.dart";
+import "package:flow/api/twitch_polls.dart";
 import "package:flow/api/twitch_predictions.dart";
 import "package:flow/graphql/FlowAcceptPredictionTerms.graphql.dart";
 import "package:flow/graphql/FlowAvailableChannelPoints.graphql.dart";
@@ -24,6 +25,7 @@ import "package:flow/graphql/FlowGameStreams.graphql.dart";
 import "package:flow/graphql/FlowMakePrediction.graphql.dart";
 import "package:flow/graphql/FlowPinnedChat.graphql.dart";
 import "package:flow/graphql/FlowPlaybackAccessToken.graphql.dart";
+import "package:flow/graphql/FlowPoll.graphql.dart";
 import "package:flow/graphql/FlowPredictions.graphql.dart";
 import "package:flow/graphql/FlowRecentChat.graphql.dart";
 import "package:flow/graphql/FlowSearchCategories.graphql.dart";
@@ -38,6 +40,7 @@ import "package:flow/graphql/FlowUnlockedChatEmotes.graphql.dart";
 import "package:flow/graphql/FlowUsers.graphql.dart";
 import "package:flow/graphql/FlowVodChat.graphql.dart";
 import "package:flow/graphql/FlowVodSeekMetadata.graphql.dart";
+import "package:flow/graphql/FlowVoteInPoll.graphql.dart";
 import "package:flow/graphql/schema.graphqls.dart";
 import "package:flow/shared/twitch/stream_sort.dart";
 import "package:graphql/client.dart" as graphql;
@@ -916,6 +919,156 @@ class TwitchApiClient {
     return amount;
   }
 
+  Future<TwitchChannelPoll> fetchPoll(String login) async {
+    final normalizedLogin = login.trim().toLowerCase();
+    final signedIn = _nonEmptyValue(gqlAccessToken) != null;
+    final data = await _query(
+      () => (signedIn ? _authenticatedGraphQlClient : _graphQlClient).query(
+        graphql.QueryOptions<Map<String, dynamic>>(
+          operationName: "FlowPoll",
+          document: documentNodeQueryFlowPoll,
+          variables: {"login": normalizedLogin},
+          fetchPolicy: graphql.FetchPolicy.noCache,
+          parserFn: (data) => data,
+        ),
+      ),
+      "FlowPoll",
+      retryIntegrityChallenge: signedIn,
+    );
+    final user = _mapValue(data["user"]);
+    if (user?["login"] != normalizedLogin ||
+        _stringValue(user?["id"]).isEmpty ||
+        !user!.containsKey("viewablePoll")) {
+      throw TwitchApiException("Could not load the poll. Try again.");
+    }
+    final channelId = _stringValue(user["id"]);
+    final pollData = _mapValue(user["viewablePoll"]);
+    TwitchPoll? poll;
+    if (pollData != null &&
+        const {"ACTIVE", "COMPLETED", "TERMINATED"}.contains(pollData["status"])) {
+      final startedAt = _dateTimeValue(pollData["startedAt"]);
+      final duration = pollData["durationSeconds"] as int?;
+      if (startedAt == null ||
+          duration == null ||
+          _mapValue(pollData["ownedBy"])?["id"] != channelId ||
+          _stringValue(pollData["id"]).isEmpty ||
+          pollData["choices"] is! List) {
+        throw TwitchApiException("Could not load the poll. Try again.");
+      }
+      final self = _mapValue(pollData["self"]);
+      final voter = _mapValue(self?["voter"]);
+      final settings = _mapValue(pollData["settings"]);
+      final pointsVotes = _mapValue(settings?["communityPointsVotes"]);
+      poll = TwitchPoll(
+        id: _stringValue(pollData["id"]),
+        title: _stringValue(pollData["title"]),
+        status: _stringValue(pollData["status"]),
+        startedAt: startedAt,
+        closesAt: startedAt.add(Duration(seconds: duration)),
+        votes: _intValue(_mapValue(pollData["votes"])?["total"]),
+        viewerStateAvailable: self != null && self.containsKey("voter"),
+        baseVotes: _intValue(_mapValue(voter?["votes"])?["base"]),
+        votedChoiceIds: {
+          for (final choice in _mapList(voter?["choices"]))
+            _stringValue(_mapValue(choice["pollChoice"])?["id"]),
+        },
+        pointsVoteCost: pointsVotes?["isEnabled"] == true ? (pointsVotes?["cost"] as int?) : null,
+        multichoiceEnabled: _mapValue(settings?["multichoice"])?["isEnabled"] == true,
+        choices: [
+          for (final choice in _mapList(pollData["choices"]))
+            TwitchPollChoice(
+              id: _stringValue(choice["id"]),
+              title: _stringValue(choice["title"]),
+              votes: _intValue(_mapValue(choice["votes"])?["total"]),
+            ),
+        ],
+      );
+    }
+    final channelSelf = _mapValue(_mapValue(user["channel"])?["self"]);
+    final banStatus = _mapValue(user["self"])?["banStatus"];
+    return TwitchChannelPoll(
+      channelId: channelId,
+      poll: poll,
+      viewerId: _mapValue(data["currentUser"])?["id"] as String?,
+      balance: (_mapValue(channelSelf?["communityPoints"])?["balance"] as num?)?.toInt(),
+      isBanned: banStatus is List ? banStatus.isNotEmpty : banStatus != null,
+    );
+  }
+
+  Future<void> voteInPoll({
+    required String channelLogin,
+    required String pollId,
+    required String choiceId,
+    required String voteId,
+    required String viewerId,
+    int points = 0,
+  }) async {
+    if (_nonEmptyValue(gqlAccessToken) == null) {
+      throw TwitchApiException("Sign in to Twitch before voting.");
+    }
+    if (pollId.isEmpty || choiceId.isEmpty || voteId.isEmpty || viewerId.isEmpty || points < 0) {
+      throw TwitchApiException("Choose a valid poll option.");
+    }
+    final snapshot = await fetchPoll(channelLogin);
+    final poll = snapshot.poll;
+    if (poll == null || poll.id != pollId || !poll.isOpen) {
+      throw TwitchApiException("This poll is closed.");
+    }
+    if (snapshot.viewerId != viewerId || !poll.viewerStateAvailable || snapshot.isBanned) {
+      throw TwitchApiException("You cannot participate in this poll.");
+    }
+    if (!poll.choices.any((choice) => choice.id == choiceId) ||
+        (!poll.multichoiceEnabled &&
+            poll.votedChoiceIds.isNotEmpty &&
+            !poll.votedChoiceIds.contains(choiceId))) {
+      throw TwitchApiException("You cannot change your poll choice.");
+    }
+    if (points == 0
+        ? poll.baseVotes > 0
+        : poll.baseVotes == 0 ||
+              poll.pointsVoteCost != points ||
+              snapshot.viewerId == snapshot.channelId ||
+              snapshot.balance == null ||
+              points > snapshot.balance!) {
+      throw TwitchApiException("This vote is not available for this poll.");
+    }
+    final data = await _query(
+      () => _authenticatedGraphQlClient.mutate(
+        graphql.MutationOptions<Map<String, dynamic>>(
+          operationName: "FlowVoteInPoll",
+          document: documentNodeMutationFlowVoteInPoll,
+          variables: {
+            "input": {
+              "pollID": pollId,
+              "choiceID": choiceId,
+              "userID": viewerId,
+              "voteID": voteId,
+              "tokens": points == 0 ? null : {"channelPoints": points},
+            },
+          },
+          fetchPolicy: graphql.FetchPolicy.noCache,
+          parserFn: (data) => data,
+        ),
+      ),
+      "FlowVoteInPoll",
+      retryIntegrityChallenge: true,
+    );
+    final result = _mapValue(data["voteInPoll"]);
+    final voter = _mapValue(result?["voter"]);
+    if (result == null ||
+        !result.containsKey("error") ||
+        result["error"] != null ||
+        _mapValue(voter?["poll"])?["id"] != pollId ||
+        _mapValue(voter?["user"])?["id"] != viewerId ||
+        !_mapList(voter?["choices"]).any(
+          (choice) =>
+              _mapValue(choice["pollChoice"])?["id"] == choiceId &&
+              _intValue(_mapValue(choice["votes"])?["total"]) > 0,
+        )) {
+      throw TwitchApiException("Twitch did not confirm the vote. Try again.");
+    }
+  }
+
   Future<TwitchChannelPredictions> fetchPredictions(String login) async {
     final normalizedLogin = login.trim().toLowerCase();
     final signedIn = _nonEmptyValue(gqlAccessToken) != null;
@@ -972,6 +1125,8 @@ class TwitchApiClient {
           selectedOutcomeId: _mapValue(mine?["outcome"])?["id"] as String?,
           pointsSpent: (mine?["points"] as num?)?.toInt() ?? 0,
           winningOutcomeId: _mapValue(event["winningOutcome"])?["id"] as String?,
+          endedAt: endedAt,
+          pointsWon: (mine?["pointsWon"] as num?)?.toInt(),
           outcomes: [
             for (final outcome in _mapList(event["outcomes"]))
               TwitchPredictionOutcome(
@@ -980,6 +1135,12 @@ class TwitchApiClient {
                 color: _stringValue(outcome["color"]),
                 points: (outcome["totalPoints"] as num?)?.toInt() ?? 0,
                 users: (outcome["totalUsers"] as num?)?.toInt() ?? 0,
+                topPredictorName:
+                    _mapValue(
+                          _mapList(outcome["topPredictors"]).firstOrNull?["user"],
+                        )?["displayName"]
+                        as String?,
+                topPoints: _intValue(_mapList(outcome["topPredictors"]).firstOrNull?["points"]),
               ),
           ],
         ),

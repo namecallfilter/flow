@@ -5,6 +5,8 @@ class TwitchPredictionOutcome {
     required this.points,
     required this.users,
     required this.color,
+    this.topPredictorName,
+    this.topPoints = 0,
   });
 
   final String id;
@@ -12,6 +14,8 @@ class TwitchPredictionOutcome {
   final int points;
   final int users;
   final String color;
+  final String? topPredictorName;
+  final int topPoints;
 }
 
 class TwitchPrediction {
@@ -27,6 +31,8 @@ class TwitchPrediction {
     this.selectedOutcomeId,
     this.pointsSpent = 0,
     this.winningOutcomeId,
+    this.endedAt,
+    this.pointsWon,
   });
 
   final String id;
@@ -40,6 +46,8 @@ class TwitchPrediction {
   final String? selectedOutcomeId;
   final int pointsSpent;
   final String? winningOutcomeId;
+  final DateTime? endedAt;
+  final int? pointsWon;
 
   bool get isOpen => status == "ACTIVE" && DateTime.now().isBefore(closesAt);
   bool get isPointsRestricted =>

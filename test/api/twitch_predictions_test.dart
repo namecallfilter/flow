@@ -6,6 +6,24 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  test("an existing prediction accepts additional points on the same outcome", () async {
+    final operations = <String>[];
+    final client = _client((request) async {
+      final body = jsonDecode(request.body) as Map<String, Object?>;
+      final operation = body["operationName"]! as String;
+      operations.add(operation);
+      if (operation == "FlowPredictions") {
+        return _response(_data(selected: "blue", spent: 200));
+      }
+      expect((body["variables"]! as Map)["input"], containsPair("points", 100));
+      return _response({
+        "makePrediction": {"error": null},
+      });
+    });
+    await _predict(client);
+    expect(operations, ["FlowPredictions", "FlowMakePrediction"]);
+  });
+
   test("prediction snapshots retain totals, restrictions, balance and the viewer's pick", () async {
     final client = _client((request) async {
       expect(request.headers["authorization"], "OAuth token");
@@ -20,6 +38,10 @@ void main() {
     expect(snapshot.events.single.pointsSpent, 200);
     expect(snapshot.events.single.isPointsRestricted, isTrue);
     expect(snapshot.events.single.outcomes.first.points, 3911760);
+    expect(snapshot.events.single.outcomes.first.topPredictorName, "Winner");
+    expect(snapshot.events.single.outcomes.first.topPoints, 20000);
+    expect(snapshot.events.single.pointsWon, 350);
+    expect(snapshot.events.single.endedAt, isNull);
   });
 
   test(
@@ -175,6 +197,13 @@ Map<String, Object?> _data({
               "color": "BLUE",
               "totalPoints": 3911760,
               "totalUsers": 42,
+              "topPredictors": [
+                {
+                  "id": "prediction",
+                  "points": 20000,
+                  "user": {"id": "3", "displayName": "Winner"},
+                },
+              ],
             },
             {
               "id": "pink",
@@ -196,6 +225,7 @@ Map<String, Object?> _data({
               "event": {"id": "event"},
               "outcome": {"id": selected},
               "points": spent,
+              "pointsWon": 350,
             },
         ],
       },

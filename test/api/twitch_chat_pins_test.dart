@@ -10,37 +10,40 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
-  testWidgets("optional prediction setup failures keep the working pin subscription", (
+  testWidgets("optional highlight setup failures keep the other subscriptions working", (
     tester,
   ) async {
-    for (final reject in [true, false]) {
+    for (final (failed, reject) in [(1, true), (1, false), (2, true), (2, false)]) {
       final socket = _Socket();
-      var updates = 0;
+      var predictionUpdates = 0;
+      var pollUpdates = 0;
       final pins = TwitchChatPins(
         channelId: "123",
         socketConnector: () async => socket,
         loadInitial: () async => _initialPin,
-        onPredictionUpdate: () => updates++,
+        onPredictionUpdate: () => predictionUpdates++,
+        onPollUpdate: () => pollUpdates++,
       );
       await tester.pump();
       socket.welcome();
       final pinRequest = socket.sent.first;
-      socket.receive({
-        "type": "subscribeResponse",
-        "parentId": pinRequest["id"],
-        "subscribeResponse": {"result": "ok"},
-      });
+      socket.acknowledge(index: 0);
+      socket.acknowledge(index: failed == 1 ? 2 : 1);
       if (reject) {
-        socket.receive({
-          "type": "subscribeResponse",
-          "parentId": socket.sent.last["id"],
-          "subscribeResponse": {"result": "error"},
-        });
+        socket.acknowledge(index: failed, result: "error");
       }
       await tester.pump();
       await tester.pump(const Duration(seconds: 11));
       expect(socket.closed, isFalse);
-      expect(updates, 0);
+      expect(predictionUpdates, failed == 1 ? 0 : 1);
+      expect(pollUpdates, failed == 2 ? 0 : 1);
+      socket.event(
+        failed == 1 ? "POLL_UPDATE" : "event-updated",
+        {},
+        subscriptionId: (socket.sent[failed == 1 ? 2 : 1]["subscribe"]! as Map)["id"] as String,
+      );
+      expect(predictionUpdates, failed == 1 ? 0 : 2);
+      expect(pollUpdates, failed == 2 ? 0 : 2);
       socket.event(
         "pin-message",
         _eventPin("live"),
@@ -50,6 +53,81 @@ void main() {
       pins.dispose();
       await tester.pump();
     }
+  });
+
+  testWidgets("poll events share the socket, reconnect, and revoke independently", (tester) async {
+    final sockets = <_Socket>[];
+    var predictionUpdates = 0;
+    var pollUpdates = 0;
+    final pins = TwitchChatPins(
+      channelId: "123",
+      socketConnector: () async {
+        final socket = _Socket();
+        sockets.add(socket);
+        return socket;
+      },
+      loadInitial: () async => _initialPin,
+      onPredictionUpdate: () => predictionUpdates++,
+      onPollUpdate: () => pollUpdates++,
+    );
+    for (var connection = 0; connection < 2; connection++) {
+      await tester.pump();
+      final socket = sockets.last;
+      socket.welcome();
+      expect(socket.sent, hasLength(3));
+      expect((socket.sent.last["subscribe"]! as Map)["pubsub"], {"topic": "polls.123"});
+      final before = pollUpdates;
+      for (final index in [2, 0, 1]) {
+        socket.acknowledge(index: index);
+      }
+      await tester.pump();
+      expect(pollUpdates, before + 1);
+      expect(predictionUpdates, connection + 1);
+      for (final type in [
+        "POLL_CREATE",
+        "POLL_UPDATE",
+        "POLL_COMPLETE",
+        "POLL_TERMINATE",
+        "POLL_ARCHIVE",
+        "POLL_MODERATE",
+      ]) {
+        socket.event(type, {
+          "poll": {"poll_id": "poll", "owned_by": "123"},
+        });
+      }
+      expect(pollUpdates, before + 7);
+      socket.event("POLL_UPDATE", {}, subscriptionId: "another-channel");
+      socket.event("unknown", {});
+      expect(pollUpdates, before + 7);
+      final revoked = socket.sent[connection == 0 ? 2 : 1]["subscribe"]! as Map;
+      socket.receive({
+        "type": "subscriptionRevocation",
+        "subscriptionRevocation": {
+          "subscription": {"id": revoked["id"]},
+        },
+      });
+      expect(socket.closed, isFalse);
+      socket.event(
+        connection == 0 ? "POLL_UPDATE" : "event-updated",
+        {},
+        subscriptionId: revoked["id"] as String,
+      );
+      expect(pollUpdates, before + 7);
+      expect(predictionUpdates, connection + 1);
+      socket.event(
+        "pin-message",
+        _eventPin("live"),
+        subscriptionId: (socket.sent.first["subscribe"]! as Map)["id"] as String,
+      );
+      expect(pins.pin?.id, "live");
+      if (connection == 0) {
+        socket.receive({"type": "reconnect"});
+        await tester.pump(const Duration(seconds: 1));
+      }
+    }
+    expect(sockets, hasLength(2));
+    pins.dispose();
+    await tester.pump();
   });
 
   testWidgets("shares the pin socket with prediction updates and catches up after reconnect", (
@@ -610,10 +688,10 @@ class _Socket extends Stream<Object?> implements WebSocket {
     "welcome": {"keepaliveSec": 15},
   });
 
-  void acknowledge() => receive({
+  void acknowledge({int? index, String result = "ok"}) => receive({
     "type": "subscribeResponse",
-    "parentId": sent.last["id"],
-    "subscribeResponse": {"result": "ok"},
+    "parentId": sent[index ?? sent.length - 1]["id"],
+    "subscribeResponse": {"result": result},
   });
 
   void event(String type, Map<String, Object?> data, {String? subscriptionId}) => receive({

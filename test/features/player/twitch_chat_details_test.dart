@@ -4,6 +4,7 @@ import "dart:ui" as ui;
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_chat.dart";
 import "package:flow/api/twitch_chat_assets.dart";
+import "package:flow/api/twitch_polls.dart";
 import "package:flow/api/twitch_predictions.dart";
 import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/theme.dart";
@@ -3016,9 +3017,9 @@ void main() {
         TwitchPrediction(
           id: "prediction",
           title: "Who wins?",
-          status: "LOCKED",
+          status: "ACTIVE",
           createdAt: DateTime.utc(2026, 9, 18),
-          closesAt: DateTime.utc(2026, 9, 18),
+          closesAt: DateTime.now().add(const Duration(minutes: 5)),
           outcomes: const [
             TwitchPredictionOutcome(id: "one", title: "One", points: 100, users: 2, color: "BLUE"),
           ],
@@ -3055,7 +3056,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text("Who wins?"), findsOneWidget);
     expect(find.byKey(const ValueKey("chat_pinned_message")), findsNothing);
-    await tester.tap(find.byTooltip("Next highlight"));
+    await tester.tap(find.text("View All (2)"));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey("highlight-select-pin-rich-pin")));
     await tester.pumpAndSettle();
     final replyContext = find.byKey(const ValueKey("reply-context-rich-message"));
     expect(replyContext, findsOneWidget);
@@ -3098,16 +3101,20 @@ void main() {
         (tester.widget<ListView>(find.byKey(const ValueKey("chat_messages"))).padding!
                 as EdgeInsets)
             .top;
-    await tester.tap(find.byTooltip("Previous highlight"));
+    await tester.tap(find.text("View All (2)"));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey("highlight-select-prediction-prediction")));
     await tester.pumpAndSettle();
     expect(find.text("Who wins?"), findsOneWidget);
     expect(pin, findsNothing);
     expect(
       (tester.widget<ListView>(find.byKey(const ValueKey("chat_messages"))).padding! as EdgeInsets)
           .top,
-      greaterThan(collapsedInset),
+      isNot(collapsedInset),
     );
-    await tester.tap(find.byTooltip("Next highlight"));
+    await tester.tap(find.text("View All (2)"));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey("highlight-select-pin-rich-pin")));
     await tester.pumpAndSettle();
     expect(find.byTooltip("Expand pinned message"), findsOneWidget);
     expect(replyContext, findsNothing);
@@ -3922,6 +3929,10 @@ class _Client extends TwitchApiClient {
   final thread = <TwitchChatMessage>[];
   Future<List<TwitchChatMessage>>? pendingThread;
   List<TwitchPrediction> predictionEvents = [];
+
+  @override
+  Future<TwitchChannelPoll> fetchPoll(String login) async =>
+      const TwitchChannelPoll(channelId: "1");
 
   @override
   Future<TwitchChannelPredictions> fetchPredictions(String login) async =>

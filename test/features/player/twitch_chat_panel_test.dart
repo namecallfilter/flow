@@ -4,6 +4,7 @@ import "dart:ui" as ui;
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_chat.dart";
 import "package:flow/api/twitch_chat_assets.dart";
+import "package:flow/api/twitch_polls.dart";
 import "package:flow/api/twitch_predictions.dart";
 import "package:flow/api/twitch_vod_chat.dart";
 import "package:flow/app/app_settings_store.dart";
@@ -3337,6 +3338,10 @@ class _PredictionClient extends TwitchApiClient {
   int calls = 0;
 
   @override
+  Future<TwitchChannelPoll> fetchPoll(String login) async =>
+      const TwitchChannelPoll(channelId: "1");
+
+  @override
   Future<TwitchChannelPredictions> fetchPredictions(String login) async {
     calls++;
     return const TwitchChannelPredictions(channelId: "1", events: []);
@@ -3345,6 +3350,10 @@ class _PredictionClient extends TwitchApiClient {
 
 class _ChattersClient extends TwitchApiClient {
   _ChattersClient() : super(clientId: "test", accessToken: "");
+
+  @override
+  Future<TwitchChannelPoll> fetchPoll(String login) async =>
+      const TwitchChannelPoll(channelId: "1");
 
   String? channel;
   ({String? userId, String? login})? profileLookup;
@@ -3384,6 +3393,10 @@ class _ChattersClient extends TwitchApiClient {
 class _VodPageClient extends TwitchApiClient {
   _VodPageClient(this.messages, {this.thread = const []})
     : super(clientId: "test", accessToken: "");
+
+  @override
+  Future<TwitchChannelPoll> fetchPoll(String login) async =>
+      const TwitchChannelPoll(channelId: "1");
 
   final List<TwitchChatMessage> messages;
   final List<TwitchChatMessage> thread;

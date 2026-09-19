@@ -9,7 +9,7 @@ query FlowPredictions($login: String!) {
       resolvedPredictionEvents(first: 1) { edges { node { ...FlowPrediction } } }
       self {
         communityPoints { balance }
-        recentPredictions { event { id } outcome { id } points }
+        recentPredictions { event { id } outcome { id } points pointsWon }
       }
     }
   }
@@ -25,5 +25,5 @@ fragment FlowPrediction on PredictionEvent {
   predictionWindowSeconds
   winningOutcome { id }
   self { restriction }
-  outcomes { id title color totalPoints totalUsers }
+  outcomes { id title color totalPoints totalUsers topPredictors { id points user { id displayName } } }
 }
