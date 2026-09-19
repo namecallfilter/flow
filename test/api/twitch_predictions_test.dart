@@ -6,6 +6,46 @@ import "package:http/http.dart" as http;
 import "package:http/testing.dart";
 
 void main() {
+  test("prediction snapshots and submissions retain the tenth outcome", () async {
+    final data = _data();
+    final channel = (data["user"]! as Map)["channel"]! as Map;
+    final event = (channel["activePredictionEvents"]! as List).single as Map;
+    event["outcomes"] = List.generate(
+      10,
+      (index) => {
+        "id": "outcome-$index",
+        "title": "Outcome ${index + 1}",
+        "color": "BLUE",
+        "totalPoints": (index + 1) * 100,
+        "totalUsers": index + 1,
+      },
+    );
+    final operations = <String>[];
+    final client = _client((request) async {
+      final body = jsonDecode(request.body) as Map;
+      operations.add(body["operationName"] as String);
+      if (body["operationName"] == "FlowPredictions") {
+        return _response(data);
+      }
+      expect((body["variables"]! as Map)["input"], containsPair("outcomeID", "outcome-9"));
+      return _response({
+        "makePrediction": {"error": null},
+      });
+    });
+    final snapshot = await client.fetchPredictions("channel");
+    expect(snapshot.events.single.outcomes, hasLength(10));
+    expect(snapshot.events.single.outcomes.last.title, "Outcome 10");
+    await client.makePrediction(
+      channelLogin: "channel",
+      eventId: "event",
+      outcomeId: "outcome-9",
+      points: 100,
+      transactionId: "transaction",
+      viewerId: "2",
+    );
+    expect(operations, ["FlowPredictions", "FlowPredictions", "FlowMakePrediction"]);
+  });
+
   test("an existing prediction accepts additional points on the same outcome", () async {
     final operations = <String>[];
     final client = _client((request) async {

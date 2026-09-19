@@ -791,6 +791,60 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets("emote-only chat accepts native emotes and blocks text through both send actions", (
+    tester,
+  ) async {
+    final controller = _ChatController()..room["emote-only"] = "1";
+    final assets = _EmoteOnlyAssets();
+    addTearDown(controller.dispose);
+    addTearDown(assets.dispose);
+    await tester.pumpWidget(panel(controller, assets: assets));
+    await tester.pumpAndSettle();
+    final input = find.byKey(const ValueKey("chat_message_input"));
+    final send = find.byKey(const ValueKey("chat_send"));
+    expect(find.text("Send a message · Emotes only"), findsOneWidget);
+    for (final draft in ["hello", "Seven", "Bttv", "Ffz", "💜", "LockedSub", "HeyGuys hello"]) {
+      await tester.enterText(input, draft);
+      await tester.pumpAndSettle();
+      expect(tester.widget<IconButton>(send).onPressed, isNull, reason: draft);
+      await tester.testTextInput.receiveAction(TextInputAction.send);
+      await tester.pumpAndSettle();
+      expect(controller.sent, isEmpty, reason: draft);
+      expect(tester.widget<TextField>(input).controller!.text, draft);
+      expect(find.text("Only Twitch emotes can be sent."), findsOneWidget);
+    }
+    await tester.enterText(input, "Se");
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("chat_emote_autocomplete")), findsNothing);
+    await tester.enterText(input, "@viewer");
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("chat_username_autocomplete")), findsNothing);
+    await tester.enterText(input, "Ka");
+    await tester.pumpAndSettle();
+    expect(find.byTooltip("Kappa"), findsOneWidget);
+    await tester.enterText(input, "HeyGuys  Kappa UnlockedSub");
+    await tester.pumpAndSettle();
+    expect(tester.widget<IconButton>(send).onPressed, isNotNull);
+    await tester.tap(send);
+    await tester.pumpAndSettle();
+    expect(controller.sent, ["HeyGuys  Kappa UnlockedSub"]);
+    await tester.enterText(input, "HeyGuys");
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pumpAndSettle();
+    expect(controller.sent.last, "HeyGuys");
+    await tester.enterText(input, "plain text");
+    controller.room["emote-only"] = "0";
+    controller.update();
+    await tester.pumpAndSettle();
+    expect(tester.widget<IconButton>(send).onPressed, isNotNull);
+    expect(find.text("Only Twitch emotes can be sent."), findsNothing);
+    controller.room["emote-only"] = "1";
+    controller.update();
+    await tester.pumpAndSettle();
+    expect(tester.widget<IconButton>(send).onPressed, isNull);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets("emote autocomplete replaces the cursor word and preserves draft and keyboard", (
     tester,
   ) async {
@@ -1940,6 +1994,20 @@ void main() {
     String? hint() => tester.widget<TextField>(find.byType(TextField)).decoration!.hintText;
     await tester.pumpWidget(panel(controller, settingsStore: store, latencyMs: 1540));
     expect(hint(), "Send a message · 1.5s");
+    controller.room["emote-only"] = "1";
+    controller.update();
+    await tester.pump();
+    expect(hint(), "Send a message · Emotes only · 1.5s");
+    controller.room["subs-only"] = "1";
+    controller.update();
+    await tester.pump();
+    expect(hint(), "Send a message · Emotes only · Subs only · 1.5s");
+    controller.room["emote-only"] = "0";
+    controller.update();
+    await tester.pump();
+    expect(hint(), "Send a message · Subs only · 1.5s");
+    controller.room["subs-only"] = "0";
+    controller.update();
     await store.setChatPreferences(
       const ChatPreferences(autoSyncChat: false, manualChatDelaySeconds: 3),
     );
@@ -3477,6 +3545,26 @@ class _LargeCompletionAssets extends _Assets {
       ],
     ),
   };
+}
+
+class _EmoteOnlyAssets extends _Assets {
+  @override
+  List<ChatAssetEmote> emotesFor(ChatEmoteProvider provider, ChatEmoteScope scope) =>
+      provider != ChatEmoteProvider.twitch
+      ? super.emotesFor(provider, scope)
+      : [
+          for (final name in switch (scope) {
+            ChatEmoteScope.global => ["HeyGuys", "Kappa"],
+            ChatEmoteScope.unlocked => ["UnlockedSub"],
+            ChatEmoteScope.channel => ["LockedSub"],
+          })
+            ChatAssetEmote(
+              name: name,
+              id: name,
+              url: "https://example.com/$name.png",
+              provider: provider,
+            ),
+        ];
 }
 
 class _Assets extends TwitchChatAssets {

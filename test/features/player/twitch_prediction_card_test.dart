@@ -1,4 +1,5 @@
 import "dart:async";
+import "dart:ui" show Tristate;
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_chat.dart";
@@ -9,6 +10,75 @@ import "package:flutter/material.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
+  testWidgets("all ten prediction outcomes remain selectable on a narrow phone", (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final client = _Client()
+      ..outcomes = List.generate(
+        10,
+        (index) => TwitchPredictionOutcome(
+          id: "outcome-$index",
+          title: "Outcome ${index + 1}",
+          points: (index + 1) * 100,
+          users: index + 1,
+          color: "BLUE",
+        ),
+      );
+    final controller = TwitchChatController(
+      clientLoader: () async => client,
+      channel: "channel",
+      autoConnect: false,
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TwitchPredictionCard(
+              controller: controller,
+              isVisible: true,
+              showSheet: (builder) => showModalBottomSheet<void>(
+                context: context,
+                isScrollControlled: true,
+                builder: builder,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text("Who wins?"), findsOneWidget);
+    await tester.tap(find.byTooltip("Expand prediction"));
+    await tester.pumpAndSettle();
+    for (var index = 1; index <= 10; index++) {
+      expect(find.text("$index. Outcome $index"), findsOneWidget);
+    }
+    await tester.tap(find.text("Predict"));
+    await tester.pumpAndSettle();
+    for (var index = 0; index < 10; index++) {
+      final outcome = find.byKey(ValueKey("prediction-outcome-outcome-$index"));
+      await tester.ensureVisible(outcome);
+      await tester.tap(outcome);
+      await tester.pump();
+      expect(tester.getSemantics(outcome).flagsCollection.isSelected, Tristate.isTrue);
+    }
+    await tester.ensureVisible(find.byType(TextField));
+    await tester.enterText(find.byType(TextField), "100");
+    await tester.pump();
+    expect(
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, "Predict with 100 points"))
+          .onPressed,
+      isNotNull,
+    );
+    expect(tester.takeException(), isNull);
+    expect(client.transactions, isEmpty);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets("compact titles rotate every four seconds and expired predictions stay hidden", (
     tester,
   ) async {
@@ -569,6 +639,7 @@ class _Client extends TwitchApiClient {
   int balance = 1000;
   int pointsSpent = 0;
   String? selectedOutcome;
+  List<TwitchPredictionOutcome>? outcomes;
   bool regional = false;
   bool failRefresh = false;
   String status = "ACTIVE";
@@ -607,23 +678,25 @@ class _Client extends TwitchApiClient {
           selectedOutcomeId: selectedOutcome,
           pointsSpent: pointsSpent,
           restriction: regional ? "REGION_LOCKED" : null,
-          outcomes: const [
-            TwitchPredictionOutcome(
-              id: "blue",
-              title: "Lions",
-              points: 3911760,
-              users: 42,
-              color: "BLUE",
-              topPoints: 30000,
-            ),
-            TwitchPredictionOutcome(
-              id: "pink",
-              title: "Bills",
-              points: 7887357,
-              users: 55,
-              color: "PINK",
-            ),
-          ],
+          outcomes:
+              outcomes ??
+              const [
+                TwitchPredictionOutcome(
+                  id: "blue",
+                  title: "Lions",
+                  points: 3911760,
+                  users: 42,
+                  color: "BLUE",
+                  topPoints: 30000,
+                ),
+                TwitchPredictionOutcome(
+                  id: "pink",
+                  title: "Bills",
+                  points: 7887357,
+                  users: 55,
+                  color: "PINK",
+                ),
+              ],
         ),
       ],
     );

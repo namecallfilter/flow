@@ -386,7 +386,11 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
       _closeSheets();
     }
     _rememberUsers(_history);
-    setState(() {});
+    if (_emoteOnly && _draftFocus.hasFocus && !_autocompleteEmotesLoaded) {
+      _draftChanged();
+    } else {
+      setState(() {});
+    }
     if (_following) {
       _scrollToLatest();
     }
@@ -618,7 +622,10 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
     if (controller == null || _sending || !controller.canSend || text.trim().isEmpty) {
       return;
     }
-    if (!await _ensureCanCompose() || !mounted || controller != widget.controller) {
+    if (!await _ensureCanCompose() ||
+        !mounted ||
+        controller != widget.controller ||
+        !_isAllowedMessage(text)) {
       return;
     }
     final replyTo = _replyTo;
@@ -1074,6 +1081,20 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
 
   bool get _canCompose => widget.controller?.canSend == true && _rulesAccepted;
 
+  bool get _emoteOnly => widget.controller?.emoteOnlyRestricted == true;
+
+  Map<String, ChatAssetEmote> get _composerEmotes => _emoteOnly
+      ? {
+          for (final scope in [ChatEmoteScope.global, ChatEmoteScope.unlocked])
+            for (final emote
+                in widget.assets?.emotesFor(ChatEmoteProvider.twitch, scope) ?? <ChatAssetEmote>[])
+              emote.name: emote,
+        }
+      : widget.assets?.emotesByName ?? const {};
+
+  bool _isAllowedMessage(String text) =>
+      !_emoteOnly || text.trim().split(RegExp(r"\s+")).every(_composerEmotes.containsKey);
+
   Future<void> _loadRulesAcceptance() {
     final key = _currentRulesKey;
     if (key == null || key == _rulesKey) {
@@ -1450,6 +1471,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
     final value = _draft.value;
     if (_draftFocus.hasFocus &&
         _canCompose &&
+        !_emoteOnly &&
         value.selection.isValid &&
         value.selection.isCollapsed &&
         RegExp(
@@ -1459,7 +1481,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
     }
     if (_draftFocus.hasFocus &&
         _canCompose &&
-        _settings.emoteAutocomplete &&
+        (_settings.emoteAutocomplete || _emoteOnly) &&
         !_autocompleteEmotesLoaded &&
         widget.assets != null) {
       _autocompleteEmotesLoaded = true;
@@ -1485,6 +1507,9 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
       return null;
     }
     final mention = match.group(2) != null;
+    if (mention && _emoteOnly) {
+      return null;
+    }
     if (!mention && !_settings.emoteAutocomplete) {
       return null;
     }
@@ -1518,7 +1543,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
     final emotes =
         mention
               ? <ChatAssetEmote>[]
-              : (widget.assets?.emotesByName.values ?? <ChatAssetEmote>[]).where((emote) {
+              : _composerEmotes.values.where((emote) {
                   final enabled = switch (emote.provider) {
                     ChatEmoteProvider.twitch => _settings.twitchEmotes,
                     ChatEmoteProvider.sevenTv => _settings.sevenTvEmotes,
@@ -2385,6 +2410,12 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
       _ => null,
     };
     final delaySeconds = _chatDelay.inMilliseconds / 1000;
+    final messageHint = [
+      "Send a message",
+      if (controller?.roomState["emote-only"] == "1") "Emotes only",
+      if (controller?.roomState["subs-only"] == "1") "Subs only",
+      if (delaySeconds > 0) "${delaySeconds.toStringAsFixed(1)}s",
+    ].join(" · ");
     final hint = replay != null
         ? "Chat replay"
         : !connected
@@ -2394,7 +2425,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
         : controller?.isSignedIn != true
         ? "Sign in from Following to chat"
         : !controller!.subscriberChatEligible
-        ? "Subscriber-Only Mode"
+        ? messageHint
         : controller.chatAccess == null
         ? controller.chatAccessError == null
               ? "Checking chat access…"
@@ -2404,11 +2435,10 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
         : slowModeWait > Duration.zero
         ? "You can chat in ${_chatDuration(slowModeWait)}"
         : _replyTo == null
-        ? delaySeconds > 0
-              ? "Send a message · ${delaySeconds.toStringAsFixed(1)}s"
-              : "Send a message"
+        ? messageHint
         : "@${_replyTo!.login}";
     final hasDraft = _draft.text.trim().isNotEmpty;
+    final allowedDraft = _isAllowedMessage(_draft.text);
     final completion = _chatCompletion;
     final messageIndices = {
       for (var index = 0; index < messages.length; index++)
@@ -2781,6 +2811,9 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                                 ? controller?.sendRateLimitMessage
                                                 : null,
                                             counterText: "",
+                                            errorText: hasDraft && !allowedDraft
+                                                ? "Only Twitch emotes can be sent."
+                                                : null,
                                             suffixIcon: widget.assets == null && replay == null
                                                 ? null
                                                 : IconButton(
@@ -2811,7 +2844,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                         IconButton(
                                           key: const ValueKey("chat_send"),
                                           tooltip: "Send message",
-                                          onPressed: controller.canSend && !_sending
+                                          onPressed: controller.canSend && !_sending && allowedDraft
                                               ? () => unawaited(_send())
                                               : null,
                                           color: colors.primary,
@@ -2843,6 +2876,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                 child: TwitchEmotePicker(
                   assets: widget.assets!,
                   preferences: _preferences,
+                  twitchOnly: _emoteOnly,
                   onSelected: (emote) => _insertCompletion(emote.name),
                 ),
               ),
