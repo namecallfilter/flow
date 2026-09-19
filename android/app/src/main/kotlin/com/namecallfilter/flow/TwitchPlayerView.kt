@@ -3,7 +3,10 @@ package com.namecallfilter.flow
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Rect
+import android.media.AudioManager
+import android.media.AudioRecordingConfiguration
 import android.media.MediaMetadata
+import android.media.MediaRecorder
 import android.media.session.PlaybackState
 import android.net.Uri
 import android.os.Handler
@@ -13,6 +16,8 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewTreeObserver
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Format
@@ -77,6 +82,19 @@ internal class TwitchPlayerView(
     private val layoutObserver = activity.window.decorView.viewTreeObserver
     private val pictureInPictureLayoutListener = ViewTreeObserver.OnGlobalLayoutListener {
         activity.updatePictureInPicture()
+        updateDictationPlayback()
+    }
+    private val audioManager = context.getSystemService(AudioManager::class.java)
+    private var voiceRecognitionActive = false
+    private var dictationPlayback = false
+    private var volumeBeforeDictation = 1f
+    private val recordingCallback = object : AudioManager.AudioRecordingCallback() {
+        override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>) {
+            voiceRecognitionActive = configs.any {
+                it.clientAudioSource == MediaRecorder.AudioSource.VOICE_RECOGNITION
+            }
+            updateDictationPlayback()
+        }
     }
     private val liveSpeedControl = TwitchLatencyPlaybackSpeedControl()
     private val latencyCorrection = LiveLatencyCorrectionCoordinator(
@@ -140,8 +158,10 @@ internal class TwitchPlayerView(
                 )
                 .build()
         }
+    val hasPictureInPictureContent: Boolean
+        get() = pictureInPictureEnabled && !isAudioOnly && !disposed
     val canEnterPictureInPicture: Boolean
-        get() = pictureInPictureEnabled && !isAudioOnly && !disposed && initialized && player.playWhenReady &&
+        get() = hasPictureInPictureContent && initialized && player.playWhenReady &&
             player.playbackState != Player.STATE_IDLE && player.playbackState != Player.STATE_ENDED &&
             player.playerError == null
     val pictureInPicturePlaying: Boolean
@@ -153,6 +173,7 @@ internal class TwitchPlayerView(
             if (disposed) {
                 return
             }
+            if (dictationPlayback) updateDictationPlayback()
             updateAdProgress()
             if (!isLive) emitState(updateSystemControls = false)
             val correctionStartedAt = correctionRequestedAtRealtimeMs
@@ -200,6 +221,7 @@ internal class TwitchPlayerView(
         }
 
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            updateDictationPlayback()
             if (!playWhenReady) {
                 latestCorrectionMeasurement = null
                 pausedAtRealtimeMs = SystemClock.elapsedRealtime()
@@ -210,6 +232,10 @@ internal class TwitchPlayerView(
             }
             maybeApplyPendingLatencyCorrection()
             emitState()
+        }
+
+        override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
+            updateDictationPlayback()
         }
 
         override fun onPlayerError(error: PlaybackException) {
@@ -372,6 +398,7 @@ internal class TwitchPlayerView(
         }
 
         layoutObserver.addOnGlobalLayoutListener(pictureInPictureLayoutListener)
+        audioManager.registerAudioRecordingCallback(recordingCallback, mainHandler)
         activity.registerPlayer(this)
         mainHandler.post(adProgressTicker)
     }
@@ -380,6 +407,7 @@ internal class TwitchPlayerView(
 
     override fun dispose() {
         disposed = true
+        audioManager.unregisterAudioRecordingCallback(recordingCallback)
         if (layoutObserver.isAlive) layoutObserver.removeOnGlobalLayoutListener(pictureInPictureLayoutListener)
         activity.unregisterPlayer(this)
         mainHandler.removeCallbacks(adProgressTicker)
@@ -396,6 +424,31 @@ internal class TwitchPlayerView(
         eventSink = null
         playerView.player = null
         player.release()
+    }
+
+    private fun updateDictationPlayback() {
+        if (disposed) return
+        val keepVideoPlaying = shouldKeepVideoDuringDictation(
+            keyboardVisible = ViewCompat.getRootWindowInsets(activity.window.decorView)
+                ?.isVisible(WindowInsetsCompat.Type.ime()) == true,
+            voiceRecognitionActive = voiceRecognitionActive,
+            playWhenReady = player.playWhenReady && !stopped,
+            audioOnly = isAudioOnly,
+            audioMode = audioManager.mode,
+            suppressionReason = player.playbackSuppressionReason,
+            alreadyActive = dictationPlayback,
+        )
+        if (dictationPlayback == keepVideoPlaying) return
+        dictationPlayback = keepVideoPlaying
+        if (keepVideoPlaying) {
+            // Dictation owns audio focus; keep only the muted video advancing.
+            volumeBeforeDictation = player.volume
+            player.volume = 0f
+            player.setAudioAttributes(AudioAttributes.DEFAULT, false)
+        } else {
+            player.setAudioAttributes(AudioAttributes.DEFAULT, true)
+            player.volume = volumeBeforeDictation
+        }
     }
 
     fun pauseForBackground(resumeOnReturn: Boolean) {
@@ -729,7 +782,7 @@ internal class TwitchPlayerView(
         correctionRequestedAtRealtimeMs = null
         latencyCorrection.reset()
         Log.d(LOG_TAG, "reloading playback: $reason")
-        if (isAudioOnly) {
+        if (isAudioOnly || pictureInPicture) {
             val generation = sessionGeneration
             methodChannel.invokeMethod("refreshPlaybackUri", null, object : MethodChannel.Result {
                 override fun success(result: Any?) {
@@ -1144,6 +1197,18 @@ internal class TwitchPlayerView(
     }
 
     companion object {
+        internal fun shouldKeepVideoDuringDictation(
+            keyboardVisible: Boolean,
+            voiceRecognitionActive: Boolean,
+            playWhenReady: Boolean,
+            audioOnly: Boolean,
+            audioMode: Int,
+            suppressionReason: Int,
+            alreadyActive: Boolean,
+        ): Boolean = keyboardVisible && voiceRecognitionActive && playWhenReady && !audioOnly &&
+            audioMode == AudioManager.MODE_NORMAL &&
+            (alreadyActive || suppressionReason == Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS)
+
         internal fun playbackLoadControl(isLive: Boolean): DefaultLoadControl =
             if (isLive) {
                 DefaultLoadControl.Builder()

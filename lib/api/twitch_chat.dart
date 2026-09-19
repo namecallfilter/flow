@@ -44,6 +44,7 @@ class TwitchChatController extends ChangeNotifier {
   final bool loadPrivateNotices;
   final bool loadRecentHistory;
   TwitchChatPins? _pins;
+  final predictionUpdates = ChangeNotifier();
   TwitchPrivateChatNotices? _privateNotices;
   String? _privateUserId;
   ({String accessToken, String? gqlAccessToken})? _sessionCredentials;
@@ -128,6 +129,12 @@ class TwitchChatController extends ChangeNotifier {
   TwitchSubscriptionAnniversary? get subscriptionAnniversary => _subscriptionAnniversary;
   String? get subscriptionAnniversaryError => _subscriptionAnniversaryError;
   bool get isSharingSubscriptionAnniversary => _isSharingSubscriptionAnniversary;
+  bool get emoteOnlyRestricted =>
+      roomState["emote-only"] == "1" &&
+      currentUserLogin != channel &&
+      !_isPrivileged &&
+      chatAccess?.isModerator != true &&
+      chatAccess?.isVip != true;
   int get followersOnlyMinutes => int.tryParse(_roomState["followers-only"] ?? "") ?? -1;
   bool get subscriberChatEligible =>
       _roomState["subs-only"] != "1" ||
@@ -853,6 +860,8 @@ class TwitchChatController extends ChangeNotifier {
               channelId: channelId,
               socketConnector: pinSocketConnector,
               loadInitial: () async => (await clientLoader()).fetchPinnedChat(channelId),
+              onPredictionUpdate: predictionUpdates.notifyListeners,
+              onPollUpdate: predictionUpdates.notifyListeners,
             )..addListener(_scheduleNotify);
           }
           final userId = currentUserId;
@@ -1193,9 +1202,11 @@ class TwitchChatController extends ChangeNotifier {
         _scheduleNotify();
       case "NOTICE":
         final rateLimited = message.tags["msg-id"] == "msg_ratelimit";
+        final emoteOnlyRejection = message.tags["msg-id"] == "msg_emoteonly";
+        final subscribersOnlyRejection = message.tags["msg-id"] == "msg_subsonly";
         if (rateLimited) {
           _sendRateLimitMessage = message.text;
-        } else {
+        } else if (!emoteOnlyRejection && !subscribersOnlyRejection) {
           addPrivateNotice(
             id: message.tags["id"] ?? "private-${_systemMessageCount++}",
             type: "notice",
@@ -1205,7 +1216,9 @@ class TwitchChatController extends ChangeNotifier {
         final followersOnlyRejection = (message.tags["msg-id"] ?? "").startsWith(
           "msg_followersonly",
         );
-        final subscribersOnlyRejection = message.tags["msg-id"] == "msg_subsonly";
+        if (emoteOnlyRejection) {
+          _roomState["emote-only"] = "1";
+        }
         if (subscribersOnlyRejection) {
           _roomState["subs-only"] = "1";
           _setSubscriber(false);
@@ -1219,7 +1232,8 @@ class TwitchChatController extends ChangeNotifier {
           );
           _scheduleSlowMode();
         }
-        _error = rateLimited || followersOnlyRejection || subscribersOnlyRejection
+        _error =
+            rateLimited || followersOnlyRejection || subscribersOnlyRejection || emoteOnlyRejection
             ? null
             : message.text;
         if ((message.tags["msg-id"] ?? "").startsWith("msg_") ||
@@ -1402,6 +1416,7 @@ class TwitchChatController extends ChangeNotifier {
     _closeSocket();
     _notifyTimer?.cancel();
     _pins?.dispose();
+    predictionUpdates.dispose();
     super.dispose();
   }
 }

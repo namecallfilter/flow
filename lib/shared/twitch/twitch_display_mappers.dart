@@ -69,6 +69,7 @@ List<OfflineChannel> offlineChannelsFromConnection(
           displayName(channel.broadcasterName, channel.broadcasterLogin),
         ),
         lastLive: offlineLastLive(connection.channelInfoByBroadcasterId[channel.broadcasterId]),
+        title: connection.channelInfoByBroadcasterId[channel.broadcasterId]?.title ?? "",
         category: offlineCategory(connection, channel),
         categoryId:
             connection.channelInfoByBroadcasterId[channel.broadcasterId]?.gameName.isNotEmpty ??

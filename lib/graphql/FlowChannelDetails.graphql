@@ -5,6 +5,9 @@ query FlowChannelDetails($login: String!, $videosFirst: Int, $videosAfter: Curso
     displayName
     isPartner
     description
+    broadcastSettings {
+      title
+    }
     profileImageURL(width: 300)
     followers {
       totalCount

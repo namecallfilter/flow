@@ -802,6 +802,79 @@ void main() {
     },
   );
 
+  test("emote-only mode follows room updates and exempts moderators and VIPs", () async {
+    final client = _Client();
+    final chat = TwitchChatController(
+      channel: "channel",
+      clientLoader: () async => client,
+      socketConnector: server.connect,
+      loadPins: false,
+      loadPrivateNotices: false,
+    );
+    addTearDown(chat.dispose);
+    await server.join(chat);
+    expect(chat.emoteOnlyRestricted, isFalse);
+    server.send("@emote-only=1 :tmi.twitch.tv ROOMSTATE #channel\r\n");
+    await _waitFor(() => chat.emoteOnlyRestricted);
+    expect(chat.canSend, isTrue);
+    for (final role in ["moderator", "broadcaster", "vip"]) {
+      server.send("@badges=$role/1 :tmi.twitch.tv USERSTATE #channel\r\n");
+      await _waitFor(() => !chat.emoteOnlyRestricted);
+      server.send("@badges=subscriber/1;mod=0 :tmi.twitch.tv USERSTATE #channel\r\n");
+      await _waitFor(() => chat.emoteOnlyRestricted);
+    }
+    for (final moderator in [true, false]) {
+      client.access = TwitchChatAccess(
+        channelId: "1",
+        channelDisplayName: "Channel",
+        rules: const [],
+        isModerator: moderator,
+        isVip: !moderator,
+      );
+      await chat.refreshChatAccess();
+      expect(chat.emoteOnlyRestricted, isFalse);
+    }
+    client.access = const TwitchChatAccess(
+      channelId: "1",
+      channelDisplayName: "Channel",
+      rules: [],
+    );
+    await chat.refreshChatAccess();
+    expect(chat.emoteOnlyRestricted, isTrue);
+    server.send("@emote-only=0 :tmi.twitch.tv ROOMSTATE #channel\r\n");
+    await _waitFor(() => !chat.emoteOnlyRestricted);
+  });
+
+  test("the broadcaster is exempt from emote-only without badges", () async {
+    final chat = controller(channel: "viewer");
+    await server.join(chat);
+    server.send("@emote-only=1 :tmi.twitch.tv ROOMSTATE #viewer\r\n");
+    await _waitFor(() => chat.roomState["emote-only"] == "1");
+    expect(chat.emoteOnlyRestricted, isFalse);
+  });
+
+  test(
+    "emote-only rejections update the mode without a private error and emotes can send",
+    () async {
+      final chat = controller();
+      await server.join(chat);
+      final rejected = chat.send("text");
+      await _waitFor(() => server.commands.contains("PRIVMSG #channel :text\r\n"));
+      server.send("@msg-id=msg_emoteonly :tmi.twitch.tv NOTICE #channel :Emotes only.\r\n");
+      expect(await rejected, isFalse);
+      expect(chat.emoteOnlyRestricted, isTrue);
+      expect(chat.error, isNull);
+      expect(chat.messages.where((message) => message.isPrivate), isEmpty);
+      expect(chat.conversation, isEmpty);
+      final sent = chat.send("Kappa");
+      await _waitFor(() => server.commands.contains("PRIVMSG #channel :Kappa\r\n"));
+      server.send("@id=emote;emotes=25:0-4 :tmi.twitch.tv USERSTATE #channel\r\n");
+      expect(await sent, isTrue);
+      expect(chat.conversation.single.text, "Kappa");
+      expect(chat.error, isNull);
+    },
+  );
+
   test("subscribers-only chat preserves subscriber and privileged access and refreshes", () async {
     final client = _Client();
     final chat = TwitchChatController(
@@ -829,6 +902,7 @@ void main() {
     server.send("@msg-id=msg_subsonly :tmi.twitch.tv NOTICE #channel :Subscribers only.\r\n");
     await _waitFor(() => !chat.canSend && !chat.isCheckingChatAccess);
     expect(chat.error, isNull);
+    expect(chat.messages.where((message) => message.isPrivate), isEmpty);
     client.subscribed = true;
     await chat.refreshChatAccess();
     expect(chat.canSend, isTrue);

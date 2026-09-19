@@ -121,12 +121,14 @@ void main() {
     await tester.pumpWidget(_picker(assets, MemoryFlowPreferences()));
     await tester.pumpAndSettle();
     expect(find.text("Emotes you use will appear here."), findsOneWidget);
+    expect(tester.getTopLeft(find.widgetWithText(ChoiceChip, "Recent")).dx, 12);
     expect(assets.unlockedLoads, 0);
     await tester.tap(find.text("Twitch"));
     await tester.pumpAndSettle();
     expect(find.byTooltip("twitch-channel"), findsOneWidget);
     expect(find.byTooltip("twitch-global"), findsNothing);
     expect(find.text("Unlocked"), findsOneWidget);
+    expect(tester.getTopLeft(find.widgetWithText(ChoiceChip, "Channel")).dx, 12);
     final image = tester.widget<Image>(find.byType(Image));
     expect((image.image as NetworkImage).url, endsWith("/light/2.0"));
     await tester.tap(find.text("Global"));
@@ -196,6 +198,66 @@ void main() {
     expect(find.byTooltip("first-old"), findsNothing);
     expect(find.byTooltip("second-old"), findsNothing);
     expect(find.byTooltip("sevenTv-channel\nOriginal name: Original"), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets("emote-only mode keeps only usable Twitch emotes and restores normal providers", (
+    tester,
+  ) async {
+    final assets = _Assets()..channelUnlocked = false;
+    final preferences = MemoryFlowPreferences();
+    addTearDown(assets.dispose);
+    final stored = [
+      for (final (provider, scope) in [
+        (ChatEmoteProvider.sevenTv, ChatEmoteScope.channel),
+        (ChatEmoteProvider.twitch, ChatEmoteScope.channel),
+        (ChatEmoteProvider.twitch, ChatEmoteScope.global),
+        (ChatEmoteProvider.twitch, ChatEmoteScope.unlocked),
+      ])
+        for (final emote in assets.emotesFor(provider, scope))
+          jsonEncode({
+            "provider": emote.provider.name,
+            "id": emote.id,
+            "name": emote.name,
+            "url": emote.url,
+          }),
+    ];
+    await preferences.saveRecentChatEmotes(stored);
+    await tester.pumpWidget(_picker(assets, preferences, twitchOnly: true));
+    await tester.pumpAndSettle();
+    expect(assets.unlockedLoads, 1);
+    for (final name in ["7TV", "BTTV", "FFZ"]) {
+      expect(find.text(name), findsNothing);
+    }
+    expect(find.byTooltip("sevenTv-channel\nOriginal name: Original"), findsNothing);
+    expect(find.byTooltip("twitch-channel"), findsNothing);
+    expect(find.byTooltip("twitch-global"), findsOneWidget);
+    expect(find.byTooltip("twitch-unlocked"), findsOneWidget);
+
+    await tester.tap(find.text("Twitch"));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip("twitch-channel"), findsNothing);
+    assets.channelUnlocked = true;
+    assets.notifyListeners();
+    await tester.pumpAndSettle();
+    expect(find.byTooltip("twitch-channel"), findsOneWidget);
+
+    await tester.pumpWidget(_picker(assets, preferences));
+    await tester.tap(find.text("7TV"));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip("sevenTv-channel\nOriginal name: Original"), findsOneWidget);
+    await tester.pumpWidget(_picker(assets, preferences, twitchOnly: true));
+    await tester.pumpAndSettle();
+    expect(assets.unlockedLoads, 2);
+    expect(tester.widget<ChoiceChip>(find.widgetWithText(ChoiceChip, "Twitch")).selected, isTrue);
+    expect(find.byTooltip("sevenTv-channel\nOriginal name: Original"), findsNothing);
+    expect(find.byTooltip("twitch-channel"), findsOneWidget);
+
+    await tester.pumpWidget(_picker(assets, preferences));
+    await tester.tap(find.text("Recent"));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip("sevenTv-channel\nOriginal name: Original"), findsOneWidget);
+    expect(await preferences.readRecentChatEmotes(), stored);
     expect(tester.takeException(), isNull);
   });
 
@@ -338,6 +400,7 @@ Widget _picker(
   FlowPreferences preferences, {
   ValueChanged<ChatAssetEmote>? onSelected,
   double height = 260,
+  bool twitchOnly = false,
 }) => MaterialApp(
   home: Scaffold(
     body: Align(
@@ -349,6 +412,7 @@ Widget _picker(
           assets: assets,
           preferences: preferences,
           onSelected: onSelected ?? (_) {},
+          twitchOnly: twitchOnly,
         ),
       ),
     ),

@@ -13,6 +13,95 @@ import "package:http/testing.dart";
 typedef _RequestObserver = void Function(http.Request request);
 
 void main() {
+  test(
+    "live-only refresh updates status and preserves metadata and replacement sessions",
+    () async {
+      var online = false;
+      var fail = false;
+      final requests = <http.Request>[];
+      final client = TwitchApiClient(
+        clientId: "client-123",
+        accessToken: "token-123",
+        gqlAccessToken: "web-token-123",
+        httpClient: _followingHttpClient(
+          onRequest: (request) {
+            requests.add(request);
+            if (fail) {
+              throw http.ClientException("Network unavailable");
+            }
+          },
+          responseOverride: (request) => !online
+              ? _jsonResponse({
+                  "data": {
+                    "currentUser": {
+                      "followedLiveUsers": {
+                        "edges": const <Object?>[],
+                        "pageInfo": {"hasNextPage": false},
+                      },
+                    },
+                  },
+                })
+              : null,
+        ),
+      );
+      final store = FollowingStore(authController: _authController());
+      await store.loadSavedConnection();
+      final original = store.connection!;
+      await store.refreshLiveChannels(() async => client);
+      expect(store.liveChannels, isEmpty);
+      online = true;
+      await store.refreshLiveChannels(() async => client);
+      expect(store.liveChannels.single.name, "AussieAntics");
+      expect(store.connection!.followedChannels, same(original.followedChannels));
+      expect(store.connection!.usersById, same(original.usersById));
+      expect(
+        store.connection!.channelInfoByBroadcasterId,
+        same(original.channelInfoByBroadcasterId),
+      );
+      expect(requests, hasLength(2));
+      expect(
+        requests.every((request) => _isGraphQlOperation(request, "FlowFollowedLiveUsers")),
+        isTrue,
+      );
+
+      final current = store.connection;
+      fail = true;
+      await store.refreshLiveChannels(() async => client);
+      expect(store.connection, same(current));
+      expect(store.followingError, isNull);
+      fail = false;
+
+      final pendingClient = Completer<TwitchApiClient>();
+      final pending = store.refreshLiveChannels(() => pendingClient.future);
+      var overlappingCalls = 0;
+      Future<TwitchApiClient> overlappingLoader() async {
+        overlappingCalls++;
+        return client;
+      }
+
+      await store.refreshLiveChannels(overlappingLoader);
+      expect(overlappingCalls, 0);
+      final replacement = _connection("other-user");
+      store.applyConnection(replacement);
+      final replacementClient = Completer<TwitchApiClient>();
+      var replacementCalls = 0;
+      final replacementRefresh = store.refreshLiveChannels(() {
+        replacementCalls++;
+        return replacementClient.future;
+      });
+      expect(replacementCalls, 1);
+      pendingClient.complete(client);
+      await pending;
+      expect(store.connection, same(replacement));
+      await store.refreshLiveChannels(overlappingLoader);
+      expect(overlappingCalls, 0);
+      replacementClient.complete(client);
+      await replacementRefresh;
+      expect(store.connection!.user.id, replacement.user.id);
+      expect(store.liveChannels.single.name, "AussieAntics");
+    },
+  );
+
   for (final operation in {
     "FlowFollowedLiveUsers": "followedLiveUsers",
     "FlowFollowedUsers": "follows",

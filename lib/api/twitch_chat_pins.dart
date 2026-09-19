@@ -10,6 +10,8 @@ class TwitchChatPins extends ChangeNotifier {
   TwitchChatPins({
     required this.channelId,
     required this.loadInitial,
+    this.onPredictionUpdate,
+    this.onPollUpdate,
     Future<WebSocket> Function()? socketConnector,
   }) : _socketConnector = socketConnector ?? _openSocket {
     unawaited(_connect());
@@ -17,6 +19,8 @@ class TwitchChatPins extends ChangeNotifier {
 
   final String channelId;
   final Future<TwitchPinnedChat?> Function() loadInitial;
+  final VoidCallback? onPredictionUpdate;
+  final VoidCallback? onPollUpdate;
   final Future<WebSocket> Function() _socketConnector;
   WebSocket? _socket;
   StreamSubscription<Object?>? _subscription;
@@ -29,6 +33,11 @@ class TwitchChatPins extends ChangeNotifier {
   Map<String, Map<String, Object?>>? _initialChanges;
   String _subscriptionId = "";
   String _requestId = "";
+  String _predictionSubscriptionId = "";
+  String _predictionRequestId = "";
+  String _pollSubscriptionId = "";
+  String _pollRequestId = "";
+  final _pendingSubscriptions = <String>{};
   int _generation = 0;
   int _revision = 0;
   int _attempt = 0;
@@ -88,40 +97,101 @@ class TwitchChatPins extends ChangeNotifier {
           _keepaliveSeconds = (welcome["keepaliveSec"] as num?)?.toInt() ?? 15;
           _requestId = _uuid();
           _subscriptionId = _uuid();
-          _socket?.add(
-            jsonEncode({
-              "type": "subscribe",
-              "id": _requestId,
-              "timestamp": DateTime.now().toUtc().toIso8601String(),
-              "subscribe": {
-                "id": _subscriptionId,
-                "type": "pubsub",
-                "pubsub": {"topic": "pinned-chat-updates-v1.$channelId"},
-              },
-            }),
-          );
-          _readyDeadline = Timer(const Duration(seconds: 10), () => _lost(generation));
+          _predictionRequestId = _uuid();
+          _predictionSubscriptionId = _uuid();
+          _pollRequestId = _uuid();
+          _pollSubscriptionId = _uuid();
+          final topics = [
+            (_requestId, _subscriptionId, "pinned-chat-updates-v1.$channelId"),
+            if (onPredictionUpdate != null)
+              (
+                _predictionRequestId,
+                _predictionSubscriptionId,
+                "predictions-channel-v1.$channelId",
+              ),
+            if (onPollUpdate != null) (_pollRequestId, _pollSubscriptionId, "polls.$channelId"),
+          ];
+          _pendingSubscriptions.addAll(topics.map((topic) => topic.$1));
+          for (final (requestId, subscriptionId, topic) in topics) {
+            _socket?.add(
+              jsonEncode({
+                "type": "subscribe",
+                "id": requestId,
+                "timestamp": DateTime.now().toUtc().toIso8601String(),
+                "subscribe": {
+                  "id": subscriptionId,
+                  "type": "pubsub",
+                  "pubsub": {"topic": topic},
+                },
+              }),
+            );
+          }
+          _readyDeadline = Timer(const Duration(seconds: 10), () {
+            if (_pendingSubscriptions.contains(_requestId)) {
+              _lost(generation);
+            }
+          });
         case "subscribeResponse":
-          if (message["parentId"] != _requestId) {
+          if (!_pendingSubscriptions.remove(message["parentId"])) {
             return;
           }
           final response = message["subscribeResponse"]! as Map<String, Object?>;
           if (response["result"] != "ok") {
-            _lost(generation);
+            if (message["parentId"] == _requestId) {
+              _lost(generation);
+            } else if (_pendingSubscriptions.isEmpty) {
+              _readyDeadline?.cancel();
+            }
             return;
           }
-          _readyDeadline?.cancel();
-          unawaited(_loadInitial(generation));
+          if (_pendingSubscriptions.isEmpty) {
+            _readyDeadline?.cancel();
+          }
+          if (message["parentId"] == _requestId) {
+            unawaited(_loadInitial(generation));
+          } else if (message["parentId"] == _predictionRequestId) {
+            onPredictionUpdate?.call();
+          } else if (message["parentId"] == _pollRequestId) {
+            onPollUpdate?.call();
+          }
         case "notification":
           final notification = message["notification"]! as Map<String, Object?>;
           final subscription = notification["subscription"]! as Map<String, Object?>;
-          if (subscription["id"] != _subscriptionId || notification["type"] != "pubsub") {
+          if (notification["type"] != "pubsub") {
             return;
           }
-          _receivePin(jsonDecode(notification["pubsub"]! as String) as Map<String, Object?>);
+          if (subscription["id"] == _subscriptionId) {
+            _receivePin(jsonDecode(notification["pubsub"]! as String) as Map<String, Object?>);
+          } else if (subscription["id"] == _predictionSubscriptionId) {
+            final event = jsonDecode(notification["pubsub"]! as String) as Map<String, Object?>;
+            if (event["type"] == "event-created" || event["type"] == "event-updated") {
+              onPredictionUpdate?.call();
+            }
+          } else if (subscription["id"] == _pollSubscriptionId) {
+            final event = jsonDecode(notification["pubsub"]! as String) as Map<String, Object?>;
+            if (const [
+              "POLL_CREATE",
+              "POLL_UPDATE",
+              "POLL_COMPLETE",
+              "POLL_TERMINATE",
+              "POLL_ARCHIVE",
+              "POLL_MODERATE",
+            ].contains(event["type"])) {
+              onPollUpdate?.call();
+            }
+          }
         case "reconnect":
-        case "subscriptionRevocation":
           _lost(generation);
+        case "subscriptionRevocation":
+          final revocation = message["subscriptionRevocation"]! as Map<String, Object?>;
+          final subscription = revocation["subscription"]! as Map<String, Object?>;
+          if (subscription["id"] == _subscriptionId) {
+            _lost(generation);
+          } else if (subscription["id"] == _predictionSubscriptionId) {
+            _predictionSubscriptionId = "";
+          } else if (subscription["id"] == _pollSubscriptionId) {
+            _pollSubscriptionId = "";
+          }
       }
     } on Object {
       _lost(generation);
@@ -239,6 +309,7 @@ class TwitchChatPins extends ChangeNotifier {
   }
 
   void _closeSocket() {
+    _pendingSubscriptions.clear();
     _deadline?.cancel();
     _readyDeadline?.cancel();
     _initialDeadline?.cancel();

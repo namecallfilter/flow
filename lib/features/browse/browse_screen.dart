@@ -1673,6 +1673,7 @@ class _BrowseTopBar extends StatelessWidget {
         TextField(
           key: const ValueKey("browse_search_field"),
           readOnly: true,
+          canRequestFocus: false,
           onTap: onSearchPressed,
           decoration: const InputDecoration(
             hintText: "Search Twitch",

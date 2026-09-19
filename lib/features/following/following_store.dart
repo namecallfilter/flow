@@ -40,6 +40,7 @@ abstract class FollowingStoreBase with Store {
   bool _loadInBackground = false;
   bool _queuedRefreshInBackground = false;
   int _sessionRevision = 0;
+  int? _liveRefreshRevision;
 
   @observable
   TwitchAuthConnection? connection;
@@ -119,6 +120,39 @@ abstract class FollowingStoreBase with Store {
 
   @computed
   bool get isLoggedIn => connection != null;
+
+  Future<void> refreshLiveChannels(TwitchApiClientLoader clientLoader) async {
+    final current = connection;
+    if (current == null ||
+        _savedConnectionLoad != null ||
+        _liveRefreshRevision == _sessionRevision) {
+      return;
+    }
+    final revision = _sessionRevision;
+    _liveRefreshRevision = revision;
+    try {
+      final client = await clientLoader();
+      final streams = await client.fetchFollowedStreams(current.user.id);
+      if (revision != _sessionRevision) {
+        return;
+      }
+      runInAction(() {
+        connection = TwitchAuthConnection(
+          user: current.user,
+          followedStreams: streams,
+          followedChannels: current.followedChannels,
+          usersById: current.usersById,
+          channelInfoByBroadcasterId: current.channelInfoByBroadcasterId,
+        );
+      });
+    } on Object {
+      // The full session refresh handles authentication and reports persistent errors.
+    } finally {
+      if (_liveRefreshRevision == revision) {
+        _liveRefreshRevision = null;
+      }
+    }
+  }
 
   @action
   Future<void> loadSavedConnection({bool refresh = false, bool background = false}) async {

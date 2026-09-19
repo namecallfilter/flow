@@ -1,0 +1,10 @@
+mutation FlowVoteInPoll($input: VoteInPollInput!) {
+  voteInPoll(input: $input) {
+    error { code }
+    voter {
+      poll { id }
+      user { id }
+      choices { pollChoice { id } votes { total } }
+    }
+  }
+}

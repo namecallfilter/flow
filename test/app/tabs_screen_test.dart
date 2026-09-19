@@ -388,6 +388,14 @@ void main() {
     await tester.tap(find.byKey(const ValueKey("profile_auth_button")));
     await tester.pumpAndSettle();
 
+    expect(tabsStore.currentRoute, FlowRoutes.following);
+    expect(find.byKey(const ValueKey("channel_page_flowtester")), findsOneWidget);
+    expect(find.byKey(const ValueKey("settings_title")), findsNothing);
+    expect(find.text("Flow Tester"), findsOneWidget);
+    expect(find.byKey(const ValueKey("channel_follow_button")), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Settings")));
+    await tester.pumpAndSettle();
     expect(tabsStore.currentRoute, FlowRoutes.settings);
     expect(find.byKey(const ValueKey("settings_title")), findsOneWidget);
   });
@@ -528,9 +536,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey("profile_auth_button")));
+    await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Settings")));
     await tester.pumpAndSettle();
-
     await tester.tap(find.text("Switch Twitch account"));
     await tester.pumpAndSettle();
 
@@ -544,6 +551,12 @@ void main() {
     expect(find.byKey(const ValueKey("login_offer_screen")), findsNothing);
     expect(find.text("Replacement Tester"), findsOneWidget);
     expect(find.text("@replacement"), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Following")));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey("profile_auth_button")));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("channel_page_replacement")), findsOneWidget);
   });
 
   testWidgets("signs out of Twitch from Settings", (tester) async {
@@ -560,9 +573,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey("profile_auth_button")));
+    await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Settings")));
     await tester.pumpAndSettle();
-
     await tester.tap(find.text("Sign out of Twitch"));
     await tester.pumpAndSettle();
 
@@ -577,6 +589,11 @@ void main() {
       findsOneWidget,
     );
     expect(find.text("Signed out of Twitch"), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Live Channels")));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("following_title")), findsOneWidget);
+    expect(find.text("@flowtester"), findsNothing);
   });
 
   testWidgets("Me offers login to guests before starting OAuth", (tester) async {
@@ -639,7 +656,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(loginCalls, 1);
-    expect(tabsStore.currentRoute, FlowRoutes.settings);
+    expect(tabsStore.currentRoute, FlowRoutes.following);
+    expect(find.byKey(const ValueKey("channel_page_flowtester")), findsOneWidget);
   });
 
   testWidgets("keeps Browse section and scroll state when switching tabs", (
@@ -728,7 +746,6 @@ void main() {
     expect(browseStore.liveChannels.any((channel) => channel.name == "NextStreamer"), isTrue);
     expect(topCategoriesRequests, 1);
     expect(topLiveStreamsRequests, 1);
-    expect(followedLiveRequests, 1);
   });
 
   for (final miniPlayerEnabled in [true, false]) {
@@ -940,7 +957,9 @@ void main() {
     await tester.pump(const Duration(seconds: 30));
     await tester.pumpAndSettle();
 
-    expect(followingStore.connection, same(connection));
+    expect(followingStore.connection!.user, same(connection!.user));
+    expect(followingStore.connection!.followedChannels, same(connection.followedChannels));
+    expect(followingStore.connection!.usersById, same(connection.usersById));
     expect(followingStore.followingError, isNull);
     expect(find.text("AussieAntics"), findsOneWidget);
     expect(find.textContaining("Exception"), findsNothing);
@@ -1001,12 +1020,19 @@ void main() {
     expect(categoryStreamsRequests, 0);
     expect(channelDetailsRequests, 0);
 
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(followedLiveRequests, 2);
+    expect(topCategoriesRequests, 1);
+    expect(topLiveStreamsRequests, 1);
+
     await tester.pump(const Duration(seconds: 30));
     await tester.pumpAndSettle();
 
     expect(topCategoriesRequests, 2);
     expect(topLiveStreamsRequests, 2);
-    expect(followedLiveRequests, 2);
+    expect(followedLiveRequests, greaterThan(2));
+    final followedRequestsAfterFirstRefresh = followedLiveRequests;
 
     await tester.tap(find.byKey(const ValueKey("bottom_nav_item_Browse")));
     await tester.pumpAndSettle();
@@ -1015,7 +1041,8 @@ void main() {
 
     expect(topCategoriesRequests, 3);
     expect(topLiveStreamsRequests, 3);
-    expect(followedLiveRequests, 3);
+    expect(followedLiveRequests, greaterThan(followedRequestsAfterFirstRefresh));
+    final followedRequestsBeforePause = followedLiveRequests;
 
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
@@ -1025,7 +1052,7 @@ void main() {
 
     expect(topCategoriesRequests, 3);
     expect(topLiveStreamsRequests, 3);
-    expect(followedLiveRequests, 3);
+    expect(followedLiveRequests, followedRequestsBeforePause);
 
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
@@ -1034,9 +1061,48 @@ void main() {
 
     expect(topCategoriesRequests, 4);
     expect(topLiveStreamsRequests, 4);
-    expect(followedLiveRequests, 4);
+    expect(followedLiveRequests, followedRequestsBeforePause + 1);
     expect(categoryStreamsRequests, 0);
     expect(channelDetailsRequests, 0);
+  });
+
+  testWidgets("slow Browse requests do not delay Following live status", (tester) async {
+    var followedLiveRequests = 0;
+    final browseCache = _DelayedTopLevelBrowseCache();
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildFlowTheme(Brightness.light),
+        home: FlowTabsScreen(
+          authController: _authController(
+            secureStore: _MemoryTwitchStore()
+              ..accessToken = "token-123"
+              ..webSessionToken = "gql-token-123",
+            onRequest: (request) {
+              if (_isGraphQlOperation(request, "FlowFollowedLiveUsers")) {
+                followedLiveRequests++;
+              }
+            },
+          ),
+          browseStore: BrowseStore(apiCache: browseCache),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(followedLiveRequests, 1);
+    expect(browseCache.categoryLoads.single.response.isCompleted, isFalse);
+    expect(browseCache.liveLoads.single.response.isCompleted, isFalse);
+
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pumpAndSettle();
+    expect(followedLiveRequests, 2);
+
+    browseCache.categoryLoads.single.response.complete(
+      const TwitchPage(data: <TwitchCategory>[], cursor: null),
+    );
+    browseCache.liveLoads.single.response.complete(
+      const TwitchPage(data: <TwitchFollowedStream>[], cursor: null),
+    );
+    await tester.pumpAndSettle();
   });
 
   testWidgets("coalesces timer and resume refreshes during initial viewer-sorted root loads", (
@@ -1407,6 +1473,26 @@ MockClient _flowHttpClient({
     if (query.contains("FlowCurrentUser")) {
       return _jsonResponse({
         "data": {"currentUser": _userJson("user-123")},
+      });
+    }
+
+    if (query.contains("FlowChannelDetails")) {
+      final login = variables["login"]! as String;
+      return _jsonResponse({
+        "data": {
+          "user": {
+            "id": login == "flowtester" ? "user-123" : login,
+            "login": login,
+            "displayName": login == "flowtester" ? "Flow Tester" : login,
+            "description": "",
+            "followers": {"totalCount": 0},
+            "stream": null,
+            "videos": {
+              "edges": <Object?>[],
+              "pageInfo": {"hasNextPage": false},
+            },
+          },
+        },
       });
     }
 
