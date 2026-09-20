@@ -15,6 +15,7 @@ class FlowPullToRefresh extends StatefulWidget {
     super.key,
     this.triggerDistance = 96,
     this.periodicRefreshInterval = const Duration(seconds: 30),
+    this.onPeriodicRefresh,
   });
 
   final ScrollController scrollController;
@@ -24,6 +25,7 @@ class FlowPullToRefresh extends StatefulWidget {
   final double indicatorMaxTravel;
   final double triggerDistance;
   final Duration? periodicRefreshInterval;
+  final RefreshCallback? onPeriodicRefresh;
 
   @override
   State<FlowPullToRefresh> createState() => _FlowPullToRefreshState();
@@ -34,6 +36,7 @@ class FlowPullToRefresh extends StatefulWidget {
     properties
       ..add(DiagnosticsProperty<ScrollController>("scrollController", scrollController))
       ..add(ObjectFlagProperty<RefreshCallback>.has("onRefresh", onRefresh))
+      ..add(ObjectFlagProperty<RefreshCallback?>.has("onPeriodicRefresh", onPeriodicRefresh))
       ..add(DoubleProperty("indicatorStartTop", indicatorStartTop))
       ..add(DoubleProperty("indicatorMaxTravel", indicatorMaxTravel))
       ..add(DoubleProperty("triggerDistance", triggerDistance))
@@ -131,7 +134,7 @@ class _FlowPullToRefreshState extends State<FlowPullToRefresh> with WidgetsBindi
 
     _refreshInFlight = true;
     try {
-      await widget.onRefresh();
+      await (widget.onPeriodicRefresh ?? widget.onRefresh)();
     } finally {
       _refreshInFlight = false;
     }

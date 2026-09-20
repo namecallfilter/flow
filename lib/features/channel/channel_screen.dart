@@ -68,6 +68,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
   ({String channelId, bool isFollowing})? _follow;
   bool _followBusy = false;
   bool _followFailed = false;
+  bool _isOwnChannel = false;
   bool _isVisible = false;
 
   @override
@@ -121,12 +122,21 @@ class _ChannelScreenState extends State<ChannelScreen> {
       }
       final session = (client.accessToken, client.gqlAccessToken);
       final signedIn = client.gqlAccessToken?.trim().isNotEmpty ?? false;
+      final isOwnChannel =
+          signedIn &&
+          (session == _followSession
+              ? _isOwnChannel
+              : (await client.fetchCurrentUser()).login.toLowerCase() ==
+                    widget.initialChannel.login.toLowerCase());
+      if (!mounted) {
+        return;
+      }
       final follow = _follow;
       if (toggle && !signedIn) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Sign in from Following to follow")),
         );
-      } else if (toggle && session == _followSession && follow != null) {
+      } else if (toggle && !isOwnChannel && session == _followSession && follow != null) {
         if (follow.isFollowing) {
           final confirmed = await showDialog<bool>(
             context: context,
@@ -157,7 +167,9 @@ class _ChannelScreenState extends State<ChannelScreen> {
           await client.followChannel(follow.channelId);
         }
       }
-      final access = signedIn ? await client.fetchChatAccess(widget.initialChannel.login) : null;
+      final access = signedIn && !isOwnChannel
+          ? await client.fetchChatAccess(widget.initialChannel.login)
+          : null;
       final currentClient = await widget.apiCache.clientLoader();
       if (!mounted) {
         return;
@@ -168,6 +180,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
       }
       setState(() {
         _followSession = session;
+        _isOwnChannel = isOwnChannel;
         _follow = access == null
             ? null
             : (channelId: access.channelId, isFollowing: access.isFollowing);
@@ -289,6 +302,8 @@ class _ChannelScreenState extends State<ChannelScreen> {
             builder: (context, constraints) => FlowPullToRefresh(
               scrollController: _scrollController,
               onRefresh: _refresh,
+              onPeriodicRefresh: () => _store.load(refresh: true, liveStatusOnly: true),
+              periodicRefreshInterval: Duration(seconds: channel?.liveStream == null ? 2 : 30),
               indicatorStartTop:
                   PageHeaderLayout.backButtonRefreshIndicatorStartTop + topSafeAreaInset,
               indicatorMaxTravel: 52,
@@ -313,7 +328,9 @@ class _ChannelScreenState extends State<ChannelScreen> {
                     _ChannelHeader(
                       channel: channel,
                       initialChannel: widget.initialChannel,
-                      followButton: _followBusy && _followSession == null
+                      followButton: _isOwnChannel
+                          ? const SizedBox.shrink()
+                          : _followBusy && _followSession == null
                           ? const SkeletonShimmer(child: _channelFollowButtonSkeleton)
                           : FilledButton.tonalIcon(
                               key: const ValueKey("channel_follow_button"),
@@ -845,8 +862,8 @@ class _ChannelHeader extends StatelessWidget {
                           )
                       else
                         Text(
-                          "Offline",
-                          maxLines: 1,
+                          channel?.title.isNotEmpty == true ? channel!.title : "Offline",
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                           style: theme.textTheme.bodyMedium?.copyWith(
                             color: theme.colorScheme.onSurface.withValues(alpha: 0.58),
@@ -1397,7 +1414,7 @@ StreamChannel? _playerChannel(
   final id = channel.id.trim();
   final name = _displayName(channel, initialChannel);
   final streamId = liveStream?.id.trim() ?? "";
-  final title = liveStream?.title.trim() ?? "";
+  final title = (liveStream?.title ?? channel.title).trim();
   final category = liveStream?.category.trim() ?? "";
   final viewerCount = liveStream?.viewerCount ?? 0;
 

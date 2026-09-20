@@ -4,6 +4,8 @@ import "dart:ui" as ui;
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_chat.dart";
 import "package:flow/api/twitch_chat_assets.dart";
+import "package:flow/api/twitch_polls.dart";
+import "package:flow/api/twitch_predictions.dart";
 import "package:flow/api/twitch_vod_chat.dart";
 import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/theme.dart";
@@ -43,6 +45,52 @@ void main() {
       ),
     ),
   );
+
+  testWidgets("prediction polling stops without paused frames and resumes immediately", (
+    tester,
+  ) async {
+    final client = _PredictionClient();
+    final controller = _ChatController(client: client);
+    addTearDown(controller.dispose);
+    addTearDown(() => tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed));
+    await tester.pumpWidget(panel(controller));
+    await tester.pumpAndSettle();
+    expect(client.calls, 1);
+    expect(
+      (tester.widget<ListView>(find.byKey(const ValueKey("chat_messages"))).padding! as EdgeInsets)
+          .top,
+      8,
+    );
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+    expect(client.calls, 2);
+
+    for (final state in [
+      AppLifecycleState.inactive,
+      AppLifecycleState.hidden,
+      AppLifecycleState.paused,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(state);
+    }
+    expect(tester.binding.framesEnabled, isFalse);
+    await tester.pump(const Duration(seconds: 16));
+    expect(client.calls, 2);
+    for (final state in [
+      AppLifecycleState.hidden,
+      AppLifecycleState.inactive,
+      AppLifecycleState.resumed,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(state);
+    }
+    await tester.pumpAndSettle();
+    expect(client.calls, 3);
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+    expect(client.calls, 4);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 10));
+    expect(client.calls, 4);
+  });
 
   testWidgets(
     "sub anniversary shares an optional message, retries failures, and can be dismissed",
@@ -588,7 +636,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets("long pins collapse after five seconds and respect a manual expansion", (
+  testWidgets("two-line pins collapse after five seconds and respect a manual expansion", (
     tester,
   ) async {
     tester.view.physicalSize = const Size(400, 800);
@@ -596,13 +644,13 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final controller = _ChatController()
-      ..pin = TwitchPinnedChat(
+      ..pin = const TwitchPinnedChat(
         id: "long",
         message: TwitchChatMessage(
           id: "long-message",
           login: "viewer",
           displayName: "Viewer",
-          text: List.filled(35, "A longer pinned message").join(" "),
+          text: "First line\nSecond line",
         ),
       );
     addTearDown(controller.dispose);
@@ -641,6 +689,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     const emoteUrl = "https://static-cdn.jtvnw.net/emoticons/v2/25/default/light/2.0";
+    const emoteCount = 12;
     await tester.runAsync(() async {
       final recorder = ui.PictureRecorder();
       ui.Canvas(recorder).drawColor(Colors.white, ui.BlendMode.src);
@@ -663,9 +712,9 @@ void main() {
           id: "emote-message",
           login: "viewer",
           displayName: "Viewer",
-          text: List.filled(16, "E").join(" "),
+          text: List.filled(emoteCount, "E").join(" "),
           emotes: [
-            for (var index = 0; index < 16; index++)
+            for (var index = 0; index < emoteCount; index++)
               TwitchChatEmote(id: "25", start: index * 2, end: index * 2 + 1),
           ],
         ),
@@ -677,14 +726,17 @@ void main() {
       of: find.byKey(const ValueKey("chat_pinned_message")),
       matching: find.byType(Image),
     );
-    expect(images, findsNWidgets(16));
+    expect(images, findsNWidgets(emoteCount));
     final tops = {
-      for (var index = 0; index < 16; index++) tester.getTopLeft(images.at(index)).dy,
+      for (var index = 0; index < emoteCount; index++) tester.getTopLeft(images.at(index)).dy,
     };
     expect(tops.length, greaterThan(2));
     await tester.pump(const Duration(seconds: 4));
     await settings.setChatPreferences(settings.chatPreferences.copyWith(emoteScale: 0.5));
     await tester.pumpAndSettle();
+    expect({
+      for (var index = 0; index < emoteCount; index++) tester.getTopLeft(images.at(index)).dy,
+    }, hasLength(1));
     await tester.pump(const Duration(seconds: 2));
     expect(find.byTooltip("Minimize pinned message"), findsOneWidget);
     await settings.setChatPreferences(settings.chatPreferences.copyWith(emoteScale: 2));
@@ -736,6 +788,60 @@ void main() {
     expect(find.widgetWithText(ChoiceChip, "Recent"), findsNothing);
     expect(tester.getSize(chat).height, fullHeight);
     expect(tester.widget<TextField>(input).controller!.text, "Hello HeyGuys ");
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets("emote-only chat accepts native emotes and blocks text through both send actions", (
+    tester,
+  ) async {
+    final controller = _ChatController()..room["emote-only"] = "1";
+    final assets = _EmoteOnlyAssets();
+    addTearDown(controller.dispose);
+    addTearDown(assets.dispose);
+    await tester.pumpWidget(panel(controller, assets: assets));
+    await tester.pumpAndSettle();
+    final input = find.byKey(const ValueKey("chat_message_input"));
+    final send = find.byKey(const ValueKey("chat_send"));
+    expect(find.text("Send a message · Emotes only"), findsOneWidget);
+    for (final draft in ["hello", "Seven", "Bttv", "Ffz", "💜", "LockedSub", "HeyGuys hello"]) {
+      await tester.enterText(input, draft);
+      await tester.pumpAndSettle();
+      expect(tester.widget<IconButton>(send).onPressed, isNull, reason: draft);
+      await tester.testTextInput.receiveAction(TextInputAction.send);
+      await tester.pumpAndSettle();
+      expect(controller.sent, isEmpty, reason: draft);
+      expect(tester.widget<TextField>(input).controller!.text, draft);
+      expect(find.text("Only Twitch emotes can be sent."), findsOneWidget);
+    }
+    await tester.enterText(input, "Se");
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("chat_emote_autocomplete")), findsNothing);
+    await tester.enterText(input, "@viewer");
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("chat_username_autocomplete")), findsNothing);
+    await tester.enterText(input, "Ka");
+    await tester.pumpAndSettle();
+    expect(find.byTooltip("Kappa"), findsOneWidget);
+    await tester.enterText(input, "HeyGuys  Kappa UnlockedSub");
+    await tester.pumpAndSettle();
+    expect(tester.widget<IconButton>(send).onPressed, isNotNull);
+    await tester.tap(send);
+    await tester.pumpAndSettle();
+    expect(controller.sent, ["HeyGuys  Kappa UnlockedSub"]);
+    await tester.enterText(input, "HeyGuys");
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pumpAndSettle();
+    expect(controller.sent.last, "HeyGuys");
+    await tester.enterText(input, "plain text");
+    controller.room["emote-only"] = "0";
+    controller.update();
+    await tester.pumpAndSettle();
+    expect(tester.widget<IconButton>(send).onPressed, isNotNull);
+    expect(find.text("Only Twitch emotes can be sent."), findsNothing);
+    controller.room["emote-only"] = "1";
+    controller.update();
+    await tester.pumpAndSettle();
+    expect(tester.widget<IconButton>(send).onPressed, isNull);
     expect(tester.takeException(), isNull);
   });
 
@@ -975,7 +1081,19 @@ void main() {
     await settings.load();
     addTearDown(controller.dispose);
     addTearDown(assets.dispose);
-    await tester.pumpWidget(panel(controller, assets: assets, settingsStore: settings));
+    await tester.pumpWidget(
+      Actions(
+        actions: {
+          EditableTextTapUpOutsideIntent: CallbackAction<EditableTextTapUpOutsideIntent>(
+            onInvoke: (intent) {
+              intent.focusNode.unfocus();
+              return null;
+            },
+          ),
+        },
+        child: panel(controller, assets: assets, settingsStore: settings),
+      ),
+    );
     await tester.pumpAndSettle();
     final input = find.byKey(const ValueKey("chat_message_input"));
     final field = tester.widget<TextField>(input);
@@ -1876,6 +1994,20 @@ void main() {
     String? hint() => tester.widget<TextField>(find.byType(TextField)).decoration!.hintText;
     await tester.pumpWidget(panel(controller, settingsStore: store, latencyMs: 1540));
     expect(hint(), "Send a message · 1.5s");
+    controller.room["emote-only"] = "1";
+    controller.update();
+    await tester.pump();
+    expect(hint(), "Send a message · Emotes only · 1.5s");
+    controller.room["subs-only"] = "1";
+    controller.update();
+    await tester.pump();
+    expect(hint(), "Send a message · Emotes only · Subs only · 1.5s");
+    controller.room["emote-only"] = "0";
+    controller.update();
+    await tester.pump();
+    expect(hint(), "Send a message · Subs only · 1.5s");
+    controller.room["subs-only"] = "0";
+    controller.update();
     await store.setChatPreferences(
       const ChatPreferences(autoSyncChat: false, manualChatDelaySeconds: 3),
     );
@@ -2462,15 +2594,24 @@ void main() {
       const Color(0xFF007B00),
     );
     await _openMenu(tester);
-    for (final mode in [
-      "Followers · 30m",
-      "Slow mode · 10s",
-      "Subscribers only",
-      "Emotes only",
-      "Unique chat",
+    for (final (mode, icon) in [
+      ("Followers · 30m", Icons.favorite_outline_rounded),
+      ("Slow mode · 10s", Icons.timer_outlined),
+      ("Subscribers only", Icons.star_outline_rounded),
+      ("Emotes only", Icons.sentiment_satisfied_alt_rounded),
+      ("Unique chat", Icons.fingerprint_rounded),
     ]) {
       expect(find.text(mode), findsOneWidget);
+      expect(tester.widget<Chip>(find.widgetWithText(Chip, mode)).avatar, isA<Icon>());
+      expect(
+        find.descendant(of: find.widgetWithText(Chip, mode), matching: find.byIcon(icon)),
+        findsOneWidget,
+      );
     }
+    expect(
+      tester.getTopLeft(find.widgetWithText(Chip, "Followers · 30m")).dx,
+      tester.getTopLeft(find.byKey(const ValueKey("chat_only_toggle"))).dx + 16,
+    );
     for (final label in [
       "Chat only",
       "Refresh emotes and badges",
@@ -2962,7 +3103,7 @@ void main() {
       return true;
     });
     expect(nameStyle!.color, const Color(0xFF007B00));
-    expect(suffix!.style!.color, isNull);
+    expect(suffix!.style!.color, nameStyle!.color!.withValues(alpha: 0.7));
     expect(suffix!.style!.fontWeight, FontWeight.w400);
     final offset = paragraph.text.toPlainText().indexOf("(user00)");
     final box = paragraph
@@ -3268,8 +3409,28 @@ class _ChatController extends TwitchChatController {
   void update() => notifyListeners();
 }
 
+class _PredictionClient extends TwitchApiClient {
+  _PredictionClient() : super(clientId: "test", accessToken: "");
+
+  int calls = 0;
+
+  @override
+  Future<TwitchChannelPoll> fetchPoll(String login) async =>
+      const TwitchChannelPoll(channelId: "1");
+
+  @override
+  Future<TwitchChannelPredictions> fetchPredictions(String login) async {
+    calls++;
+    return const TwitchChannelPredictions(channelId: "1", events: []);
+  }
+}
+
 class _ChattersClient extends TwitchApiClient {
   _ChattersClient() : super(clientId: "test", accessToken: "");
+
+  @override
+  Future<TwitchChannelPoll> fetchPoll(String login) async =>
+      const TwitchChannelPoll(channelId: "1");
 
   String? channel;
   ({String? userId, String? login})? profileLookup;
@@ -3309,6 +3470,10 @@ class _ChattersClient extends TwitchApiClient {
 class _VodPageClient extends TwitchApiClient {
   _VodPageClient(this.messages, {this.thread = const []})
     : super(clientId: "test", accessToken: "");
+
+  @override
+  Future<TwitchChannelPoll> fetchPoll(String login) async =>
+      const TwitchChannelPoll(channelId: "1");
 
   final List<TwitchChatMessage> messages;
   final List<TwitchChatMessage> thread;
@@ -3389,6 +3554,26 @@ class _LargeCompletionAssets extends _Assets {
       ],
     ),
   };
+}
+
+class _EmoteOnlyAssets extends _Assets {
+  @override
+  List<ChatAssetEmote> emotesFor(ChatEmoteProvider provider, ChatEmoteScope scope) =>
+      provider != ChatEmoteProvider.twitch
+      ? super.emotesFor(provider, scope)
+      : [
+          for (final name in switch (scope) {
+            ChatEmoteScope.global => ["HeyGuys", "Kappa"],
+            ChatEmoteScope.unlocked => ["UnlockedSub"],
+            ChatEmoteScope.channel => ["LockedSub"],
+          })
+            ChatAssetEmote(
+              name: name,
+              id: name,
+              url: "https://example.com/$name.png",
+              provider: provider,
+            ),
+        ];
 }
 
 class _Assets extends TwitchChatAssets {

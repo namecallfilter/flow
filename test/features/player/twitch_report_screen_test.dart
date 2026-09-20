@@ -45,7 +45,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     final input = find.byKey(const ValueKey("chat_message_input"));
-    expect(tester.widget<TextField>(input).decoration!.hintText, "Subscriber-Only Mode");
+    expect(tester.widget<TextField>(input).decoration!.hintText, "Send a message · Subs only");
     expect(tester.widget<TextField>(input).readOnly, isTrue);
     await tester.tap(input);
     await tester.pumpAndSettle();
@@ -62,7 +62,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(controller.refreshes, 1);
     expect(tester.widget<TextField>(input).readOnly, isTrue);
-    expect(tester.widget<TextField>(input).decoration!.hintText, "Subscriber-Only Mode");
+    expect(tester.widget<TextField>(input).decoration!.hintText, "Send a message · Subs only");
     await tester.tap(input);
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(FilledButton, "Subscribe"));
@@ -206,6 +206,8 @@ class _SubscriptionChatController extends TwitchChatController {
   bool get canSend => subscriberChatEligible;
   @override
   bool get subscriberChatEligible => subscribed;
+  @override
+  Map<String, String> get roomState => const {"subs-only": "1"};
   @override
   TwitchChatAccess get chatAccess => const TwitchChatAccess(
     channelId: "1",

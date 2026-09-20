@@ -43,30 +43,44 @@ abstract class ChannelStoreBase with Store {
   bool get canLoadMorePastBroadcasts => channel?.pastBroadcastsCursor != null;
 
   @action
-  Future<void> load({bool refresh = false}) async {
+  Future<void> load({bool refresh = false, bool liveStatusOnly = false}) async {
+    if (liveStatusOnly && (isLoading || isLoadingPastBroadcasts)) {
+      return;
+    }
+    final current = channel;
     final generation = ++_generation;
     isLoading = true;
     isLoadingPastBroadcasts = false;
     errorMessage = null;
-    pastBroadcastsError = null;
-    _loadedPastBroadcastCursors.clear();
+    if (!liveStatusOnly) {
+      pastBroadcastsError = null;
+      _loadedPastBroadcastCursors.clear();
+    }
 
     try {
       final nextChannel = await apiCache.fetchChannelDetails(
         login,
+        videosFirst: liveStatusOnly && current != null ? 1 : 30,
         refresh: refresh,
       );
       if (generation != _generation) {
         return;
       }
       loadedAt = now();
-      channel = nextChannel;
+      channel = liveStatusOnly && current != null
+          ? nextChannel.withPastBroadcasts(
+              pastBroadcasts: current.pastBroadcasts,
+              pastBroadcastsCursor: current.pastBroadcastsCursor,
+            )
+          : nextChannel;
       errorMessage = null;
     } on Object catch (error) {
       if (generation != _generation) {
         return;
       }
-      errorMessage = browseErrorMessage(error);
+      if (!liveStatusOnly || current == null) {
+        errorMessage = browseErrorMessage(error);
+      }
     } finally {
       if (generation == _generation) {
         isLoading = false;
@@ -80,6 +94,7 @@ abstract class ChannelStoreBase with Store {
     final cursor = currentChannel?.pastBroadcastsCursor;
     if (currentChannel == null ||
         cursor == null ||
+        isLoading ||
         isLoadingPastBroadcasts ||
         _loadedPastBroadcastCursors.contains(cursor)) {
       return;

@@ -49,6 +49,8 @@ void main() {
       final byId = {for (final channel in channels) channel.id: channel};
 
       expect(byId["today"]?.lastLive, "Last live today");
+      expect(byId["today"]?.title, "Back later");
+      expect(byId["unknown"]?.title, isEmpty);
       expect(byId["older"]?.lastLive, "Last live 3 days ago");
       expect(byId["unknown"]?.lastLive, "Offline");
       expect(byId["today"]?.categoryId, "509658");

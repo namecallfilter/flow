@@ -540,6 +540,9 @@ interface VideoQuality {
 }
 
 type Mutation {
+  voteInPoll(input: VoteInPollInput!): VoteInPollPayload
+  makePrediction(input: MakePredictionInput!): MakePredictionPayload
+  updateUserPredictionSettings(input: UpdateUserPredictionSettingsInput!): UpdateUserPredictionSettingsPayload
   useChatNotificationToken(input: UseChatNotificationTokenInput!): UseChatNotificationTokenPayload
   claimCommunityPoints(input: ClaimCommunityPointsInput!): ClaimCommunityPointsPayload
   addBrowserPushSubscription(input: AddBrowserPushSubscriptionInput!): AddBrowserPushSubscription
@@ -1478,6 +1481,9 @@ type ChampBadge {
 }
 
 type Channel {
+  activePredictionEvents: [PredictionEvent!]
+  lockedPredictionEvents: [PredictionEvent!]
+  resolvedPredictionEvents(first: Int): PredictionEventConnection
   activePremiumEvent: ActivePremiumEvent
   activeStreamEventCelebration: ActiveStreamEventCelebration
   activityFeed: ActivityFeed
@@ -2370,12 +2376,153 @@ type ClaimCommunityPointsError {
 }
 
 type CommunityPointsProperties {
+  balance: Int
   availableClaim: CommunityPointsClaim
 }
 
 type CommunityPointsClaim {
   id: ID
   pointsEarnedTotal: Int
+}
+
+type Poll {
+  id: ID
+  title: String
+  status: String
+  startedAt: Time
+  endedAt: Time
+  durationSeconds: Int
+  remainingDurationMilliseconds: Int
+  ownedBy: User
+  votes: PollVoteBreakdown
+  choices: [PollChoice!]
+  settings: PollSettings
+  self: PollSelfEdge
+}
+
+type PollChoice {
+  id: ID
+  title: String
+  votes: PollVoteBreakdown
+}
+
+type PollVoteBreakdown {
+  base: Int
+  total: Int
+}
+
+type PollSettings {
+  multichoice: PollSettingsMultichoice
+  communityPointsVotes: PollSettingsCommunityPointsVotes
+}
+
+type PollSettingsMultichoice {
+  isEnabled: Boolean
+}
+
+type PollSettingsCommunityPointsVotes {
+  isEnabled: Boolean
+  cost: Int
+}
+
+type PollSelfEdge {
+  voter: PollVoter
+}
+
+type PollVoter {
+  poll: Poll
+  user: User
+  votes: PollVoteBreakdown
+  choices: [PollVoterChoice!]
+}
+
+type PollVoterChoice {
+  pollChoice: PollChoice
+  votes: PollVoteBreakdown
+}
+
+input VoteInPollInput {
+  pollID: ID!
+  choiceID: ID!
+  userID: ID!
+  voteID: ID!
+  tokens: PollVoteTokensInput
+}
+
+input PollVoteTokensInput {
+  channelPoints: Int
+}
+
+type VoteInPollPayload {
+  error: Error
+  voter: PollVoter
+}
+
+type PredictionEvent {
+  id: ID
+  title: String
+  status: String
+  createdAt: Time
+  endedAt: Time
+  predictionWindowSeconds: Int
+  winningOutcome: PredictionOutcome
+  self: PredictionEventViewer
+  outcomes: [PredictionOutcome!]
+}
+
+type PredictionEventViewer {
+  restriction: String
+}
+
+type PredictionOutcome {
+  topPredictors: [Prediction!]
+  id: ID
+  title: String
+  color: String
+  totalPoints: Int
+  totalUsers: Int
+}
+
+type PredictionEventConnection {
+  edges: [PredictionEventEdge!]
+}
+
+type PredictionEventEdge {
+  node: PredictionEvent
+}
+
+type Prediction {
+  id: ID
+  user: User
+  pointsWon: Int
+  event: PredictionEvent
+  outcome: PredictionOutcome
+  points: Int
+}
+
+type UserPredictionSettings {
+  hasAcceptedTOS: Boolean
+}
+
+input MakePredictionInput {
+  eventID: ID!
+  outcomeID: ID!
+  points: Int!
+  transactionID: ID!
+}
+
+type MakePredictionPayload {
+  error: Error
+}
+
+input UpdateUserPredictionSettingsInput {
+  hasAcceptedTOS: Boolean
+  isTemporaryChatBadgeEnabled: Boolean
+}
+
+type UpdateUserPredictionSettingsPayload {
+  error: Error
+  settings: UserPredictionSettings
 }
 
 type FollowUser {
@@ -3627,6 +3774,7 @@ type SelectionSignal {
 }
 
 type Self {
+  recentPredictions: [Prediction!]
   resubNotification: ResubNotification
   chatRestrictedReasons: [String]
   lastRecentChatMessageAt: Time
@@ -4447,6 +4595,8 @@ type UseBit {
 }
 
 type User implements Curator & OnsiteNotificationContent & ShelfContentEdge_Node & TitleTokenEdge_Node & Token & UserResultByLogin {
+  viewablePoll: Poll
+  predictionsSettings: UserPredictionSettings
   _empty: String
   accountConnections: [AccountConnection]
   accountHealth: AccountHealth

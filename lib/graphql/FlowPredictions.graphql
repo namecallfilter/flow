@@ -1,0 +1,29 @@
+query FlowPredictions($login: String!) {
+  user(login: $login) {
+    id
+    login
+    channel {
+      id
+      activePredictionEvents { ...FlowPrediction }
+      lockedPredictionEvents { ...FlowPrediction }
+      resolvedPredictionEvents(first: 1) { edges { node { ...FlowPrediction } } }
+      self {
+        communityPoints { balance }
+        recentPredictions { event { id } outcome { id } points pointsWon }
+      }
+    }
+  }
+  currentUser { id predictionsSettings { hasAcceptedTOS } }
+}
+
+fragment FlowPrediction on PredictionEvent {
+  id
+  title
+  status
+  createdAt
+  endedAt
+  predictionWindowSeconds
+  winningOutcome { id }
+  self { restriction }
+  outcomes { id title color totalPoints totalUsers topPredictors { id points user { id displayName } } }
+}

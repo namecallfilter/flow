@@ -9,6 +9,7 @@ import "package:flow/app/routes.dart";
 import "package:flow/app/tabs_store.dart";
 import "package:flow/features/browse/browse_screen.dart";
 import "package:flow/features/browse/browse_store.dart";
+import "package:flow/features/channel/channel_screen.dart";
 import "package:flow/features/following/following_screen.dart";
 import "package:flow/features/following/following_store.dart";
 import "package:flow/features/following/twitch_login_offer_screen.dart";
@@ -117,6 +118,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
   double _footerExtent = AppBottomNav.contentHeight;
   bool _isFooterHidden = false;
   Timer? _topLevelRefreshTimer;
+  Timer? _liveRefreshTimer;
   Future<void>? _topLevelRefresh;
   bool _topLevelRefreshQueued = false;
   Future<void>? _queuedFollowingRefresh;
@@ -193,6 +195,12 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
     _topLevelRefreshTimer = Timer.periodic(_topLevelRefreshInterval, (_) {
       if (_appIsResumed) {
         unawaited(_refreshTopLevelData(refresh: true));
+      }
+    });
+    // ponytail: 2s polling; use push updates if a suitable event source becomes available.
+    _liveRefreshTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (_appIsResumed) {
+        unawaited(_followingStore.refreshLiveChannels(_apiCache.clientLoader));
       }
     });
     if (_appIsResumed) {
@@ -297,7 +305,21 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
         return;
       }
       if (_followingStore.isLoggedIn) {
-        _selectRoute(FlowRoutes.settings);
+        final user = _followingStore.profileUser!;
+        unawaited(
+          _followingNavigatorKey.currentState!.push<void>(
+            MaterialPageRoute<void>(
+              builder: (_) => ChannelScreen(
+                apiCache: _apiCache,
+                initialChannel: ChannelPreview(
+                  login: user.login,
+                  displayName: user.displayName,
+                  avatarImageUrl: user.profileImageUrl,
+                ),
+              ),
+            ),
+          ),
+        );
         return;
       }
 
@@ -399,6 +421,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
     WidgetsBinding.instance.removeObserver(this);
     _subscriptionSyncReaction();
     _topLevelRefreshTimer?.cancel();
+    _liveRefreshTimer?.cancel();
     _tabBackProgress.dispose();
     _footerSlideProgress.dispose();
     super.dispose();
