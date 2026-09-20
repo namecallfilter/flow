@@ -22,6 +22,10 @@ class TwitchChatGif {
   final String url;
   final int start;
   final int end;
+
+  String get imageUrl => Uri.tryParse(url)?.host.endsWith(".giphy.com") == true
+      ? url.replaceAll(RegExp(r"\.gif(?=[?&]|$)"), ".webp")
+      : url;
 }
 
 class TwitchPinnedChat {

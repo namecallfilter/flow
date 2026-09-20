@@ -2367,6 +2367,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
         _schedulePinCollapse(pin.id, lines >= 2);
       }
       widget.assets?.precacheMessages(context, [
+        ..._history.reversed.take(30),
         ..._presentedMessages.reversed.take(30),
         ?widget.controller?.pinnedMessage,
       ]);
@@ -4475,15 +4476,23 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
                   widthFactor: widget.previewPrefix == null ? null : 1,
                   child: ConstrainedBox(
                     constraints: BoxConstraints(
-                      maxWidth: widget.previewPrefix == null ? 140 : 48,
+                      maxWidth: widget.previewPrefix == null ? double.infinity : 48,
                       maxHeight: widget.previewPrefix == null ? 140 : _fontSize * 1.7,
                     ),
                     child: Image.network(
-                      asset.url,
+                      asset.imageUrl,
                       key: ValueKey("chat_gif-${message.id}-$start"),
                       fit: BoxFit.contain,
                       semanticLabel: label,
-                      errorBuilder: (_, _, _) => Text(label, style: TextStyle(fontSize: _fontSize)),
+                      errorBuilder: (_, _, _) => asset.imageUrl == asset.url
+                          ? Text(label, style: TextStyle(fontSize: _fontSize))
+                          : Image.network(
+                              asset.url,
+                              fit: BoxFit.contain,
+                              semanticLabel: label,
+                              errorBuilder: (_, _, _) =>
+                                  Text(label, style: TextStyle(fontSize: _fontSize)),
+                            ),
                     ),
                   ),
                 ),

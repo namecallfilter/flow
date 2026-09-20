@@ -322,6 +322,8 @@ query($id: String!) {
       if (message.isDeleted) {
         continue;
       }
+      _imageQueue.addAll(message.gifs.map((gif) => gif.imageUrl));
+      _imageQueue.addAll(message.parentGifs.map((gif) => gif.imageUrl));
       _imageQueue.addAll(
         message.emotes.map(
           (emote) => emote.imageUrl.replaceFirst("/dark/", "/${brightness.name}/"),

@@ -384,13 +384,17 @@ void main() {
     final controller = _Controller(_Client())
       ..viewerId = "self"
       ..viewerLogin = "my_login";
+    final assets = _Assets(_Client());
+    addTearDown(assets.dispose);
     final settings = AppSettingsStore(preferences: MemoryFlowPreferences());
     await settings.load();
     await settings.setChatPreferences(
       settings.chatPreferences.copyWith(autoSyncChat: false, manualChatDelaySeconds: 2),
     );
     addTearDown(controller.dispose);
-    await tester.pumpWidget(_panel(controller, settingsStore: settings, chatOnly: false));
+    await tester.pumpWidget(
+      _panel(controller, assets: assets, settingsStore: settings, chatOnly: false),
+    );
     await tester.pumpAndSettle();
     controller.items.add(
       TwitchChatMessage(
@@ -404,6 +408,7 @@ void main() {
     controller.update();
     await tester.pump();
     expect(find.byKey(const ValueKey("delayed-mention")), findsNothing);
+    expect(assets.precachedMessages, contains("delayed-mention"));
     expect(sounds, isEmpty);
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 2100)));
     await tester.pump(const Duration(seconds: 2));
@@ -426,13 +431,14 @@ void main() {
   ) async {
     const url =
         "https://media4.giphy.com/media/joSNxeswxuc74Juo8X/giphy.gif?cid=example&ep=v1_gifs_trending&rid=giphy.gif&ct=g";
+    final imageUrl = url.replaceAll("giphy.gif", "giphy.webp");
     const squareUrl = "https://example.com/square.gif";
     const smallUrl = "https://example.com/small.gif";
     const label = "[Y A Y Yes GIF by Djemilah Birnie]";
     await _cacheImages(tester);
     await tester.runAsync(() async {
       for (final (imageUrl, width, height) in [
-        (url, 240, 120),
+        (imageUrl, 240, 120),
         (squareUrl, 240, 240),
         (smallUrl, 48, 16),
       ]) {
@@ -487,7 +493,16 @@ void main() {
     await tester.pumpAndSettle();
     final body = find.byKey(const ValueKey("gif-parent"));
     final image = find.byKey(const ValueKey("chat_gif-gif-parent-6"));
-    expect((tester.widget<Image>(image).image as NetworkImage).url, url);
+    expect((tester.widget<Image>(image).image as NetworkImage).url, imageUrl);
+    final fallback =
+        tester.widget<Image>(image).errorBuilder!(
+              tester.element(image),
+              Exception("WebP unavailable"),
+              null,
+            )
+            as Image;
+    expect((fallback.image as NetworkImage).url, url);
+    expect(fallback.fit, BoxFit.contain);
     expect(find.descendant(of: body, matching: find.byType(Image)), findsNWidgets(3));
     final emotes = find.descendant(
       of: body,
@@ -500,7 +515,7 @@ void main() {
     for (final width in [392.0, 240.0]) {
       tester.view.physicalSize = Size(width, 1000);
       await tester.pumpAndSettle();
-      expect(tester.getSize(image), const Size(140, 70));
+      expect(tester.getSize(image), width == 392 ? const Size(240, 120) : const Size(216, 108));
       expect(tester.getSize(square), const Size(140, 140));
       expect(tester.getSize(small), const Size(48, 16));
       expect(tester.getTopLeft(image).dx, closeTo(12, 0.01));
@@ -4126,6 +4141,14 @@ class _FailingThreadClient extends _Client {
 class _Assets extends TwitchChatAssets {
   _Assets(_Client client)
     : super(clientLoader: () async => client, channelLogin: "channel", autoLoad: false);
+
+  final precachedMessages = <String>{};
+
+  @override
+  void precacheMessages(BuildContext context, Iterable<TwitchChatMessage> messages) {
+    precachedMessages.addAll(messages.map((message) => message.id));
+    super.precacheMessages(context, messages);
+  }
 
   @override
   void observeMessages(Iterable<TwitchChatMessage> messages) {}

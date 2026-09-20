@@ -1218,6 +1218,12 @@ class _SearchChannelRow extends StatelessWidget {
     final subtitle = channel.isLive
         ? (channel.gameName.isEmpty ? "Live now" : channel.gameName)
         : (channel.gameName.isEmpty ? "Offline" : channel.gameName);
+    final avatar = AvatarRing(
+      initials: initialsForName(channelName),
+      size: 42,
+      avatarColors: colorsForText(channel.id),
+      imageUrl: channel.thumbnailUrl,
+    );
 
     return ListTile(
       key: ValueKey("browse_search_channel_$channelName"),
@@ -1233,12 +1239,33 @@ class _SearchChannelRow extends StatelessWidget {
         key: ValueKey("browse_search_channel_avatar_$channelName"),
         behavior: HitTestBehavior.opaque,
         onTap: () => onChannelSelected(channel),
-        child: AvatarRing(
-          initials: initialsForName(channelName),
-          size: 42,
-          avatarColors: colorsForText(channel.id),
-          imageUrl: channel.thumbnailUrl,
-        ),
+        child: channel.isLive
+            ? avatar
+            : ColorFiltered(
+                colorFilter: const ColorFilter.matrix([
+                  0.2126,
+                  0.7152,
+                  0.0722,
+                  0,
+                  0,
+                  0.2126,
+                  0.7152,
+                  0.0722,
+                  0,
+                  0,
+                  0.2126,
+                  0.7152,
+                  0.0722,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  1,
+                  0,
+                ]),
+                child: avatar,
+              ),
       ),
       title: Row(
         children: [
@@ -1272,7 +1299,7 @@ class _SearchChannelRow extends StatelessWidget {
             const _SmallLiveDot(),
             const SizedBox(width: 5),
           ],
-          Expanded(
+          Flexible(
             child: GestureDetector(
               onTap: canOpenCategory
                   ? () => onCategorySelected(

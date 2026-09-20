@@ -545,11 +545,24 @@ void main() {
         text: "Same Alias ordinary words",
         badges: ["subscriber/1"],
         emotes: [TwitchChatEmote(id: "unlisted", start: 0, end: 4)],
+        gifs: [
+          TwitchChatGif(
+            id: "gif",
+            url: "https://media4.giphy.com/media/gif/giphy.gif?cid=kept&rid=giphy.gif&ct=g",
+            start: 5,
+            end: 10,
+          ),
+        ],
+        parentGifs: [
+          TwitchChatGif(id: "parent", url: "https://example.com/parent.gif", start: 0, end: 5),
+        ],
       ),
     ];
     assets.precacheMessages(context, messages);
     await tester.pump();
     expect(cache.requested, {
+      "https://media4.giphy.com/media/gif/giphy.webp?cid=kept&rid=giphy.webp&ct=g",
+      "https://example.com/parent.gif",
       "https://static-cdn.jtvnw.net/emoticons/v2/unlisted/default/light/2.0",
       "https://cdn.7tv.app/emote/seven-alias/2x.webp",
       "https://example.com/badge.png",

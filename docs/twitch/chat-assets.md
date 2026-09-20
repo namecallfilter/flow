@@ -1,5 +1,11 @@
 # Chat asset references
 
+GIF display was checked against Twitch's deployed client on 2026-09-20:
+
+- The [native GIF styles](https://assets.twitch.tv/assets/73047-791377552848048afbc3.css) cap height at 140px and width at the available space. Browser Control measured a 480×270 sample at 248.9×140 CSS pixels; a square sample remains 140×140. Flow follows those limits and keeps reply previews compact.
+- The [native renderer](https://assets.twitch.tv/assets/42743-e7400c76443f70fb340f.js) prefers animated WebP, replacing `.gif` before `?`, `&`, or URL end while retaining other URL parameters. The IRC reference sample was 998,959 bytes as GIF and 517,044 bytes as WebP. Flow uses that rendition for GIPHY hosts, retains the original URL as an error fallback, and precaches received GIFs before synchronized chat releases them.
+- A local fixture using the actual chat renderer was verified through scrcpy on a Pixel 9: square 140×140, wide 248.9×140, reply preview 20.4×20.4 logical pixels. Both real GIPHY images produced animated frames about 1.5 seconds after startup, before the five-second chat delay released them. Browser sizing used labeled local samples with Twitch's deployed CSS; neither check sent a chat message.
+
 Predictions were checked against Twitch's deployed client on 2026-09-18:
 
 - The [prediction context](https://assets.twitch.tv/assets/pages.popout-predictions-92ac2eb4eac35ee35813.js) reads active, locked, and resolved prediction events plus `channel.self.recentPredictions`. Flow's combined query returned Lirik's real five-outcome event, totals, locked state, and then resolved winner from `https://gql.twitch.tv/gql` without credentials.
