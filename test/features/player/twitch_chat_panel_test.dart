@@ -528,6 +528,75 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets("timeouts and bans disable chat, preserve drafts, and recover when lifted", (
+    tester,
+  ) async {
+    final controller = _ChatController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(panel(controller));
+    await tester.pumpAndSettle();
+    final input = find.byKey(const ValueKey("chat_message_input"));
+    final restricted = find.byKey(const ValueKey("chat_restricted_input"));
+    final send = find.byKey(const ValueKey("chat_send"));
+    await tester.enterText(input, "Keep this draft");
+    controller
+      ..timedOut = true
+      ..timeoutWait = const Duration(minutes: 4, seconds: 3)
+      ..update();
+    await tester.pumpAndSettle();
+    expect(input, findsNothing);
+    expect(
+      tester.widget<TextField>(restricted).decoration!.hintText,
+      "Timed out · You can chat in 4m 03s",
+    );
+    expect(tester.widget<TextField>(restricted).enabled, isFalse);
+    expect(find.text("Keep this draft"), findsNothing);
+    expect(tester.testTextInput.isVisible, isFalse);
+    expect(tester.widget<IconButton>(send).onPressed, isNull);
+    tester.widget<TextField>(restricted).onSubmitted!("Keep this draft");
+    await tester.pump();
+    expect(controller.sent, isEmpty);
+    controller
+      ..timeoutWait = const Duration(minutes: 4, seconds: 2)
+      ..update();
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(restricted).decoration!.hintText,
+      "Timed out · You can chat in 4m 02s",
+    );
+    controller
+      ..timeoutWait = Duration.zero
+      ..update();
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(restricted).decoration!.hintText,
+      "You are currently timed out from chat",
+    );
+    expect(tester.widget<TextField>(restricted).enabled, isFalse);
+    controller
+      ..timedOut = false
+      ..banned = true
+      ..update();
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(restricted).decoration!.hintText,
+      "You are banned from chatting in this channel",
+    );
+    expect(find.text("Visible only to you"), findsNothing);
+    expect(tester.widget<IconButton>(send).onPressed, isNull);
+    controller
+      ..banned = false
+      ..update();
+    await tester.pump();
+    expect(restricted, findsNothing);
+    expect(tester.widget<TextField>(input).enabled, isTrue);
+    expect(tester.widget<TextField>(input).controller!.text, "Keep this draft");
+    await tester.tap(send);
+    await tester.pump();
+    expect(controller.sent, ["Keep this draft"]);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets("slow-mode countdown blocks both send controls until Twitch allows chat", (
     tester,
   ) async {
@@ -3241,6 +3310,9 @@ class _ChatController extends TwitchChatController {
   bool followerEligible = true;
   Duration waitRemaining = Duration.zero;
   Duration slowWaitRemaining = Duration.zero;
+  bool banned = false;
+  bool timedOut = false;
+  Duration timeoutWait = Duration.zero;
   int followCalls = 0;
   int unfollowCalls = 0;
   TwitchChatAccess access = const TwitchChatAccess(
@@ -3316,7 +3388,17 @@ class _ChatController extends TwitchChatController {
       signedIn &&
       status == TwitchChatStatus.connected &&
       followerChatEligible &&
+      !isChatRestricted &&
       slowModeWaitRemaining == Duration.zero;
+
+  @override
+  bool get isBanned => banned;
+
+  @override
+  bool get isTimedOut => timedOut;
+
+  @override
+  Duration get timeoutRemaining => timeoutWait;
 
   @override
   Duration get slowModeWaitRemaining => slowWaitRemaining;

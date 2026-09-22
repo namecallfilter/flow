@@ -1302,7 +1302,8 @@ type Badge {
 }
 
 type BanStatu {
-  expiresInMs: String
+  expiresAt: Time
+  expiresInMs: Int
   isPermanent: Boolean
 }
 
@@ -3780,7 +3781,7 @@ type Self {
   lastRecentChatMessageAt: Time
   communityPoints: CommunityPointsProperties
   availableEmoteSetsPaginated(after: Cursor, pageLimit: Int!): AvailableEmoteSetsPaginated
-  banStatus: [BanStatu]
+  banStatus: BanStatu
   benefit: Benefit
   bitsUsed: String
   canActivate: Boolean

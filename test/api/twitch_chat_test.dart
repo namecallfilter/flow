@@ -1301,6 +1301,174 @@ void main() {
     expect(chat.conversation.length, 1);
   });
 
+  test("only own timeouts block chat, fail pending sends, and notify on expiry", () async {
+    final chat = controller();
+    await server.join(chat);
+    server.send(
+      "@target-user-id=other :tmi.twitch.tv CLEARCHAT #channel :viewer\r\n"
+      ":tmi.twitch.tv CLEARCHAT #channel\r\n"
+      "@login=viewer;target-msg-id=own-message :tmi.twitch.tv CLEARMSG #channel :deleted\r\n",
+    );
+    await _waitFor(() => chat.conversation.length == 3);
+    expect(chat.isChatRestricted, isFalse);
+    expect(chat.canSend, isTrue);
+    final pending = chat.send("keep my draft");
+    await _waitFor(() => server.commands.contains("PRIVMSG #channel :keep my draft\r\n"));
+    server.send(
+      "@target-user-id=123;ban-duration=1 :tmi.twitch.tv CLEARCHAT #channel :renamedviewer\r\n",
+    );
+    expect(await pending, isFalse);
+    expect(chat.isTimedOut, isTrue);
+    expect(chat.isBanned, isFalse);
+    expect(chat.timeoutRemaining, greaterThan(Duration.zero));
+    expect(chat.timeoutRemaining, lessThanOrEqualTo(const Duration(seconds: 1)));
+    expect(chat.conversation.any((message) => message.id.startsWith("pending:")), isFalse);
+    expect(chat.conversation, hasLength(3));
+    expect(await chat.send("blocked"), isFalse);
+    expect(server.commands.where((command) => command.startsWith("PRIVMSG")), hasLength(1));
+    var expiryNotified = false;
+    chat.addListener(() => expiryNotified |= chat.canSend);
+    await _waitFor(() => expiryNotified);
+    expect(chat.isChatRestricted, isFalse);
+    expect(chat.timeoutRemaining, Duration.zero);
+    server.send(":tmi.twitch.tv CLEARCHAT #channel :VIEWER\r\n");
+    await _waitFor(() => chat.isBanned);
+    expect(chat.canSend, isFalse);
+    expect(chat.conversation, hasLength(3));
+  });
+
+  test("timeout and ban rejection notices preserve drafts and recover on access refresh", () async {
+    final client = _Client()
+      ..loadAnniversary = () async => const TwitchSubscriptionAnniversary(
+        id: "anniversary",
+        months: 5,
+      );
+    final chat = TwitchChatController(
+      channel: "channel",
+      clientLoader: () async => client,
+      socketConnector: server.connect,
+      loadPins: false,
+      loadPrivateNotices: false,
+    );
+    addTearDown(chat.dispose);
+    await server.join(chat);
+    final rejected = chat.send("rejected draft");
+    await _waitFor(() => server.commands.contains("PRIVMSG #channel :rejected draft\r\n"));
+    server.send(
+      "@msg-id=msg_timedout :tmi.twitch.tv NOTICE #channel :You are timed out for 1 more seconds.\r\n",
+    );
+    expect(await rejected, isFalse);
+    expect(chat.isTimedOut, isTrue);
+    expect(chat.timeoutRemaining, greaterThan(Duration.zero));
+    expect(chat.error, isNull);
+    expect(await chat.shareSubscriptionAnniversary("hello"), isFalse);
+    expect(client.anniversaryShares, 0);
+    await _waitFor(() => chat.canSend);
+    server.send("@msg-id=msg_timedout :tmi.twitch.tv NOTICE #channel :You are timed out.\r\n");
+    await _waitFor(() => chat.isTimedOut);
+    expect(chat.timeoutRemaining, Duration.zero);
+    expect(chat.canSend, isFalse);
+    client.loadAccess = () async => throw TwitchApiException("Unavailable");
+    await chat.refreshChatAccess();
+    expect(chat.isTimedOut, isTrue);
+    server.send("@msg-id=msg_banned :tmi.twitch.tv NOTICE #channel :You are banned.\r\n");
+    await _waitFor(() => chat.isBanned);
+    expect(chat.isTimedOut, isFalse);
+    expect(await chat.send("still blocked"), isFalse);
+    client.loadAccess = null;
+    await chat.refreshChatAccess();
+    expect(chat.isChatRestricted, isFalse);
+    expect(chat.canSend, isTrue);
+  });
+
+  testWidgets("access refresh cannot overwrite newer moderation and polls for an early lift", (
+    tester,
+  ) async {
+    final client = _Client();
+    final socket = _Socket();
+    final chat = await historyChat(tester, client, socket);
+    final stale = Completer<TwitchChatAccess>();
+    client.loadAccess = () => stale.future;
+    final refreshing = chat.refreshChatAccess();
+    await tester.pump();
+    socket._incoming.add("@target-user-id=123 :tmi.twitch.tv CLEARCHAT #channel :viewer\r\n");
+    expect(chat.isBanned, isTrue);
+    stale.complete(client.access);
+    await refreshing;
+    expect(chat.isBanned, isTrue);
+    client.loadAccess = null;
+    await tester.pump(const Duration(seconds: 30));
+    expect(chat.isChatRestricted, isFalse);
+    expect(chat.canSend, isTrue);
+    chat.dispose();
+  });
+
+  testWidgets("anonymous access responses cannot lift an IRC account's restriction", (
+    tester,
+  ) async {
+    final client = _Client(webToken: "");
+    final socket = _Socket();
+    final chat = await historyChat(tester, client, socket);
+    expect(chat.isSignedIn, isTrue);
+    socket._incoming.add(
+      "@target-user-id=123;ban-duration=60 :tmi.twitch.tv CLEARCHAT #channel :viewer\r\n",
+    );
+    await chat.refreshChatAccess();
+    expect(chat.isTimedOut, isTrue);
+    expect(chat.canSend, isFalse);
+    socket._incoming.add("@target-user-id=123 :tmi.twitch.tv CLEARCHAT #channel :viewer\r\n");
+    await tester.pump(const Duration(seconds: 30));
+    expect(chat.isBanned, isTrue);
+    expect(chat.canSend, isFalse);
+    chat.dispose();
+  });
+
+  test(
+    "restores restrictions on join, retains them on refresh failure, and resets for another account",
+    () async {
+      final client = _Client()
+        ..access = const TwitchChatAccess(
+          channelId: "1",
+          channelDisplayName: "Channel",
+          rules: [],
+          isBanned: true,
+        );
+      final chat = TwitchChatController(
+        channel: "channel",
+        clientLoader: () async => client,
+        socketConnector: server.connect,
+        loadPins: false,
+        loadPrivateNotices: false,
+      );
+      addTearDown(chat.dispose);
+      await server.join(chat);
+      expect(chat.isBanned, isTrue);
+      expect(chat.canSend, isFalse);
+      client.loadAccess = () async => throw TwitchApiException("Unavailable");
+      chat.reconnect();
+      await server.join(chat, connection: 2);
+      expect(chat.isBanned, isTrue);
+      client.loadUser = () async =>
+          const TwitchUser(id: "456", login: "another", displayName: "Another");
+      chat.reconnect();
+      await server.join(chat, connection: 3);
+      expect(chat.isChatRestricted, isFalse);
+      expect(chat.canSend, isTrue);
+      client.loadAccess = null;
+      client.access = TwitchChatAccess(
+        channelId: "1",
+        channelDisplayName: "Channel",
+        rules: const [],
+        timeoutEndsAt: DateTime.now().add(const Duration(seconds: 30)),
+      );
+      await chat.refreshChatAccess();
+      expect(chat.isTimedOut, isTrue);
+      expect(chat.isBanned, isFalse);
+      expect(chat.canSend, isFalse);
+      expect(chat.timeoutRemaining, greaterThan(const Duration(seconds: 28)));
+    },
+  );
+
   test("slow mode blocks sends until expiry and reacts to role and room changes", () async {
     final chat = controller();
     await server.join(chat);

@@ -342,6 +342,8 @@ class TwitchChatAccess {
     this.isVip = false,
     this.isSlowModeRestricted,
     this.lastRecentChatMessageAt,
+    this.isBanned = false,
+    this.timeoutEndsAt,
   });
 
   final String channelId;
@@ -353,6 +355,8 @@ class TwitchChatAccess {
   final bool isVip;
   final bool? isSlowModeRestricted;
   final DateTime? lastRecentChatMessageAt;
+  final bool isBanned;
+  final DateTime? timeoutEndsAt;
 }
 
 class TwitchChatters {
@@ -853,6 +857,7 @@ class TwitchApiClient {
       throw TwitchApiException("Could not load channel rules and follower status. Try again.");
     }
     final follower = _mapValue(self?["follower"]);
+    final banStatus = _mapValue(self?["banStatus"]);
     return TwitchChatAccess(
       channelId: user!["id"]! as String,
       channelDisplayName: _nonEmptyValue(user["displayName"] as String?) ?? normalizedLogin,
@@ -863,6 +868,10 @@ class TwitchApiClient {
       isVip: self?["isVIP"] == true,
       isSlowModeRestricted: (self?["chatRestrictedReasons"] as List?)?.contains("SLOW_MODE"),
       lastRecentChatMessageAt: _dateTimeValue(self?["lastRecentChatMessageAt"]),
+      isBanned: banStatus?["isPermanent"] == true,
+      timeoutEndsAt: banStatus?["isPermanent"] == false
+          ? _dateTimeValue(banStatus?["expiresAt"])
+          : null,
     );
   }
 

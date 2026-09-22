@@ -375,6 +375,12 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
   void _chatChanged() {
     _requestMentionNotifications();
     _updateKeepScreenOn();
+    if (widget.controller?.isChatRestricted == true) {
+      _draftFocus.unfocus();
+      if (_showEmotes) {
+        _setShowEmotes(false);
+      }
+    }
     if (!_chatIsVisible) {
       _messagesForDisplay();
     }
@@ -980,6 +986,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                     key: const ValueKey("chat_anniversary_send"),
                     onPressed:
                         controller.isSharingSubscriptionAnniversary ||
+                            controller.isChatRestricted ||
                             controller.status != TwitchChatStatus.connected ||
                             controller.subscriptionAnniversary == null
                         ? null
@@ -1007,7 +1014,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
   Widget _subscriptionAnniversaryCallout(TwitchChatController controller) {
     final anniversary = controller.subscriptionAnniversary;
     final key = (controller, controller.currentUserId, anniversary?.id ?? "");
-    if (anniversary == null || _dismissedAnniversary == key) {
+    if (anniversary == null || _dismissedAnniversary == key || controller.isChatRestricted) {
       return const SizedBox.shrink();
     }
     final colors = Theme.of(context).colorScheme;
@@ -1124,6 +1131,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
     final controller = widget.controller;
     if (controller == null ||
         !controller.isSignedIn ||
+        controller.isChatRestricted ||
         controller.status != TwitchChatStatus.connected) {
       return false;
     }
@@ -1175,7 +1183,10 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
           ),
         );
       }
-      if (!mounted || controller != widget.controller || controller.chatAccess == null) {
+      if (!mounted ||
+          controller != widget.controller ||
+          controller.chatAccess == null ||
+          controller.isChatRestricted) {
         return false;
       }
       if (!controller.subscriberChatEligible) {
@@ -2409,6 +2420,13 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
     final connected = status == TwitchChatStatus.connected;
     final followerWait = controller?.followingWaitRemaining ?? Duration.zero;
     final slowModeWait = controller?.slowModeWaitRemaining ?? Duration.zero;
+    final chatRestricted = controller?.isChatRestricted == true;
+    final timeoutRemaining = controller?.timeoutRemaining ?? Duration.zero;
+    final restrictionHint = controller?.isBanned == true
+        ? "You are banned from chatting in this channel"
+        : timeoutRemaining > Duration.zero
+        ? "Timed out · You can chat in ${_chatDuration(timeoutRemaining)}"
+        : "You are currently timed out from chat";
     final waitingToChat =
         connected &&
         controller?.isSignedIn == true &&
@@ -2812,10 +2830,17 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                     children: [
                                       Expanded(
                                         child: TextField(
-                                          key: const ValueKey("chat_message_input"),
-                                          controller: _draft,
+                                          key: ValueKey(
+                                            chatRestricted
+                                                ? "chat_restricted_input"
+                                                : "chat_message_input",
+                                          ),
+                                          controller: chatRestricted ? null : _draft,
                                           focusNode: _draftFocus,
-                                          enabled: connected && controller?.isSignedIn == true,
+                                          enabled:
+                                              connected &&
+                                              controller?.isSignedIn == true &&
+                                              !chatRestricted,
                                           readOnly: !_canCompose || _showEmotes,
                                           showCursor: _canCompose && !_showEmotes,
                                           enableInteractiveSelection: _canCompose,
@@ -2823,12 +2848,15 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                           textCapitalization: TextCapitalization.sentences,
                                           maxLength: 500,
                                           decoration: InputDecoration(
-                                            hintText: controller?.sendRateLimitMessage ?? hint,
-                                            labelText: hasDraft
+                                            hintText: chatRestricted
+                                                ? restrictionHint
+                                                : controller?.sendRateLimitMessage ?? hint,
+                                            hintMaxLines: chatRestricted ? 2 : 1,
+                                            labelText: hasDraft && !chatRestricted
                                                 ? controller?.sendRateLimitMessage
                                                 : null,
                                             counterText: "",
-                                            errorText: hasDraft && !allowedDraft
+                                            errorText: hasDraft && !allowedDraft && !chatRestricted
                                                 ? "Only Twitch emotes can be sent."
                                                 : null,
                                             suffixIcon: widget.assets == null && replay == null
@@ -2839,7 +2867,9 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                                         ? "Show keyboard"
                                                         : "Show emotes",
                                                     onPressed:
-                                                        connected && controller?.isSignedIn == true
+                                                        connected &&
+                                                            controller?.isSignedIn == true &&
+                                                            !chatRestricted
                                                         ? () => unawaited(_toggleEmotes())
                                                         : null,
                                                     icon: Icon(
