@@ -225,7 +225,10 @@ class TwitchAuthController {
     return config.authorizationUri(state: state);
   }
 
-  Future<TwitchAuthConnection> completeAuth(Uri callbackUri) async {
+  Future<TwitchAuthConnection> completeAuth(
+    Uri callbackUri, {
+    Future<void> Function()? prepareWebSession,
+  }) async {
     final revision = _pendingAuthRevision;
     if (revision == null) {
       throw TwitchAuthException("Twitch sign-in was canceled.");
@@ -239,12 +242,16 @@ class TwitchAuthController {
     );
 
     final validationClient = apiClientFactory(callback.accessToken);
-    final isValid = await validationClient.validateAccessToken(callback.accessToken);
+    final validatedUserId = await validationClient.validateAccessTokenUserId(callback.accessToken);
     _ensurePendingAuthCurrent(revision);
-    if (!isValid) {
+    if (validatedUserId == null) {
       throw TwitchAuthException("Twitch access token is invalid.");
     }
 
+    if (prepareWebSession != null) {
+      await prepareWebSession();
+      _ensurePendingAuthCurrent(revision);
+    }
     final gqlAccessToken = (await cookieExtractor.extractTwitchAuthToken())?.trim();
     _ensurePendingAuthCurrent(revision);
     if (gqlAccessToken == null || gqlAccessToken.isEmpty) {
@@ -256,7 +263,7 @@ class TwitchAuthController {
       callback.accessToken,
       gqlAccessToken: gqlAccessToken,
     );
-    final connection = await _fetchConnection(apiClient);
+    final connection = await _fetchConnection(apiClient, expectedUserId: validatedUserId);
     _ensurePendingAuthCurrent(revision);
 
     try {
@@ -431,9 +438,13 @@ class TwitchAuthController {
   }
 
   Future<TwitchAuthConnection> _fetchConnection(
-    TwitchApiClient apiClient,
-  ) async {
+    TwitchApiClient apiClient, {
+    String? expectedUserId,
+  }) async {
     final user = await apiClient.fetchCurrentUser();
+    if (expectedUserId != null && user.id != expectedUserId) {
+      throw TwitchAuthException("Twitch browser session belongs to a different account.");
+    }
     final streams = await apiClient.fetchFollowedStreams(user.id);
     final channels = await apiClient.fetchFollowedChannels(user.id);
     final profileIds = <String>{

@@ -1,0 +1,10 @@
+{
+  "manifest_version": 2,
+  "name": "Flow Twitch Session",
+  "version": "1.0",
+  "browser_specific_settings": {
+    "gecko": { "id": "twitch-login@flow.namecallfilter.com" }
+  },
+  "permissions": ["cookies", "nativeMessaging", "geckoViewAddons", "https://*.twitch.tv/*"],
+  "background": { "scripts": ["background.js"] }
+}

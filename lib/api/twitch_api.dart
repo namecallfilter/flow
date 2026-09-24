@@ -464,7 +464,10 @@ class TwitchApiClient {
     includeToken: true,
   );
 
-  Future<bool> validateAccessToken(String token) async {
+  Future<bool> validateAccessToken(String token) async =>
+      await validateAccessTokenUserId(token) != null;
+
+  Future<String?> validateAccessTokenUserId(String token) async {
     final uri = Uri.https("id.twitch.tv", "/oauth2/validate");
     final response = await _httpClient.get(
       uri,
@@ -472,7 +475,7 @@ class TwitchApiClient {
     );
 
     if (response.statusCode == 401) {
-      return false;
+      return null;
     }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -482,7 +485,12 @@ class TwitchApiClient {
       );
     }
 
-    return true;
+    final data = _mapValue(jsonDecode(response.body));
+    final userId = data?["user_id"];
+    if (data?["client_id"] != clientId || userId is! String || userId.trim().isEmpty) {
+      return null;
+    }
+    return userId;
   }
 
   Future<TwitchUser> fetchCurrentUser() async {

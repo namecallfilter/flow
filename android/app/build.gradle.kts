@@ -5,11 +5,12 @@ plugins {
 }
 
 dependencies {
-    val media3Version = "1.10.1"
+    val media3Version = "1.11.0"
     implementation("androidx.media3:media3-exoplayer:$media3Version")
     implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
     implementation("androidx.media3:media3-datasource-okhttp:$media3Version")
     implementation("androidx.media3:media3-ui:$media3Version")
+    implementation("org.mozilla.geckoview:geckoview:156.0.20260921121718")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250517")
@@ -17,7 +18,9 @@ dependencies {
 
 android {
     namespace = "com.namecallfilter.flow"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk {
+        version = release(37) { minorApiLevel = 1 }
+    }
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -31,7 +34,7 @@ android {
         manifestPlaceholders["appLabel"] = "Flow"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        minSdk = 26
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

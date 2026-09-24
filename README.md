@@ -7,7 +7,8 @@ and native Media3 live playback.
 
 Use Flutter with Dart 3.12.2 or newer, the Android SDK, and a JDK compatible
 with the project's Android Gradle plugin. This project is tested with Flutter
-3.44.8. Android Studio supplies the Android tooling and JDK.
+3.44.8. Android Studio supplies the Android tooling and JDK. Install Android
+SDK 37.1; the app requires Android 8.0 or newer.
 
 ```sh
 flutter pub get
@@ -18,6 +19,14 @@ flutter run
 Twitch sign-in uses the public client ID and redirect URI in
 `lib/api/twitch_auth.dart`. Normal `flutter run` and `flutter build apk`
 commands include this configuration; no `.env` file or extra flags are needed.
+
+The sign-in screen embeds GeckoView. Keep its version in
+`android/app/build.gradle.kts` updated with Mozilla's security releases;
+system WebView updates do not update this bundled engine. After OAuth validation,
+Flow copies the Twitch website session into Android's cookie store for its
+existing authenticated features. Cookie values are never written to diagnostic logs.
+Use `flutter build apk --split-per-abi` or `flutter build appbundle` to avoid
+shipping every browser-engine architecture in one download.
 
 ## Checks
 
