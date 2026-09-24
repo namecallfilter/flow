@@ -144,6 +144,7 @@ class TwitchPlayerQualityTest {
                     index * chunkDurationUs,
                     (index + 1) * chunkDurationUs,
                     index.toLong(),
+                    null,
                 ) {
                     override fun load() {}
                     override fun cancelLoad() {}

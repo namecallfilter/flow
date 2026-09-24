@@ -50,11 +50,13 @@ void main() {
     final store = _MemoryTwitchStore();
     final gqlAuthorizationHeaders = <String, String?>{};
     final authenticatedDeviceIds = <String?>[];
+    final stages = <String>[];
     final controller = _authController(
       secureStore: store,
       cookieExtractor: const _StaticCookieExtractor("cookie-token-123", "browser-device-123"),
       gqlAuthorizationHeaders: gqlAuthorizationHeaders,
       onRequest: (request) {
+        stages.add(request.url.host == "id.twitch.tv" ? "validate" : "graphql");
         if (request.url.host == "gql.twitch.tv" && request.headers["Authorization"] != null) {
           authenticatedDeviceIds.add(request.headers["X-Device-ID"]);
         }
@@ -67,8 +69,12 @@ void main() {
         "https://twitch.tv/login"
         "#access_token=token-123&scope=user%3Aread%3Afollows&state=state-123",
       ),
+      prepareWebSession: () async {
+        stages.add("import");
+      },
     );
 
+    expect(stages.take(3), ["validate", "import", "graphql"]);
     expect(store.accessToken, "token-123");
     expect(store.webSessionToken, "cookie-token-123");
     expect(store.pendingState, isNull);
@@ -95,6 +101,88 @@ void main() {
     expect(await controller.loadSavedConnection(), isNull);
     expect(store.accessToken, isNull);
     expect(store.webSessionToken, isNull);
+  });
+
+  test("does not import browser cookies before OAuth state and token validation", () async {
+    for (final scenario in ["state", "token", "client"]) {
+      var imported = false;
+      final controller = _authController(
+        secureStore: _MemoryTwitchStore(),
+        validateToken: scenario != "token",
+        validationResponse: scenario == "client"
+            ? Future.value(_jsonResponse({"client_id": "other-client", "user_id": "user-123"}))
+            : null,
+      );
+      await controller.createAuthorizationUri();
+      await expectLater(
+        controller.completeAuth(
+          Uri.parse(
+            "https://twitch.tv/login#access_token=token&state=${scenario == "state" ? "wrong" : "state-123"}",
+          ),
+          prepareWebSession: () async {
+            imported = true;
+          },
+        ),
+        throwsA(isA<TwitchAuthException>()),
+      );
+      expect(imported, isFalse, reason: scenario);
+    }
+  });
+
+  test("canceling during cookie import prevents credential writes", () async {
+    final store = _MemoryTwitchStore();
+    final importStarted = Completer<void>();
+    final finishImport = Completer<void>();
+    final controller = _authController(
+      secureStore: store,
+      cookieExtractor: const _StaticCookieExtractor("cookie-token-123"),
+    );
+    await controller.createAuthorizationUri();
+    final completion = controller.completeAuth(
+      Uri.parse("https://twitch.tv/login#access_token=token-123&state=state-123"),
+      prepareWebSession: () {
+        importStarted.complete();
+        return finishImport.future;
+      },
+    );
+    final expectation = expectLater(completion, throwsA(isA<TwitchAuthException>()));
+    await importStarted.future;
+    await controller.cancelPendingAuth("state-123");
+    finishImport.complete();
+    await expectation;
+    expect(store.accessToken, isNull);
+    expect(store.webSessionToken, isNull);
+  });
+
+  test("rejects a browser session belonging to a different OAuth account", () async {
+    final store = _MemoryTwitchStore()
+      ..accessToken = "saved-token"
+      ..webSessionToken = "saved-cookie";
+    final controller = _authController(
+      secureStore: store,
+      cookieExtractor: const _StaticCookieExtractor("cookie-token-123"),
+      validationResponse: Future.value(
+        _jsonResponse({
+          "client_id": "client-123",
+          "user_id": "different-user",
+        }),
+      ),
+    );
+    await controller.createAuthorizationUri();
+    await expectLater(
+      controller.completeAuth(
+        Uri.parse("https://twitch.tv/login#access_token=token-123&state=state-123"),
+      ),
+      throwsA(
+        isA<TwitchAuthException>().having(
+          (error) => error.message,
+          "message",
+          contains("different account"),
+        ),
+      ),
+    );
+    expect(store.accessToken, "saved-token");
+    expect(store.webSessionToken, "saved-cookie");
   });
 
   test("does not replace a saved session when login is incomplete", () async {

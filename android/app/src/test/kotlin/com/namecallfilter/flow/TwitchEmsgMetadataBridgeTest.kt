@@ -16,14 +16,26 @@ import androidx.media3.extractor.metadata.emsg.EventMessageDecoder
 import androidx.media3.extractor.metadata.emsg.EventMessageEncoder
 import androidx.media3.extractor.metadata.id3.Id3Decoder
 import java.io.ByteArrayOutputStream
+import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 @UnstableApi
 class TwitchEmsgMetadataBridgeTest {
+    @Before
+    fun enforceBufferLimits() {
+        ParsableByteArray.setShouldEnforceLimitOnLegacyMethods(true)
+    }
+
+    @After
+    fun resetBufferLimitEnforcement() {
+        ParsableByteArray.setShouldEnforceLimitOnLegacyMethods(null)
+    }
+
     @Test
     fun queuedHevcEmsgPreservesItsObservedPresentationDeltaAcrossASeek() {
         val adjuster = TimestampAdjuster(28_000_000L)
