@@ -539,7 +539,32 @@ interface VideoQuality {
   width: Int
 }
 
+input ShareViewerMilestoneInput {
+  milestoneID: String
+  channelID: String
+  messageBody: String
+}
+
+type ShareViewerMilestonePayload {
+  error: ShareViewerMilestoneError
+}
+
+type ShareViewerMilestoneError {
+  code: String
+}
+
+type WatchStreakMilestone {
+  watchStreakMilestone: ViewerMilestone
+}
+
+type ViewerMilestone {
+  id: ID
+  value: String
+  shareStatus: String
+}
+
 type Mutation {
+  shareViewerMilestone(input: ShareViewerMilestoneInput!): ShareViewerMilestonePayload
   voteInPoll(input: VoteInPollInput!): VoteInPollPayload
   makePrediction(input: MakePredictionInput!): MakePredictionPayload
   updateUserPredictionSettings(input: UpdateUserPredictionSettingsInput!): UpdateUserPredictionSettingsPayload
@@ -3775,6 +3800,7 @@ type SelectionSignal {
 }
 
 type Self {
+  watchStreakMilestone: WatchStreakMilestone
   recentPredictions: [Prediction!]
   resubNotification: ResubNotification
   chatRestrictedReasons: [String]
@@ -4798,6 +4824,7 @@ type VideoComment implements OnsiteNotificationContent {
 }
 
 type UserRelationship {
+  followedAt: Time
   subscriptionTenure(tenureMethod: SubscriptionTenureMethod): SubscriptionTenure
   subscriptionBenefit: SubscriptionBenefit
 }

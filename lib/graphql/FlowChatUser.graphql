@@ -17,6 +17,7 @@ query FlowChatUser(
       ...FlowChatUserBadge
     }
     relationship(targetUserID: $channelID) @include(if: $withRelationship) {
+      followedAt
       cumulativeTenure: subscriptionTenure(tenureMethod: CUMULATIVE) {
         months
       }

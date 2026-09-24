@@ -3349,7 +3349,7 @@ void main() {
   });
 
   testWidgets(
-    "user drawer shows profile color, paint, every badge, account date and subscription",
+    "user drawer shows follow date and expands badges only beyond two rows",
     (tester) async {
       await _cacheImages(tester);
       tester.view.physicalSize = const Size(392, 800);
@@ -3363,6 +3363,7 @@ void main() {
           displayName: "Viewer Profile",
           profileImageUrl: _avatar,
           createdAt: DateTime.utc(2018, 10, 12, 18),
+          followedAt: DateTime.utc(2020, 6, 19, 12),
           chatColor: "#00FF7F",
           badges: [
             const TwitchUserBadge(id: "moderator/1", title: "Moderator", imageUrl: _badgeUrl),
@@ -3412,17 +3413,32 @@ void main() {
       expect(tester.widget<ChatUsername>(name).name, "Viewer Profile");
       expect(tester.widget<ChatUsername>(name).style.color, const Color(0xFF00FF7F));
       expect(find.text("Account created · Oct 12, 2018"), findsOneWidget);
+      expect(find.text("Following since · Jun 19, 2020"), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey("chat_user_followed"))).dy,
+        greaterThan(tester.getBottomLeft(find.byKey(const ValueKey("chat_user_created"))).dy),
+      );
       expect(find.text("Subscriber · Tier 2 · 14 months total"), findsOneWidget);
       final badges = find.byKey(const ValueKey("chat_user_badges"));
       expect(tester.widget<Wrap>(badges).children, hasLength(19));
       expect(find.descendant(of: badges, matching: find.byType(Image)), findsNWidgets(19));
-      for (final width in [392.0, 240.0]) {
-        tester.view.physicalSize = Size(width, 800);
-        await tester.pumpAndSettle();
-        expect(tester.widget<Wrap>(badges).children, hasLength(19));
-        expect(tester.getSize(badges).width, lessThanOrEqualTo(width - 32));
-        expect(tester.takeException(), isNull);
-      }
+      expect(find.text("View all badges"), findsNothing);
+      expect(find.text("Collapse badges"), findsNothing);
+      tester.view.physicalSize = const Size(240, 800);
+      await tester.pumpAndSettle();
+      expect(tester.widget<Wrap>(badges).children, hasLength(12));
+      expect(tester.getSize(badges).height, 56);
+      expect(tester.getSize(badges).width, lessThanOrEqualTo(208));
+      await tester.tap(find.text("View all badges"));
+      await tester.pumpAndSettle();
+      expect(tester.widget<Wrap>(badges).children, hasLength(19));
+      expect(find.text("Collapse badges"), findsOneWidget);
+      await tester.tap(find.text("Collapse badges"));
+      await tester.pumpAndSettle();
+      expect(tester.widget<Wrap>(badges).children, hasLength(12));
+      expect(tester.getSize(badges).height, 56);
+      await tester.tap(find.text("View all badges"));
+      await tester.pumpAndSettle();
       await settings.setChatPreferences(
         settings.chatPreferences.copyWith(
           sevenTvPaints: false,
@@ -3465,6 +3481,8 @@ void main() {
     await _tapName(tester, "unknown-profile");
     expect(find.text("Subscription details unavailable"), findsOneWidget);
     expect(find.text("Account creation date unavailable"), findsOneWidget);
+    expect(find.byKey(const ValueKey("chat_user_followed")), findsNothing);
+    expect(find.text("View all badges"), findsNothing);
     expect(find.textContaining("months total"), findsNothing);
     expect(find.textContaining("Tier 1"), findsNothing);
     expect(find.byTooltip("12-month subscriber"), findsOneWidget);

@@ -1738,6 +1738,75 @@ void main() {
     expect(server.sockets, isEmpty);
   });
 
+  test(
+    "watch streak sharing uses real achievements, rechecks eligibility, and retries failures",
+    () async {
+      var milestone = const TwitchWatchStreak(id: "milestone", value: 7, canShare: true);
+      final client = _Client()..loadWatchStreak = () async => milestone;
+      var activeClient = client;
+      final socket = _Socket();
+      final chat = TwitchChatController(
+        channel: "channel",
+        clientLoader: () async => activeClient,
+        socketConnector: server.connect,
+        loadPins: false,
+        privateSocketConnector: () async => socket,
+      );
+      addTearDown(chat.dispose);
+      await server.join(chat);
+      await _waitFor(() => socket._incoming.hasListener);
+      socket.authenticateHermes();
+      expect(client.watchStreakLoads, 0);
+      socket.achievement("real-event");
+      await _waitFor(() => chat.messages.any(chat.canShareWatchStreak));
+      final notice = chat.messages.last;
+      expect(client.watchStreakLoads, 1);
+      socket.achievement("real-event");
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(client.watchStreakLoads, 1);
+      final pending = Completer<void>();
+      client.onShareWatchStreak = () => pending.future;
+      final failed = chat.shareWatchStreak(notice, "hello");
+      await _waitFor(() => client.watchStreakShares == 1);
+      expect(chat.isSharingWatchStreak, isTrue);
+      expect(await chat.shareWatchStreak(notice, "hello"), isFalse);
+      pending.completeError(TwitchApiException("Retry sharing."));
+      expect(await failed, isFalse);
+      expect(chat.watchStreakShareError, "Retry sharing.");
+      expect(chat.canShareWatchStreak(notice), isTrue);
+      client.onShareWatchStreak = () async {};
+      expect(await chat.shareWatchStreak(notice, "hello"), isTrue);
+      expect(chat.canShareWatchStreak(notice), isFalse);
+      expect(chat.watchStreakShareError, isNull);
+      expect(await chat.shareWatchStreak(notice), isFalse);
+      expect(client.watchStreakShares, 2);
+      expect(chat.conversation, isEmpty);
+
+      socket.achievement("stale-event");
+      await _waitFor(() => chat.canShareWatchStreak(chat.messages.last));
+      milestone = const TwitchWatchStreak(id: "milestone", value: 7, canShare: false);
+      expect(await chat.shareWatchStreak(chat.messages.last), isFalse);
+      expect(client.watchStreakShares, 2);
+      expect(chat.watchStreakShareError, contains("no longer available"));
+      milestone = const TwitchWatchStreak(id: "new-milestone", value: 8, canShare: true);
+      socket.achievement("different-value");
+      await _waitFor(() => client.watchStreakLoads == 6);
+      expect(chat.canShareWatchStreak(chat.messages.last), isFalse);
+      milestone = const TwitchWatchStreak(id: "milestone", value: 7, canShare: true);
+      socket.achievement("account-change");
+      await _waitFor(() => chat.canShareWatchStreak(chat.messages.last));
+      final checking = Completer<TwitchWatchStreak?>();
+      client.loadWatchStreak = () => checking.future;
+      final staleAccount = chat.shareWatchStreak(chat.messages.last, "hello");
+      await _waitFor(() => client.watchStreakLoads == 8);
+      activeClient = _Client(webToken: "different-account-token");
+      checking.complete(milestone);
+      expect(await staleAccount, isFalse);
+      expect(client.watchStreakShares, 2);
+      expect(activeClient.watchStreakShares, 0);
+    },
+  );
+
   for (final genericCallout in [false, true]) {
     test(
       "private events dedupe across history eviction and reconnect (callout: $genericCallout)",
@@ -2202,6 +2271,30 @@ class _Client extends TwitchApiClient {
   Future<void> Function()? onShareAnniversary;
   int anniversaryLoads = 0;
   int anniversaryShares = 0;
+  int watchStreakLoads = 0;
+  int watchStreakShares = 0;
+  Future<TwitchWatchStreak?> Function()? loadWatchStreak;
+  Future<void> Function()? onShareWatchStreak;
+
+  @override
+  Future<TwitchWatchStreak?> fetchWatchStreak(String channelId) async {
+    expectSync(channelId, "1");
+    watchStreakLoads++;
+    return loadWatchStreak?.call();
+  }
+
+  @override
+  Future<void> shareWatchStreak({
+    required String channelId,
+    required String milestoneId,
+    required String message,
+  }) async {
+    expectSync(channelId, "1");
+    expectSync(milestoneId, "milestone");
+    expectSync(message, "hello");
+    watchStreakShares++;
+    await onShareWatchStreak?.call();
+  }
 
   @override
   Future<TwitchSubscriptionAnniversary?> fetchSubscriptionAnniversary(String login) async {

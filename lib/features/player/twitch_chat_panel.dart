@@ -945,67 +945,89 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
     await widget.onOpenSettings?.call();
   }
 
-  Future<void> _shareSubscriptionAnniversary(TwitchChatController controller) async {
+  Future<bool> _shareChatMilestone(
+    TwitchChatController controller, {
+    TwitchChatMessage? watchStreak,
+  }) async {
     final message = TextEditingController();
+    final prefix = watchStreak == null ? "chat_anniversary" : "chat_watch_streak";
     try {
-      await _showSheet<void>(
-        builder: (context) => ListenableBuilder(
-          listenable: controller,
-          builder: (context, _) => SafeArea(
-            child: SingleChildScrollView(
-              padding: EdgeInsets.fromLTRB(
-                20,
-                20,
-                20,
-                20 + MediaQuery.viewInsetsOf(context).bottom,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text("Share your sub anniversary", style: Theme.of(context).textTheme.titleLarge),
-                  const SizedBox(height: 16),
-                  TextField(
-                    key: const ValueKey("chat_anniversary_message"),
-                    controller: message,
-                    enabled: !controller.isSharingSubscriptionAnniversary,
-                    maxLength: 500,
-                    maxLines: 3,
-                    minLines: 1,
-                    decoration: const InputDecoration(labelText: "Message (optional)"),
-                  ),
-                  if (controller.subscriptionAnniversaryError case final error?)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: Text(
-                        error,
-                        style: TextStyle(color: Theme.of(context).colorScheme.error),
-                      ),
+      return await _showSheet<bool>(
+            builder: (context) => ListenableBuilder(
+              listenable: controller,
+              builder: (context, _) {
+                final sharing = watchStreak == null
+                    ? controller.isSharingSubscriptionAnniversary
+                    : controller.isSharingWatchStreak;
+                final error = watchStreak == null
+                    ? controller.subscriptionAnniversaryError
+                    : controller.watchStreakShareError;
+                final canShare = watchStreak == null
+                    ? !controller.isChatRestricted &&
+                          controller.status == TwitchChatStatus.connected &&
+                          controller.subscriptionAnniversary != null
+                    : controller.canShareWatchStreak(watchStreak);
+                return SafeArea(
+                  child: SingleChildScrollView(
+                    padding: EdgeInsets.fromLTRB(
+                      20,
+                      20,
+                      20,
+                      20 + MediaQuery.viewInsetsOf(context).bottom,
                     ),
-                  FilledButton(
-                    key: const ValueKey("chat_anniversary_send"),
-                    onPressed:
-                        controller.isSharingSubscriptionAnniversary ||
-                            controller.isChatRestricted ||
-                            controller.status != TwitchChatStatus.connected ||
-                            controller.subscriptionAnniversary == null
-                        ? null
-                        : () async {
-                            final shared = await controller.shareSubscriptionAnniversary(
-                              message.text,
-                            );
-                            if (shared && context.mounted) {
-                              Navigator.of(context).pop();
-                            }
-                          },
-                    child: Text(controller.isSharingSubscriptionAnniversary ? "Sharing…" : "Share"),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          watchStreak == null
+                              ? "Share your sub anniversary"
+                              : "Share your watch streak",
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                        const SizedBox(height: 16),
+                        TextField(
+                          key: ValueKey("${prefix}_message"),
+                          controller: message,
+                          enabled: !sharing,
+                          maxLength: 500,
+                          maxLines: 3,
+                          minLines: 1,
+                          decoration: const InputDecoration(labelText: "Message (optional)"),
+                        ),
+                        if (error != null)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: Text(
+                              error,
+                              style: TextStyle(color: Theme.of(context).colorScheme.error),
+                            ),
+                          ),
+                        FilledButton(
+                          key: ValueKey("${prefix}_send"),
+                          onPressed: sharing || !canShare
+                              ? null
+                              : () async {
+                                  final shared = watchStreak == null
+                                      ? await controller.shareSubscriptionAnniversary(message.text)
+                                      : await controller.shareWatchStreak(
+                                          watchStreak,
+                                          message.text,
+                                        );
+                                  if (shared && context.mounted) {
+                                    Navigator.of(context).pop(true);
+                                  }
+                                },
+                          child: Text(sharing ? "Sharing…" : "Share"),
+                        ),
+                      ],
+                    ),
                   ),
-                ],
-              ),
+                );
+              },
             ),
-          ),
-        ),
-      );
+          ) ??
+          false;
     } finally {
       message.dispose();
     }
@@ -1045,7 +1067,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                   ),
                   TextButton(
                     key: const ValueKey("chat_anniversary_share"),
-                    onPressed: () => unawaited(_shareSubscriptionAnniversary(controller)),
+                    onPressed: () => unawaited(_shareChatMilestone(controller)),
                     child: const Text("Share"),
                   ),
                   IconButton(
@@ -2820,6 +2842,14 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                   key: ValueKey((controller, controller.currentUserId)),
                                   notice: watchNotice,
                                   onLayoutChanged: _updateChatLayout,
+                                  onShare:
+                                      watchNotice != null &&
+                                          controller.canShareWatchStreak(watchNotice)
+                                      ? () => _shareChatMilestone(
+                                          controller,
+                                          watchStreak: watchNotice,
+                                        )
+                                      : null,
                                 ),
                               SafeArea(
                                 top: false,
@@ -2935,10 +2965,16 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
 }
 
 class _WatchStreakCallout extends StatefulWidget {
-  const _WatchStreakCallout({required this.notice, required this.onLayoutChanged, super.key});
+  const _WatchStreakCallout({
+    required this.notice,
+    required this.onLayoutChanged,
+    this.onShare,
+    super.key,
+  });
 
   final TwitchChatMessage? notice;
   final VoidCallback onLayoutChanged;
+  final Future<bool> Function()? onShare;
 
   @override
   State<_WatchStreakCallout> createState() => _WatchStreakCalloutState();
@@ -2948,6 +2984,7 @@ class _WatchStreakCallout extends StatefulWidget {
     super.debugFillProperties(properties);
     properties.add(DiagnosticsProperty<TwitchChatMessage?>("notice", notice));
     properties.add(ObjectFlagProperty<VoidCallback>.has("onLayoutChanged", onLayoutChanged));
+    properties.add(ObjectFlagProperty<Object?>.has("onShare", onShare));
   }
 }
 
@@ -3046,6 +3083,17 @@ class _WatchStreakCalloutState extends State<_WatchStreakCallout>
                           ),
                         ),
                       ),
+                      if (widget.onShare case final share?)
+                        TextButton(
+                          key: const ValueKey("chat_watch_streak_share"),
+                          onPressed: () async {
+                            final id = widget.notice?.id;
+                            if (await share() && mounted && widget.notice?.id == id) {
+                              _dismiss();
+                            }
+                          },
+                          child: const Text("Share"),
+                        ),
                       IconButton(
                         tooltip: "Dismiss watch streak",
                         onPressed: _dismiss,
@@ -3173,6 +3221,7 @@ class _ChatUserSheetState extends State<_ChatUserSheet> {
   final _history = <String, TwitchChatMessage>{};
   final _scroll = ScrollController();
   bool _following = true;
+  bool _showAllBadges = false;
 
   @override
   void initState() {
@@ -3353,21 +3402,51 @@ class _ChatUserSheetState extends State<_ChatUserSheet> {
                               if (badges.isNotEmpty)
                                 Padding(
                                   padding: const EdgeInsets.only(bottom: 8),
-                                  child: Wrap(
-                                    key: const ValueKey("chat_user_badges"),
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: [
-                                      for (final badge in badges)
-                                        Tooltip(
-                                          message: badge.title,
-                                          child: _chatBadge(
-                                            badge,
-                                            size: 24,
-                                            onTap: widget.onBadgeTap,
+                                  child: LayoutBuilder(
+                                    builder: (context, constraints) {
+                                      final collapsedCount =
+                                          ((constraints.maxWidth + 8) / 32).floor().clamp(
+                                            1,
+                                            badges.length,
+                                          ) *
+                                          2;
+                                      return Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Wrap(
+                                            key: const ValueKey("chat_user_badges"),
+                                            spacing: 8,
+                                            runSpacing: 8,
+                                            children: [
+                                              for (final badge in badges.take(
+                                                _showAllBadges ? badges.length : collapsedCount,
+                                              ))
+                                                Tooltip(
+                                                  message: badge.title,
+                                                  child: _chatBadge(
+                                                    badge,
+                                                    size: 24,
+                                                    onTap: widget.onBadgeTap,
+                                                  ),
+                                                ),
+                                            ],
                                           ),
-                                        ),
-                                    ],
+                                          if (badges.length > collapsedCount)
+                                            Center(
+                                              child: TextButton(
+                                                onPressed: () => setState(
+                                                  () => _showAllBadges = !_showAllBadges,
+                                                ),
+                                                child: Text(
+                                                  _showAllBadges
+                                                      ? "Collapse badges"
+                                                      : "View all badges",
+                                                ),
+                                              ),
+                                            ),
+                                        ],
+                                      );
+                                    },
                                   ),
                                 ),
                               if (snapshot.connectionState == ConnectionState.done) ...[
@@ -3378,6 +3457,14 @@ class _ChatUserSheetState extends State<_ChatUserSheet> {
                                   key: const ValueKey("chat_user_created"),
                                   style: Theme.of(context).textTheme.bodySmall,
                                 ),
+                                if (profile?.followedAt case final followedAt?) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    "Following since · ${MaterialLocalizations.of(context).formatShortDate(followedAt.toLocal())}",
+                                    key: const ValueKey("chat_user_followed"),
+                                    style: Theme.of(context).textTheme.bodySmall,
+                                  ),
+                                ],
                                 const SizedBox(height: 4),
                                 Text(
                                   subscription,

@@ -25,7 +25,7 @@ void main() {
         userId: "123",
         clientLoader: () async => client(),
         socketConnector: () async => socket,
-        onNotice: ({required id, required type, required text, action}) =>
+        onNotice: ({required id, required type, required text, action, watchStreakCount}) =>
             notices.add("$id|$type|$text"),
       );
       await tester.pump();
@@ -92,7 +92,7 @@ void main() {
           sockets.add(socket);
           return socket;
         },
-        onNotice: ({required id, required type, required text, action}) =>
+        onNotice: ({required id, required type, required text, action, watchStreakCount}) =>
             notices.add("$id|$type|$text"),
       );
       await tester.pump();
@@ -173,7 +173,7 @@ void main() {
       userId: "123",
       clientLoader: () async => client(),
       socketConnector: () async => socket,
-      onNotice: ({required id, required type, required text, action}) =>
+      onNotice: ({required id, required type, required text, action, watchStreakCount}) =>
           notices.add((text: text, action: action)),
     );
     await tester.pump();
@@ -259,7 +259,8 @@ void main() {
         sockets.add(socket);
         return socket;
       },
-      onNotice: ({required id, required type, required text, action}) => fail("No notice received"),
+      onNotice: ({required id, required type, required text, action, watchStreakCount}) =>
+          fail("No notice received"),
     );
     await tester.pump();
     sockets.first
@@ -291,7 +292,7 @@ void main() {
         sockets.add(socket);
         return socket;
       },
-      onNotice: ({required id, required type, required text, action}) =>
+      onNotice: ({required id, required type, required text, action, watchStreakCount}) =>
           fail("No unauthenticated notice"),
     );
     await tester.pump();
@@ -319,7 +320,7 @@ void main() {
         connections++;
         return socket;
       },
-      onNotice: ({required id, required type, required text, action}) =>
+      onNotice: ({required id, required type, required text, action, watchStreakCount}) =>
           fail("No achievement received"),
     );
     await tester.pump();
@@ -346,7 +347,8 @@ void main() {
         sockets.add(socket);
         return socket;
       },
-      onNotice: ({required id, required type, required text, action}) => notices.add(id),
+      onNotice: ({required id, required type, required text, action, watchStreakCount}) =>
+          notices.add(id),
     );
     await tester.pump();
     sockets.first
@@ -378,7 +380,8 @@ void main() {
       userId: "123",
       clientLoader: () => validate ? pending.future : Future.value(client()),
       socketConnector: () async => socket,
-      onNotice: ({required id, required type, required text, action}) => notices.add(id),
+      onNotice: ({required id, required type, required text, action, watchStreakCount}) =>
+          notices.add(id),
     );
     await tester.pump();
     socket
@@ -401,7 +404,8 @@ void main() {
       userId: "123",
       clientLoader: () async => client(),
       socketConnector: () => opening.future,
-      onNotice: ({required id, required type, required text, action}) => fail("Disposed"),
+      onNotice: ({required id, required type, required text, action, watchStreakCount}) =>
+          fail("Disposed"),
     );
     await tester.pump();
     lateService.dispose();

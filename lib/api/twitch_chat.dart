@@ -49,6 +49,10 @@ class TwitchChatController extends ChangeNotifier {
   String? _privateUserId;
   ({String accessToken, String? gqlAccessToken})? _sessionCredentials;
   final Set<String> _privateNoticeIds = {};
+  ({String noticeId, String channelId, TwitchWatchStreak milestone})? _watchStreakShare;
+  int _watchStreakRevision = 0;
+  bool _isSharingWatchStreak = false;
+  String? _watchStreakShareError;
   final List<TwitchChatMessage> _messages = [];
   final List<TwitchChatMessage> _recentHistory = [];
   int _historyRequestedGeneration = -1;
@@ -144,6 +148,17 @@ class TwitchChatController extends ChangeNotifier {
   TwitchSubscriptionAnniversary? get subscriptionAnniversary => _subscriptionAnniversary;
   String? get subscriptionAnniversaryError => _subscriptionAnniversaryError;
   bool get isSharingSubscriptionAnniversary => _isSharingSubscriptionAnniversary;
+  bool get isSharingWatchStreak => _isSharingWatchStreak;
+  String? get watchStreakShareError => _watchStreakShareError;
+  bool canShareWatchStreak(TwitchChatMessage notice) =>
+      !_disposed &&
+      isSignedIn &&
+      !isChatRestricted &&
+      _status == TwitchChatStatus.connected &&
+      notice.isPrivate &&
+      notice.noticeType == "watch-streak" &&
+      _watchStreakShare?.noticeId == notice.id &&
+      _watchStreakShare?.milestone.canShare == true;
   bool get emoteOnlyRestricted =>
       roomState["emote-only"] == "1" &&
       currentUserLogin != channel &&
@@ -404,6 +419,80 @@ class TwitchChatController extends ChangeNotifier {
     } finally {
       if (_isCurrent(generation) && revision == _anniversaryRevision) {
         _isSharingSubscriptionAnniversary = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> _loadWatchStreakShare(String noticeId, String channelId, int count) async {
+    final generation = _generation;
+    final revision = ++_watchStreakRevision;
+    _watchStreakShare = null;
+    _watchStreakShareError = null;
+    try {
+      final client = await _loadSessionClient();
+      if (!_isCurrent(generation) || revision != _watchStreakRevision) {
+        return;
+      }
+      final milestone = await client.fetchWatchStreak(channelId);
+      if (_isCurrent(generation) && revision == _watchStreakRevision && milestone?.value == count) {
+        _watchStreakShare = (noticeId: noticeId, channelId: channelId, milestone: milestone!);
+        notifyListeners();
+      }
+    } on Object {
+      // The achievement remains readable when its sharing status is unavailable.
+    }
+  }
+
+  Future<bool> shareWatchStreak(TwitchChatMessage notice, [String message = ""]) async {
+    final share = _watchStreakShare;
+    if (!canShareWatchStreak(notice) || share == null || _isSharingWatchStreak) {
+      return false;
+    }
+    final generation = _generation;
+    final revision = _watchStreakRevision;
+    _isSharingWatchStreak = true;
+    _watchStreakShareError = null;
+    notifyListeners();
+    try {
+      final client = await _loadSessionClient();
+      if (!_isCurrent(generation) || revision != _watchStreakRevision) {
+        return false;
+      }
+      final current = await client.fetchWatchStreak(share.channelId);
+      if (!_isCurrent(generation) || revision != _watchStreakRevision || isChatRestricted) {
+        return false;
+      }
+      if (current?.id != share.milestone.id ||
+          current?.value != share.milestone.value ||
+          current?.canShare != true) {
+        _watchStreakShare = null;
+        throw TwitchApiException("This watch streak is no longer available to share.");
+      }
+      final shareClient = await _loadSessionClient();
+      if (!_isCurrent(generation) || revision != _watchStreakRevision || isChatRestricted) {
+        return false;
+      }
+      await shareClient.shareWatchStreak(
+        channelId: share.channelId,
+        milestoneId: current!.id,
+        message: message,
+      );
+      if (!_isCurrent(generation) || revision != _watchStreakRevision) {
+        return false;
+      }
+      _watchStreakShare = null;
+      return true;
+    } on Object catch (error) {
+      if (_isCurrent(generation) && revision == _watchStreakRevision) {
+        _watchStreakShareError = error is TwitchApiException
+            ? error.message
+            : "Could not share your watch streak. Try again.";
+      }
+      return false;
+    } finally {
+      if (_isCurrent(generation)) {
+        _isSharingWatchStreak = false;
         notifyListeners();
       }
     }
@@ -751,6 +840,8 @@ class TwitchChatController extends ChangeNotifier {
     _subscriptionAnniversaryError = null;
     _isSharingSubscriptionAnniversary = false;
     _anniversaryRefreshPending = false;
+    _isSharingWatchStreak = false;
+    _watchStreakShareError = null;
     _chatAccess = null;
     _chatAccessError = null;
     _isFollowingChannel = false;
@@ -801,6 +892,8 @@ class TwitchChatController extends ChangeNotifier {
       _recentHistory.removeWhere((message) => message.isPrivate);
       _claimedPointIds.clear();
       _privateNoticeIds.clear();
+      _watchStreakShare = null;
+      ++_watchStreakRevision;
       _privateUserId = _user?.id;
     }
     _scheduleTimeout();
@@ -955,9 +1048,13 @@ class TwitchChatController extends ChangeNotifier {
                   _sharedChatRoomId = null;
                 }
               },
-              onNotice: ({required id, required type, required text, action}) {
+              onNotice: ({required id, required type, required text, action, watchStreakCount}) {
                 if (_isCurrent(generation) && currentUserId == userId) {
+                  final duplicate = _privateNoticeIds.contains(id);
                   addPrivateNotice(id: id, type: type, text: text, action: action);
+                  if (!duplicate && watchStreakCount != null) {
+                    unawaited(_loadWatchStreakShare(id, channelId, watchStreakCount));
+                  }
                 }
               },
             );

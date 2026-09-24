@@ -1,0 +1,13 @@
+query FlowWatchStreak($channelID: ID!) {
+  channel(id: $channelID) {
+    self {
+      watchStreakMilestone {
+        watchStreakMilestone {
+          id
+          value
+          shareStatus
+        }
+      }
+    }
+  }
+}

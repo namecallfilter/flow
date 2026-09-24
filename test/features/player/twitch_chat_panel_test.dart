@@ -263,6 +263,67 @@ void main() {
     },
   );
 
+  testWidgets("watch streak shares only when eligible and keeps failed messages retryable", (
+    tester,
+  ) async {
+    final controller = _ChatController()
+      ..items.add(
+        TwitchChatMessage(
+          id: "watch-streak:shareable",
+          login: "",
+          displayName: "",
+          text: "",
+          isPrivate: true,
+          noticeType: "watch-streak",
+          noticeText: "You reached a 15-stream watch streak!",
+          timestamp: DateTime.now(),
+        ),
+      );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(panel(controller));
+    await tester.pump();
+    final share = find.byKey(const ValueKey("chat_watch_streak_share"));
+    final callout = find.byKey(const ValueKey("chat_watch_streak_callout"));
+    expect(callout, findsOneWidget);
+    expect(share, findsNothing);
+    controller
+      ..streakShareable = true
+      ..update();
+    await tester.pump();
+    expect(share, findsOneWidget);
+    final input = find.byKey(const ValueKey("chat_message_input"));
+    await tester.enterText(input, "Unsent draft");
+    await tester.tap(share);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    final message = find.byKey(const ValueKey("chat_watch_streak_message"));
+    final send = find.byKey(const ValueKey("chat_watch_streak_send"));
+    await tester.enterText(message, "Happy to be here!");
+    final pending = Completer<bool>();
+    controller.streakShareResult = pending.future;
+    await tester.tap(send);
+    await tester.pump();
+    expect(tester.widget<FilledButton>(send).onPressed, isNull);
+    expect(controller.streakMessages, ["Happy to be here!"]);
+    pending.complete(false);
+    await tester.pump();
+    expect(find.text("Could not share. Try again."), findsOneWidget);
+    expect(tester.widget<TextField>(message).controller!.text, "Happy to be here!");
+    await tester.pump(const Duration(seconds: 31));
+    expect(callout, findsNothing);
+    expect(message, findsOneWidget);
+    controller.streakShareResult = Future.value(true);
+    await tester.enterText(message, "");
+    await tester.tap(send);
+    await tester.pumpAndSettle();
+    expect(controller.streakMessages, ["Happy to be here!", ""]);
+    expect(message, findsNothing);
+    expect(tester.widget<TextField>(input).controller!.text, "Unsent draft");
+    expect(controller.sent, isEmpty);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets("watch streak dismissal expires without restarting on chat updates", (tester) async {
     final controller = _ChatController()
       ..items.add(
@@ -3330,6 +3391,37 @@ class _ChatController extends TwitchChatController {
   Future<bool> anniversaryShareResult = Future.value(true);
   bool sharingAnniversary = false;
   String? anniversaryError;
+  bool streakShareable = false;
+  bool sharingStreak = false;
+  String? streakError;
+  final streakMessages = <String>[];
+  Future<bool> streakShareResult = Future.value(true);
+
+  @override
+  bool canShareWatchStreak(TwitchChatMessage notice) => streakShareable && !isChatRestricted;
+
+  @override
+  bool get isSharingWatchStreak => sharingStreak;
+
+  @override
+  String? get watchStreakShareError => streakError;
+
+  @override
+  Future<bool> shareWatchStreak(TwitchChatMessage notice, [String message = ""]) async {
+    streakMessages.add(message);
+    sharingStreak = true;
+    streakError = null;
+    notifyListeners();
+    final shared = await streakShareResult;
+    sharingStreak = false;
+    if (shared) {
+      streakShareable = false;
+    } else {
+      streakError = "Could not share. Try again.";
+    }
+    notifyListeners();
+    return shared;
+  }
 
   @override
   TwitchSubscriptionAnniversary? get subscriptionAnniversary => anniversary;

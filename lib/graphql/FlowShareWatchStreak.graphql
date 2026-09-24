@@ -1,0 +1,7 @@
+mutation FlowShareWatchStreak($input: ShareViewerMilestoneInput!) {
+  shareViewerMilestone(input: $input) {
+    error {
+      code
+    }
+  }
+}
