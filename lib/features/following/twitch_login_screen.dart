@@ -1,9 +1,9 @@
 import "dart:async";
 
 import "package:flow/api/twitch_auth.dart";
-import "package:flutter/foundation.dart";
 import "package:flutter/material.dart";
-import "package:webview_flutter/webview_flutter.dart";
+import "package:flutter/rendering.dart";
+import "package:flutter/services.dart";
 
 typedef TwitchLoginOpener =
     Future<TwitchAuthConnection?> Function(
@@ -27,41 +27,28 @@ class TwitchLoginScreen extends StatefulWidget {
 }
 
 class _TwitchLoginScreenState extends State<TwitchLoginScreen> {
-  late final WebViewController _webViewController;
+  MethodChannel? _webViewChannel;
   String? _authState;
   var _isCompletingAuth = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _webViewController = WebViewController();
-    unawaited(_initializeWebView());
-  }
-
-  Future<void> _initializeWebView() async {
-    await _webViewController.setJavaScriptMode(JavaScriptMode.unrestricted);
-    await _webViewController.setUserAgent(
-      "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36",
-    );
-    await _webViewController.setNavigationDelegate(
-      NavigationDelegate(
-        onNavigationRequest: _handleNavigation,
-        onUrlChange: (change) {
-          final url = change.url;
-          if (url != null) {
-            unawaited(_completeAuthFromUrl(url));
-          }
-        },
-        onPageStarted: (url) => unawaited(_completeAuthFromUrl(url)),
-        onWebResourceError: (error) {
-          debugPrint("Twitch auth WebView error: ${error.description}");
-        },
-        onPageFinished: (url) {
-          unawaited(_completeAuthFromUrl(url));
-          unawaited(_patchCookieBanner());
-        },
-      ),
-    );
+  Future<void> _initializeWebView(int viewId) async {
+    if (!mounted) {
+      return;
+    }
+    final channel = MethodChannel("flow/twitch_login/$viewId");
+    _webViewChannel = channel;
+    channel.setMethodCallHandler((call) async {
+      if (!mounted) {
+        return;
+      }
+      if (call.method == "onUrlChange") {
+        await _completeAuthFromUrl(call.arguments as String);
+      } else if (call.method == "onError") {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Couldn't load Twitch sign-in. Please try again.")),
+        );
+      }
+    });
     await _loadAuthUrl();
   }
 
@@ -79,23 +66,25 @@ class _TwitchLoginScreenState extends State<TwitchLoginScreen> {
         }
         return;
       }
-      await _webViewController.loadRequest(authUri);
-    } on TwitchAuthException catch (error) {
+      await _webViewChannel!.invokeMethod<void>("loadUrl", {
+        "url": authUri.toString(),
+        "redirectUri": widget.authController.config.redirectUri,
+      });
+    } on Object catch (error) {
       if (!mounted) {
         return;
       }
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(error.message)));
+      ).showSnackBar(
+        SnackBar(
+          content: Text(
+            error is TwitchAuthException ? error.message : "Couldn't open Twitch sign-in.",
+          ),
+        ),
+      );
       Navigator.of(context).pop();
     }
-  }
-
-  Future<NavigationDecision> _handleNavigation(
-    NavigationRequest request,
-  ) async {
-    unawaited(_completeAuthFromUrl(request.url));
-    return NavigationDecision.navigate;
   }
 
   Future<void> _completeAuthFromUrl(String url) async {
@@ -112,7 +101,15 @@ class _TwitchLoginScreenState extends State<TwitchLoginScreen> {
 
     _isCompletingAuth = true;
     try {
-      final connection = await widget.authController.completeAuth(uri);
+      final connection = await widget.authController.completeAuth(
+        uri,
+        prepareWebSession: () async {
+          if (!mounted || _webViewChannel == null) {
+            throw TwitchAuthException("Twitch sign-in was canceled.");
+          }
+          await _webViewChannel!.invokeMethod<void>("importWebSession");
+        },
+      );
       if (mounted) {
         Navigator.of(context).pop(connection);
       }
@@ -127,39 +124,6 @@ class _TwitchLoginScreenState extends State<TwitchLoginScreen> {
     }
   }
 
-  Future<void> _patchCookieBanner() async {
-    try {
-      await _webViewController.runJavaScript("""
-        {
-          function modifyElement(element) {
-            element.style.maxHeight = '20vh';
-            element.style.overflow = 'auto';
-          }
-
-          const observer = new MutationObserver((mutations) => {
-            for (let mutation of mutations) {
-              if (mutation.type === 'childList') {
-                const element = document.querySelector('.fAVISI');
-                if (element) {
-                  modifyElement(element);
-                  observer.disconnect();
-                  break;
-                }
-              }
-            }
-          });
-
-          observer.observe(document.body, {
-            childList: true,
-            subtree: true
-          });
-        }
-      """);
-    } on Object catch (error) {
-      debugPrint("Twitch auth WebView JavaScript error: $error");
-    }
-  }
-
   Future<void> _cancelPendingAuth(String state) async {
     try {
       await widget.authController.cancelPendingAuth(state);
@@ -170,6 +134,8 @@ class _TwitchLoginScreenState extends State<TwitchLoginScreen> {
 
   @override
   void dispose() {
+    _webViewChannel?.setMethodCallHandler(null);
+    _webViewChannel = null;
     final authState = _authState;
     if (authState != null) {
       unawaited(_cancelPendingAuth(authState));
@@ -180,7 +146,26 @@ class _TwitchLoginScreenState extends State<TwitchLoginScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text("Connect with Twitch")),
-    body: WebViewWidget(controller: _webViewController),
+    body: PlatformViewLink(
+      viewType: "flow/twitch_login",
+      surfaceFactory: (_, controller) => AndroidViewSurface(
+        controller: controller as AndroidViewController,
+        hitTestBehavior: PlatformViewHitTestBehavior.opaque,
+        gestureRecognizers: const {},
+      ),
+      onCreatePlatformView: (params) {
+        final view = PlatformViewsService.initExpensiveAndroidView(
+          id: params.id,
+          viewType: params.viewType,
+          layoutDirection: TextDirection.ltr,
+          onFocus: () => params.onFocusChanged(true),
+        );
+        view.addOnPlatformViewCreatedListener(params.onPlatformViewCreated);
+        view.addOnPlatformViewCreatedListener((id) => unawaited(_initializeWebView(id)));
+        unawaited(view.create());
+        return view;
+      },
+    ),
   );
 }
 

@@ -138,6 +138,10 @@ class MainActivity : FlutterActivity() {
             "flow/twitch_player",
             TwitchPlayerViewFactory(flutterEngine.dartExecutor.binaryMessenger, this),
         )
+        flutterEngine.platformViewsController.registry.registerViewFactory(
+            "flow/twitch_login",
+            TwitchLoginViewFactory(flutterEngine.dartExecutor.binaryMessenger, this),
+        )
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "flow/cookie_extractor")
             .setMethodCallHandler { call, result ->
