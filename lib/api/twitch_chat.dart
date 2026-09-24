@@ -842,6 +842,8 @@ class TwitchChatController extends ChangeNotifier {
     _anniversaryRefreshPending = false;
     _isSharingWatchStreak = false;
     _watchStreakShareError = null;
+    _watchStreakShare = null;
+    ++_watchStreakRevision;
     _chatAccess = null;
     _chatAccessError = null;
     _isFollowingChannel = false;
@@ -892,8 +894,6 @@ class TwitchChatController extends ChangeNotifier {
       _recentHistory.removeWhere((message) => message.isPrivate);
       _claimedPointIds.clear();
       _privateNoticeIds.clear();
-      _watchStreakShare = null;
-      ++_watchStreakRevision;
       _privateUserId = _user?.id;
     }
     _scheduleTimeout();

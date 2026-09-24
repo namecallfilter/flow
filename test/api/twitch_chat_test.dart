@@ -1807,6 +1807,52 @@ void main() {
     },
   );
 
+  test("reconnect invalidates an in-flight watch streak share", () async {
+    final pending = Completer<void>();
+    final client = _Client();
+    client.loadWatchStreak = () async =>
+        const TwitchWatchStreak(id: "milestone", value: 7, canShare: true);
+    client.onShareWatchStreak = () => pending.future;
+    final privateSockets = <_Socket>[];
+    final chat = TwitchChatController(
+      channel: "channel",
+      clientLoader: () async => client,
+      socketConnector: server.connect,
+      loadPins: false,
+      privateSocketConnector: () async {
+        final socket = _Socket();
+        privateSockets.add(socket);
+        return socket;
+      },
+    );
+    addTearDown(chat.dispose);
+    await server.join(chat);
+    await _waitFor(() => privateSockets.isNotEmpty && privateSockets.last._incoming.hasListener);
+    privateSockets.last.authenticateHermes();
+    privateSockets.last.achievement("before-reconnect");
+    await _waitFor(() => chat.messages.any(chat.canShareWatchStreak));
+    final notice = chat.messages.last;
+    final sharing = chat.shareWatchStreak(notice, "hello");
+    await _waitFor(() => client.watchStreakShares == 1);
+
+    chat.reconnect();
+    await server.join(chat, connection: 2);
+    expect(chat.canShareWatchStreak(notice), isFalse);
+    expect(await chat.shareWatchStreak(notice, "hello"), isFalse);
+    expect(client.watchStreakShares, 1);
+    pending.complete();
+    expect(await sharing, isFalse);
+    expect(chat.watchStreakShareError, isNull);
+    expect(chat.canShareWatchStreak(notice), isFalse);
+
+    await _waitFor(() => privateSockets.length == 2 && privateSockets.last._incoming.hasListener);
+    privateSockets.last.authenticateHermes();
+    privateSockets.last.achievement("after-reconnect");
+    await _waitFor(() => chat.messages.any(chat.canShareWatchStreak));
+    expect(await chat.shareWatchStreak(chat.messages.last, "hello"), isTrue);
+    expect(client.watchStreakShares, 2);
+  });
+
   for (final genericCallout in [false, true]) {
     test(
       "private events dedupe across history eviction and reconnect (callout: $genericCallout)",
