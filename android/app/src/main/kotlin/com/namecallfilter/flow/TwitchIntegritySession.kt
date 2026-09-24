@@ -12,11 +12,116 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import org.mozilla.geckoview.GeckoResult
+import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.GeckoView
+import org.mozilla.geckoview.PanZoomController
+import org.mozilla.geckoview.ScreenLength
+import org.mozilla.geckoview.WebRequestError
 
 /** Observes the authenticated Twitch page's own requests without changing them. */
 class TwitchIntegritySession(private val activity: Activity) {
-    @SuppressLint("SetJavaScriptEnabled")
     fun start(expectedAuthorization: String, callback: (Map<String, String>?) -> Unit) {
+        val handler = Handler(Looper.getMainLooper())
+        handler.post {
+            if (activity.isFinishing || activity.isDestroyed || expectedAuthorization.isBlank()) {
+                callback(null)
+                return@post
+            }
+            var completed = false
+            var session: GeckoSession? = null
+            var view: GeckoView? = null
+            var observed: Map<String, String>? = null
+            var stopObserving: () -> Unit = {}
+            var pageFinished = false
+            var scrollsRemaining = 5
+
+            fun cleanup() {
+                handler.removeCallbacksAndMessages(null)
+                stopObserving()
+                session?.navigationDelegate = null
+                session?.progressDelegate = null
+                if (session?.isOpen == true) session?.stop()
+                view?.releaseSession()
+                if (session?.isOpen == true) session?.close()
+                (view?.parent as? ViewGroup)?.removeView(view)
+            }
+
+            fun finish(context: Map<String, String>?) {
+                if (completed) return
+                completed = true
+                cleanup()
+                callback(context)
+            }
+
+            fun scrollWhenReady() {
+                if (completed || !pageFinished || observed == null || scrollsRemaining == 0) return
+                scrollsRemaining--
+                session?.panZoomController?.scrollBy(
+                    ScreenLength.zero(), ScreenLength.fromVisualViewportHeight(1.0), PanZoomController.SCROLL_BEHAVIOR_AUTO,
+                )
+            }
+
+            handler.postDelayed({ finish(observed) }, 20_000)
+            try {
+                stopObserving = TwitchLoginView.observeRequests(activity, expectedAuthorization) { message ->
+                    if (completed) return@observeRequests
+                    if (activity.isFinishing || activity.isDestroyed) {
+                        finish(null)
+                        return@observeRequests
+                    }
+                    try { when (message.optString("type")) {
+                        "contextReady" -> if (!message.optBoolean("matches")) {
+                            // Older installations may only have the original WebView session.
+                            completed = true
+                            cleanup()
+                            startWebView(expectedAuthorization, callback)
+                        } else if (session == null) {
+                            val page = GeckoSession()
+                            session = page
+                            page.navigationDelegate = object : GeckoSession.NavigationDelegate {
+                                override fun onLoadError(session: GeckoSession, uri: String?, error: WebRequestError): GeckoResult<String>? {
+                                    finish(null)
+                                    return null
+                                }
+                            }
+                            page.progressDelegate = object : GeckoSession.ProgressDelegate {
+                                override fun onPageStop(session: GeckoSession, success: Boolean) {
+                                    if (!success) finish(null) else {
+                                        pageFinished = true
+                                        scrollWhenReady()
+                                    }
+                                }
+                            }
+                            val browser = GeckoView(activity)
+                            view = browser
+                            browser.setViewBackend(GeckoView.BACKEND_TEXTURE_VIEW)
+                            browser.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                            browser.isFocusable = false
+                            activity.findViewById<ViewGroup>(android.R.id.content).addView(
+                                browser, 0, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
+                            )
+                            page.open(TwitchLoginView.runtimeFor(activity))
+                            browser.setSession(page)
+                            page.loadUri("https://www.twitch.tv/directory/all")
+                        }
+                        "requestContext" -> {
+                            val headers = message.optJSONObject("headers") ?: return@observeRequests
+                            observed = headers.keys().asSequence().associateWith { headers.getString(it) }
+                            if (observed!!.containsKey("Client-Integrity")) finish(observed) else scrollWhenReady()
+                        }
+                        "contextFailed" -> finish(null)
+                    } } catch (_: Exception) { finish(null) }
+                }
+                if (completed) stopObserving()
+            } catch (_: Exception) {
+                finish(null)
+            }
+        }
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun startWebView(expectedAuthorization: String, callback: (Map<String, String>?) -> Unit) {
         val handler = Handler(Looper.getMainLooper())
         handler.post {
             if (activity.isFinishing || activity.isDestroyed || expectedAuthorization.isBlank()) {

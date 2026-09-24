@@ -1301,6 +1301,174 @@ void main() {
     expect(chat.conversation.length, 1);
   });
 
+  test("only own timeouts block chat, fail pending sends, and notify on expiry", () async {
+    final chat = controller();
+    await server.join(chat);
+    server.send(
+      "@target-user-id=other :tmi.twitch.tv CLEARCHAT #channel :viewer\r\n"
+      ":tmi.twitch.tv CLEARCHAT #channel\r\n"
+      "@login=viewer;target-msg-id=own-message :tmi.twitch.tv CLEARMSG #channel :deleted\r\n",
+    );
+    await _waitFor(() => chat.conversation.length == 3);
+    expect(chat.isChatRestricted, isFalse);
+    expect(chat.canSend, isTrue);
+    final pending = chat.send("keep my draft");
+    await _waitFor(() => server.commands.contains("PRIVMSG #channel :keep my draft\r\n"));
+    server.send(
+      "@target-user-id=123;ban-duration=1 :tmi.twitch.tv CLEARCHAT #channel :renamedviewer\r\n",
+    );
+    expect(await pending, isFalse);
+    expect(chat.isTimedOut, isTrue);
+    expect(chat.isBanned, isFalse);
+    expect(chat.timeoutRemaining, greaterThan(Duration.zero));
+    expect(chat.timeoutRemaining, lessThanOrEqualTo(const Duration(seconds: 1)));
+    expect(chat.conversation.any((message) => message.id.startsWith("pending:")), isFalse);
+    expect(chat.conversation, hasLength(3));
+    expect(await chat.send("blocked"), isFalse);
+    expect(server.commands.where((command) => command.startsWith("PRIVMSG")), hasLength(1));
+    var expiryNotified = false;
+    chat.addListener(() => expiryNotified |= chat.canSend);
+    await _waitFor(() => expiryNotified);
+    expect(chat.isChatRestricted, isFalse);
+    expect(chat.timeoutRemaining, Duration.zero);
+    server.send(":tmi.twitch.tv CLEARCHAT #channel :VIEWER\r\n");
+    await _waitFor(() => chat.isBanned);
+    expect(chat.canSend, isFalse);
+    expect(chat.conversation, hasLength(3));
+  });
+
+  test("timeout and ban rejection notices preserve drafts and recover on access refresh", () async {
+    final client = _Client()
+      ..loadAnniversary = () async => const TwitchSubscriptionAnniversary(
+        id: "anniversary",
+        months: 5,
+      );
+    final chat = TwitchChatController(
+      channel: "channel",
+      clientLoader: () async => client,
+      socketConnector: server.connect,
+      loadPins: false,
+      loadPrivateNotices: false,
+    );
+    addTearDown(chat.dispose);
+    await server.join(chat);
+    final rejected = chat.send("rejected draft");
+    await _waitFor(() => server.commands.contains("PRIVMSG #channel :rejected draft\r\n"));
+    server.send(
+      "@msg-id=msg_timedout :tmi.twitch.tv NOTICE #channel :You are timed out for 1 more seconds.\r\n",
+    );
+    expect(await rejected, isFalse);
+    expect(chat.isTimedOut, isTrue);
+    expect(chat.timeoutRemaining, greaterThan(Duration.zero));
+    expect(chat.error, isNull);
+    expect(await chat.shareSubscriptionAnniversary("hello"), isFalse);
+    expect(client.anniversaryShares, 0);
+    await _waitFor(() => chat.canSend);
+    server.send("@msg-id=msg_timedout :tmi.twitch.tv NOTICE #channel :You are timed out.\r\n");
+    await _waitFor(() => chat.isTimedOut);
+    expect(chat.timeoutRemaining, Duration.zero);
+    expect(chat.canSend, isFalse);
+    client.loadAccess = () async => throw TwitchApiException("Unavailable");
+    await chat.refreshChatAccess();
+    expect(chat.isTimedOut, isTrue);
+    server.send("@msg-id=msg_banned :tmi.twitch.tv NOTICE #channel :You are banned.\r\n");
+    await _waitFor(() => chat.isBanned);
+    expect(chat.isTimedOut, isFalse);
+    expect(await chat.send("still blocked"), isFalse);
+    client.loadAccess = null;
+    await chat.refreshChatAccess();
+    expect(chat.isChatRestricted, isFalse);
+    expect(chat.canSend, isTrue);
+  });
+
+  testWidgets("access refresh cannot overwrite newer moderation and polls for an early lift", (
+    tester,
+  ) async {
+    final client = _Client();
+    final socket = _Socket();
+    final chat = await historyChat(tester, client, socket);
+    final stale = Completer<TwitchChatAccess>();
+    client.loadAccess = () => stale.future;
+    final refreshing = chat.refreshChatAccess();
+    await tester.pump();
+    socket._incoming.add("@target-user-id=123 :tmi.twitch.tv CLEARCHAT #channel :viewer\r\n");
+    expect(chat.isBanned, isTrue);
+    stale.complete(client.access);
+    await refreshing;
+    expect(chat.isBanned, isTrue);
+    client.loadAccess = null;
+    await tester.pump(const Duration(seconds: 30));
+    expect(chat.isChatRestricted, isFalse);
+    expect(chat.canSend, isTrue);
+    chat.dispose();
+  });
+
+  testWidgets("anonymous access responses cannot lift an IRC account's restriction", (
+    tester,
+  ) async {
+    final client = _Client(webToken: "");
+    final socket = _Socket();
+    final chat = await historyChat(tester, client, socket);
+    expect(chat.isSignedIn, isTrue);
+    socket._incoming.add(
+      "@target-user-id=123;ban-duration=60 :tmi.twitch.tv CLEARCHAT #channel :viewer\r\n",
+    );
+    await chat.refreshChatAccess();
+    expect(chat.isTimedOut, isTrue);
+    expect(chat.canSend, isFalse);
+    socket._incoming.add("@target-user-id=123 :tmi.twitch.tv CLEARCHAT #channel :viewer\r\n");
+    await tester.pump(const Duration(seconds: 30));
+    expect(chat.isBanned, isTrue);
+    expect(chat.canSend, isFalse);
+    chat.dispose();
+  });
+
+  test(
+    "restores restrictions on join, retains them on refresh failure, and resets for another account",
+    () async {
+      final client = _Client()
+        ..access = const TwitchChatAccess(
+          channelId: "1",
+          channelDisplayName: "Channel",
+          rules: [],
+          isBanned: true,
+        );
+      final chat = TwitchChatController(
+        channel: "channel",
+        clientLoader: () async => client,
+        socketConnector: server.connect,
+        loadPins: false,
+        loadPrivateNotices: false,
+      );
+      addTearDown(chat.dispose);
+      await server.join(chat);
+      expect(chat.isBanned, isTrue);
+      expect(chat.canSend, isFalse);
+      client.loadAccess = () async => throw TwitchApiException("Unavailable");
+      chat.reconnect();
+      await server.join(chat, connection: 2);
+      expect(chat.isBanned, isTrue);
+      client.loadUser = () async =>
+          const TwitchUser(id: "456", login: "another", displayName: "Another");
+      chat.reconnect();
+      await server.join(chat, connection: 3);
+      expect(chat.isChatRestricted, isFalse);
+      expect(chat.canSend, isTrue);
+      client.loadAccess = null;
+      client.access = TwitchChatAccess(
+        channelId: "1",
+        channelDisplayName: "Channel",
+        rules: const [],
+        timeoutEndsAt: DateTime.now().add(const Duration(seconds: 30)),
+      );
+      await chat.refreshChatAccess();
+      expect(chat.isTimedOut, isTrue);
+      expect(chat.isBanned, isFalse);
+      expect(chat.canSend, isFalse);
+      expect(chat.timeoutRemaining, greaterThan(const Duration(seconds: 28)));
+    },
+  );
+
   test("slow mode blocks sends until expiry and reacts to role and room changes", () async {
     final chat = controller();
     await server.join(chat);
@@ -1568,6 +1736,121 @@ void main() {
     chat.reconnect();
     await Future<void>.delayed(const Duration(milliseconds: 30));
     expect(server.sockets, isEmpty);
+  });
+
+  test(
+    "watch streak sharing uses real achievements, rechecks eligibility, and retries failures",
+    () async {
+      var milestone = const TwitchWatchStreak(id: "milestone", value: 7, canShare: true);
+      final client = _Client()..loadWatchStreak = () async => milestone;
+      var activeClient = client;
+      final socket = _Socket();
+      final chat = TwitchChatController(
+        channel: "channel",
+        clientLoader: () async => activeClient,
+        socketConnector: server.connect,
+        loadPins: false,
+        privateSocketConnector: () async => socket,
+      );
+      addTearDown(chat.dispose);
+      await server.join(chat);
+      await _waitFor(() => socket._incoming.hasListener);
+      socket.authenticateHermes();
+      expect(client.watchStreakLoads, 0);
+      socket.achievement("real-event");
+      await _waitFor(() => chat.messages.any(chat.canShareWatchStreak));
+      final notice = chat.messages.last;
+      expect(client.watchStreakLoads, 1);
+      socket.achievement("real-event");
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(client.watchStreakLoads, 1);
+      final pending = Completer<void>();
+      client.onShareWatchStreak = () => pending.future;
+      final failed = chat.shareWatchStreak(notice, "hello");
+      await _waitFor(() => client.watchStreakShares == 1);
+      expect(chat.isSharingWatchStreak, isTrue);
+      expect(await chat.shareWatchStreak(notice, "hello"), isFalse);
+      pending.completeError(TwitchApiException("Retry sharing."));
+      expect(await failed, isFalse);
+      expect(chat.watchStreakShareError, "Retry sharing.");
+      expect(chat.canShareWatchStreak(notice), isTrue);
+      client.onShareWatchStreak = () async {};
+      expect(await chat.shareWatchStreak(notice, "hello"), isTrue);
+      expect(chat.canShareWatchStreak(notice), isFalse);
+      expect(chat.watchStreakShareError, isNull);
+      expect(await chat.shareWatchStreak(notice), isFalse);
+      expect(client.watchStreakShares, 2);
+      expect(chat.conversation, isEmpty);
+
+      socket.achievement("stale-event");
+      await _waitFor(() => chat.canShareWatchStreak(chat.messages.last));
+      milestone = const TwitchWatchStreak(id: "milestone", value: 7, canShare: false);
+      expect(await chat.shareWatchStreak(chat.messages.last), isFalse);
+      expect(client.watchStreakShares, 2);
+      expect(chat.watchStreakShareError, contains("no longer available"));
+      milestone = const TwitchWatchStreak(id: "new-milestone", value: 8, canShare: true);
+      socket.achievement("different-value");
+      await _waitFor(() => client.watchStreakLoads == 6);
+      expect(chat.canShareWatchStreak(chat.messages.last), isFalse);
+      milestone = const TwitchWatchStreak(id: "milestone", value: 7, canShare: true);
+      socket.achievement("account-change");
+      await _waitFor(() => chat.canShareWatchStreak(chat.messages.last));
+      final checking = Completer<TwitchWatchStreak?>();
+      client.loadWatchStreak = () => checking.future;
+      final staleAccount = chat.shareWatchStreak(chat.messages.last, "hello");
+      await _waitFor(() => client.watchStreakLoads == 8);
+      activeClient = _Client(webToken: "different-account-token");
+      checking.complete(milestone);
+      expect(await staleAccount, isFalse);
+      expect(client.watchStreakShares, 2);
+      expect(activeClient.watchStreakShares, 0);
+    },
+  );
+
+  test("reconnect invalidates an in-flight watch streak share", () async {
+    final pending = Completer<void>();
+    final client = _Client();
+    client.loadWatchStreak = () async =>
+        const TwitchWatchStreak(id: "milestone", value: 7, canShare: true);
+    client.onShareWatchStreak = () => pending.future;
+    final privateSockets = <_Socket>[];
+    final chat = TwitchChatController(
+      channel: "channel",
+      clientLoader: () async => client,
+      socketConnector: server.connect,
+      loadPins: false,
+      privateSocketConnector: () async {
+        final socket = _Socket();
+        privateSockets.add(socket);
+        return socket;
+      },
+    );
+    addTearDown(chat.dispose);
+    await server.join(chat);
+    await _waitFor(() => privateSockets.isNotEmpty && privateSockets.last._incoming.hasListener);
+    privateSockets.last.authenticateHermes();
+    privateSockets.last.achievement("before-reconnect");
+    await _waitFor(() => chat.messages.any(chat.canShareWatchStreak));
+    final notice = chat.messages.last;
+    final sharing = chat.shareWatchStreak(notice, "hello");
+    await _waitFor(() => client.watchStreakShares == 1);
+
+    chat.reconnect();
+    await server.join(chat, connection: 2);
+    expect(chat.canShareWatchStreak(notice), isFalse);
+    expect(await chat.shareWatchStreak(notice, "hello"), isFalse);
+    expect(client.watchStreakShares, 1);
+    pending.complete();
+    expect(await sharing, isFalse);
+    expect(chat.watchStreakShareError, isNull);
+    expect(chat.canShareWatchStreak(notice), isFalse);
+
+    await _waitFor(() => privateSockets.length == 2 && privateSockets.last._incoming.hasListener);
+    privateSockets.last.authenticateHermes();
+    privateSockets.last.achievement("after-reconnect");
+    await _waitFor(() => chat.messages.any(chat.canShareWatchStreak));
+    expect(await chat.shareWatchStreak(chat.messages.last, "hello"), isTrue);
+    expect(client.watchStreakShares, 2);
   });
 
   for (final genericCallout in [false, true]) {
@@ -2034,6 +2317,30 @@ class _Client extends TwitchApiClient {
   Future<void> Function()? onShareAnniversary;
   int anniversaryLoads = 0;
   int anniversaryShares = 0;
+  int watchStreakLoads = 0;
+  int watchStreakShares = 0;
+  Future<TwitchWatchStreak?> Function()? loadWatchStreak;
+  Future<void> Function()? onShareWatchStreak;
+
+  @override
+  Future<TwitchWatchStreak?> fetchWatchStreak(String channelId) async {
+    expectSync(channelId, "1");
+    watchStreakLoads++;
+    return loadWatchStreak?.call();
+  }
+
+  @override
+  Future<void> shareWatchStreak({
+    required String channelId,
+    required String milestoneId,
+    required String message,
+  }) async {
+    expectSync(channelId, "1");
+    expectSync(milestoneId, "milestone");
+    expectSync(message, "hello");
+    watchStreakShares++;
+    await onShareWatchStreak?.call();
+  }
 
   @override
   Future<TwitchSubscriptionAnniversary?> fetchSubscriptionAnniversary(String login) async {

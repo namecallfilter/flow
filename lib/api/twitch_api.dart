@@ -31,6 +31,7 @@ import "package:flow/graphql/FlowRecentChat.graphql.dart";
 import "package:flow/graphql/FlowSearchCategories.graphql.dart";
 import "package:flow/graphql/FlowSearchChannels.graphql.dart";
 import "package:flow/graphql/FlowShareSubscriptionAnniversary.graphql.dart";
+import "package:flow/graphql/FlowShareWatchStreak.graphql.dart";
 import "package:flow/graphql/FlowSubscribedChannels.graphql.dart";
 import "package:flow/graphql/FlowSubscriptionAnniversary.graphql.dart";
 import "package:flow/graphql/FlowTopGames.graphql.dart";
@@ -41,6 +42,7 @@ import "package:flow/graphql/FlowUsers.graphql.dart";
 import "package:flow/graphql/FlowVodChat.graphql.dart";
 import "package:flow/graphql/FlowVodSeekMetadata.graphql.dart";
 import "package:flow/graphql/FlowVoteInPoll.graphql.dart";
+import "package:flow/graphql/FlowWatchStreak.graphql.dart";
 import "package:flow/graphql/schema.graphqls.dart";
 import "package:flow/shared/twitch/stream_sort.dart";
 import "package:graphql/client.dart" as graphql;
@@ -63,6 +65,7 @@ class TwitchUser {
     required this.displayName,
     this.profileImageUrl,
     this.createdAt,
+    this.followedAt,
     this.chatColor,
     this.badges = const [],
     this.isSubscribed,
@@ -76,6 +79,7 @@ class TwitchUser {
   final String displayName;
   final String? profileImageUrl;
   final DateTime? createdAt;
+  final DateTime? followedAt;
   final String? chatColor;
   final List<TwitchUserBadge> badges;
   final bool? isSubscribed;
@@ -97,6 +101,14 @@ class TwitchSubscriptionAnniversary {
 
   final String id;
   final int months;
+}
+
+class TwitchWatchStreak {
+  const TwitchWatchStreak({required this.id, required this.value, required this.canShare});
+
+  final String id;
+  final int value;
+  final bool canShare;
 }
 
 class TwitchFollowedStream {
@@ -342,6 +354,8 @@ class TwitchChatAccess {
     this.isVip = false,
     this.isSlowModeRestricted,
     this.lastRecentChatMessageAt,
+    this.isBanned = false,
+    this.timeoutEndsAt,
   });
 
   final String channelId;
@@ -353,6 +367,8 @@ class TwitchChatAccess {
   final bool isVip;
   final bool? isSlowModeRestricted;
   final DateTime? lastRecentChatMessageAt;
+  final bool isBanned;
+  final DateTime? timeoutEndsAt;
 }
 
 class TwitchChatters {
@@ -731,6 +747,7 @@ class TwitchApiClient {
         displayName: _stringValue(target["displayName"]),
         profileImageUrl: target["profileImageURL"] as String?,
         createdAt: _dateTimeValue(target["createdAt"]),
+        followedAt: _dateTimeValue(relationship?["followedAt"]),
         chatColor: _nonEmptyValue(target["chatColor"] as String?),
         badges: badges.values.toList(),
         isSubscribed: benefit != null
@@ -861,6 +878,7 @@ class TwitchApiClient {
       throw TwitchApiException("Could not load channel rules and follower status. Try again.");
     }
     final follower = _mapValue(self?["follower"]);
+    final banStatus = _mapValue(self?["banStatus"]);
     return TwitchChatAccess(
       channelId: user!["id"]! as String,
       channelDisplayName: _nonEmptyValue(user["displayName"] as String?) ?? normalizedLogin,
@@ -871,6 +889,10 @@ class TwitchApiClient {
       isVip: self?["isVIP"] == true,
       isSlowModeRestricted: (self?["chatRestrictedReasons"] as List?)?.contains("SLOW_MODE"),
       lastRecentChatMessageAt: _dateTimeValue(self?["lastRecentChatMessageAt"]),
+      isBanned: banStatus?["isPermanent"] == true,
+      timeoutEndsAt: banStatus?["isPermanent"] == false
+          ? _dateTimeValue(banStatus?["expiresAt"])
+          : null,
     );
   }
 
@@ -2242,6 +2264,63 @@ class TwitchApiClient {
     );
     if (data.useChatNotificationToken?.isSuccess != true) {
       throw TwitchApiException("Twitch could not share your sub anniversary. Try again.");
+    }
+  }
+
+  Future<TwitchWatchStreak?> fetchWatchStreak(String channelId) async {
+    if (_nonEmptyValue(gqlAccessToken) == null) {
+      return null;
+    }
+    final data = await _query(
+      () => _authenticatedGraphQlClient.query$FlowWatchStreak(
+        Options$Query$FlowWatchStreak(
+          variables: Variables$Query$FlowWatchStreak(channelID: channelId),
+          fetchPolicy: graphql.FetchPolicy.noCache,
+        ),
+      ),
+      "FlowWatchStreak",
+      retryIntegrityChallenge: true,
+    );
+    final milestone = data.channel?.self?.watchStreakMilestone?.watchStreakMilestone;
+    final id = _nonEmptyValue(milestone?.id);
+    final value = int.tryParse(milestone?.value ?? "") ?? 0;
+    return id == null || value <= 0
+        ? null
+        : TwitchWatchStreak(id: id, value: value, canShare: milestone?.shareStatus == "CAN_SHARE");
+  }
+
+  Future<void> shareWatchStreak({
+    required String channelId,
+    required String milestoneId,
+    required String message,
+  }) async {
+    if (_nonEmptyValue(gqlAccessToken) == null) {
+      throw TwitchApiException("Sign in to Twitch before sharing your watch streak.");
+    }
+    if (!RegExp(r"^\d+$").hasMatch(channelId) || milestoneId.trim().isEmpty) {
+      throw TwitchApiException("Choose an available watch streak to share.");
+    }
+    if (message.runes.length > 500) {
+      throw TwitchApiException("Your watch streak message must be 500 characters or fewer.");
+    }
+    final data = await _query(
+      () => _authenticatedGraphQlClient.mutate$FlowShareWatchStreak(
+        Options$Mutation$FlowShareWatchStreak(
+          variables: Variables$Mutation$FlowShareWatchStreak(
+            input: Input$ShareViewerMilestoneInput(
+              channelID: channelId,
+              milestoneID: milestoneId,
+              messageBody: message,
+            ),
+          ),
+          fetchPolicy: graphql.FetchPolicy.noCache,
+        ),
+      ),
+      "FlowShareWatchStreak",
+      retryIntegrityChallenge: true,
+    );
+    if (data.shareViewerMilestone == null || data.shareViewerMilestone?.error != null) {
+      throw TwitchApiException("Twitch could not share your watch streak. Try again.");
     }
   }
 

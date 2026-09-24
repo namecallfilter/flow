@@ -591,7 +591,7 @@ void main() {
     expect(searchEntry.focusNode.hasFocus, isFalse);
   });
 
-  testWidgets("shows partner badges and preserves search result navigation", (
+  testWidgets("shows offline grayscale avatars and preserves search result navigation", (
     tester,
   ) async {
     final settings = AppSettingsStore(preferences: MemoryFlowPreferences());
@@ -631,6 +631,41 @@ void main() {
         name == "HighCreator" || name == "MinecraftCreator" ? findsOneWidget : findsNothing,
       );
     }
+    for (final name in ["HighCreator", "MinecraftCreator", "LowCreator"]) {
+      final filter = find.descendant(
+        of: find.byKey(ValueKey("browse_search_channel_avatar_$name")),
+        matching: find.byType(ColorFiltered),
+      );
+      if (name == "MinecraftCreator") {
+        expect(
+          tester.widget<ColorFiltered>(filter).colorFilter,
+          const ColorFilter.matrix([
+            0.2126,
+            0.7152,
+            0.0722,
+            0,
+            0,
+            0.2126,
+            0.7152,
+            0.0722,
+            0,
+            0,
+            0.2126,
+            0.7152,
+            0.0722,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0,
+          ]),
+        );
+      } else {
+        expect(filter, findsNothing);
+      }
+    }
 
     await tester.tap(find.byKey(const ValueKey("browse_search_channel_category_HighCreator")));
     await tester.pumpAndSettle();
@@ -656,7 +691,12 @@ void main() {
     ).pop();
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey("browse_search_channel_HighCreator")));
+    final row = tester.getRect(find.byKey(const ValueKey("browse_search_channel_HighCreator")));
+    final category = tester.getRect(
+      find.byKey(const ValueKey("browse_search_channel_category_HighCreator")),
+    );
+    expect(category.right, lessThan(row.right - 24));
+    await tester.tapAt(Offset(row.right - 12, category.center.dy));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey("player_page_highcreator")), findsOneWidget);
     expect(find.byKey(const ValueKey("channel_page_highcreator")), findsNothing);

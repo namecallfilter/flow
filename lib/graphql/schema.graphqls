@@ -539,7 +539,32 @@ interface VideoQuality {
   width: Int
 }
 
+input ShareViewerMilestoneInput {
+  milestoneID: String
+  channelID: String
+  messageBody: String
+}
+
+type ShareViewerMilestonePayload {
+  error: ShareViewerMilestoneError
+}
+
+type ShareViewerMilestoneError {
+  code: String
+}
+
+type WatchStreakMilestone {
+  watchStreakMilestone: ViewerMilestone
+}
+
+type ViewerMilestone {
+  id: ID
+  value: String
+  shareStatus: String
+}
+
 type Mutation {
+  shareViewerMilestone(input: ShareViewerMilestoneInput!): ShareViewerMilestonePayload
   voteInPoll(input: VoteInPollInput!): VoteInPollPayload
   makePrediction(input: MakePredictionInput!): MakePredictionPayload
   updateUserPredictionSettings(input: UpdateUserPredictionSettingsInput!): UpdateUserPredictionSettingsPayload
@@ -1302,7 +1327,8 @@ type Badge {
 }
 
 type BanStatu {
-  expiresInMs: String
+  expiresAt: Time
+  expiresInMs: Int
   isPermanent: Boolean
 }
 
@@ -3774,13 +3800,14 @@ type SelectionSignal {
 }
 
 type Self {
+  watchStreakMilestone: WatchStreakMilestone
   recentPredictions: [Prediction!]
   resubNotification: ResubNotification
   chatRestrictedReasons: [String]
   lastRecentChatMessageAt: Time
   communityPoints: CommunityPointsProperties
   availableEmoteSetsPaginated(after: Cursor, pageLimit: Int!): AvailableEmoteSetsPaginated
-  banStatus: [BanStatu]
+  banStatus: BanStatu
   benefit: Benefit
   bitsUsed: String
   canActivate: Boolean
@@ -4797,6 +4824,7 @@ type VideoComment implements OnsiteNotificationContent {
 }
 
 type UserRelationship {
+  followedAt: Time
   subscriptionTenure(tenureMethod: SubscriptionTenureMethod): SubscriptionTenure
   subscriptionBenefit: SubscriptionBenefit
 }

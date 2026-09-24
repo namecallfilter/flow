@@ -282,6 +282,7 @@ void main() {
           "withRelationship": true,
         });
         expect(payload["query"], contains("relationship(targetUserID:"));
+        expect(payload["query"], contains("followedAt"));
         expect(payload["query"], contains("channelViewer(userLogin:"));
         return _jsonResponse({
           "data": {
@@ -302,6 +303,7 @@ void main() {
                 },
               ],
               "relationship": {
+                "followedAt": "2020-06-19T12:05:00Z",
                 "cumulativeTenure": {"months": 14},
                 "subscriptionBenefit": {"id": "sub", "tier": "1000", "purchasedWithPrime": true},
               },
@@ -337,6 +339,7 @@ void main() {
       channelLogin: " Channel ",
     ))!;
     expect(profile.createdAt?.toUtc(), DateTime.utc(2018, 10, 12, 18, 27, 29));
+    expect(profile.followedAt?.toUtc(), DateTime.utc(2020, 6, 19, 12, 5));
     expect(profile.chatColor, "#00FF7F");
     expect(profile.badges, hasLength(25));
     expect(profile.badges.first.id, "moderator/1");
@@ -402,6 +405,7 @@ void main() {
       expect(grants, 1);
       expect(requests, 1);
       expect(profile.createdAt?.year, 2018);
+      expect(profile.followedAt, isNull);
       expect(profile.chatColor, "#00FF7F");
       expect(profile.badges.single.id, "subscriber/12");
       expect(profile.isSubscribed, isNull);

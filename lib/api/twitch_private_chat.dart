@@ -27,6 +27,7 @@ class TwitchPrivateChatNotices {
     required String type,
     required String text,
     ({String label, Uri url})? action,
+    int? watchStreakCount,
   })
   onNotice;
   final Future<WebSocket> Function() _socketConnector;
@@ -234,6 +235,7 @@ class TwitchPrivateChatNotices {
                 "watch-streak",
                 "You reached a $count-stream watch streak!",
                 generation,
+                watchStreakCount: count,
               ),
             );
           }
@@ -252,11 +254,18 @@ class TwitchPrivateChatNotices {
     String text,
     int generation, {
     ({String label, Uri url})? action,
+    int? watchStreakCount,
   }) async {
     try {
       await clientLoader().timeout(const Duration(seconds: 5));
       if (_isCurrent(generation) && (type != "private-callout" || _publishedCallouts.add(id))) {
-        onNotice(id: id, type: type, text: text, action: action);
+        onNotice(
+          id: id,
+          type: type,
+          text: text,
+          action: action,
+          watchStreakCount: watchStreakCount,
+        );
       }
     } on Object {
       _lost(generation);

@@ -384,13 +384,17 @@ void main() {
     final controller = _Controller(_Client())
       ..viewerId = "self"
       ..viewerLogin = "my_login";
+    final assets = _Assets(_Client());
+    addTearDown(assets.dispose);
     final settings = AppSettingsStore(preferences: MemoryFlowPreferences());
     await settings.load();
     await settings.setChatPreferences(
       settings.chatPreferences.copyWith(autoSyncChat: false, manualChatDelaySeconds: 2),
     );
     addTearDown(controller.dispose);
-    await tester.pumpWidget(_panel(controller, settingsStore: settings, chatOnly: false));
+    await tester.pumpWidget(
+      _panel(controller, assets: assets, settingsStore: settings, chatOnly: false),
+    );
     await tester.pumpAndSettle();
     controller.items.add(
       TwitchChatMessage(
@@ -404,6 +408,7 @@ void main() {
     controller.update();
     await tester.pump();
     expect(find.byKey(const ValueKey("delayed-mention")), findsNothing);
+    expect(assets.precachedMessages, contains("delayed-mention"));
     expect(sounds, isEmpty);
     await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 2100)));
     await tester.pump(const Duration(seconds: 2));
@@ -426,13 +431,14 @@ void main() {
   ) async {
     const url =
         "https://media4.giphy.com/media/joSNxeswxuc74Juo8X/giphy.gif?cid=example&ep=v1_gifs_trending&rid=giphy.gif&ct=g";
+    final imageUrl = url.replaceAll("giphy.gif", "giphy.webp");
     const squareUrl = "https://example.com/square.gif";
     const smallUrl = "https://example.com/small.gif";
     const label = "[Y A Y Yes GIF by Djemilah Birnie]";
     await _cacheImages(tester);
     await tester.runAsync(() async {
       for (final (imageUrl, width, height) in [
-        (url, 240, 120),
+        (imageUrl, 240, 120),
         (squareUrl, 240, 240),
         (smallUrl, 48, 16),
       ]) {
@@ -487,7 +493,16 @@ void main() {
     await tester.pumpAndSettle();
     final body = find.byKey(const ValueKey("gif-parent"));
     final image = find.byKey(const ValueKey("chat_gif-gif-parent-6"));
-    expect((tester.widget<Image>(image).image as NetworkImage).url, url);
+    expect((tester.widget<Image>(image).image as NetworkImage).url, imageUrl);
+    final fallback =
+        tester.widget<Image>(image).errorBuilder!(
+              tester.element(image),
+              Exception("WebP unavailable"),
+              null,
+            )
+            as Image;
+    expect((fallback.image as NetworkImage).url, url);
+    expect(fallback.fit, BoxFit.contain);
     expect(find.descendant(of: body, matching: find.byType(Image)), findsNWidgets(3));
     final emotes = find.descendant(
       of: body,
@@ -500,7 +515,7 @@ void main() {
     for (final width in [392.0, 240.0]) {
       tester.view.physicalSize = Size(width, 1000);
       await tester.pumpAndSettle();
-      expect(tester.getSize(image), const Size(140, 70));
+      expect(tester.getSize(image), width == 392 ? const Size(240, 120) : const Size(216, 108));
       expect(tester.getSize(square), const Size(140, 140));
       expect(tester.getSize(small), const Size(48, 16));
       expect(tester.getTopLeft(image).dx, closeTo(12, 0.01));
@@ -3334,7 +3349,7 @@ void main() {
   });
 
   testWidgets(
-    "user drawer shows profile color, paint, every badge, account date and subscription",
+    "user drawer shows follow date and expands badges only beyond two rows",
     (tester) async {
       await _cacheImages(tester);
       tester.view.physicalSize = const Size(392, 800);
@@ -3348,6 +3363,7 @@ void main() {
           displayName: "Viewer Profile",
           profileImageUrl: _avatar,
           createdAt: DateTime.utc(2018, 10, 12, 18),
+          followedAt: DateTime.utc(2020, 6, 19, 12),
           chatColor: "#00FF7F",
           badges: [
             const TwitchUserBadge(id: "moderator/1", title: "Moderator", imageUrl: _badgeUrl),
@@ -3397,17 +3413,32 @@ void main() {
       expect(tester.widget<ChatUsername>(name).name, "Viewer Profile");
       expect(tester.widget<ChatUsername>(name).style.color, const Color(0xFF00FF7F));
       expect(find.text("Account created · Oct 12, 2018"), findsOneWidget);
+      expect(find.text("Following since · Jun 19, 2020"), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey("chat_user_followed"))).dy,
+        greaterThan(tester.getBottomLeft(find.byKey(const ValueKey("chat_user_created"))).dy),
+      );
       expect(find.text("Subscriber · Tier 2 · 14 months total"), findsOneWidget);
       final badges = find.byKey(const ValueKey("chat_user_badges"));
       expect(tester.widget<Wrap>(badges).children, hasLength(19));
       expect(find.descendant(of: badges, matching: find.byType(Image)), findsNWidgets(19));
-      for (final width in [392.0, 240.0]) {
-        tester.view.physicalSize = Size(width, 800);
-        await tester.pumpAndSettle();
-        expect(tester.widget<Wrap>(badges).children, hasLength(19));
-        expect(tester.getSize(badges).width, lessThanOrEqualTo(width - 32));
-        expect(tester.takeException(), isNull);
-      }
+      expect(find.text("View all badges"), findsNothing);
+      expect(find.text("Collapse badges"), findsNothing);
+      tester.view.physicalSize = const Size(240, 800);
+      await tester.pumpAndSettle();
+      expect(tester.widget<Wrap>(badges).children, hasLength(12));
+      expect(tester.getSize(badges).height, 56);
+      expect(tester.getSize(badges).width, lessThanOrEqualTo(208));
+      await tester.tap(find.text("View all badges"));
+      await tester.pumpAndSettle();
+      expect(tester.widget<Wrap>(badges).children, hasLength(19));
+      expect(find.text("Collapse badges"), findsOneWidget);
+      await tester.tap(find.text("Collapse badges"));
+      await tester.pumpAndSettle();
+      expect(tester.widget<Wrap>(badges).children, hasLength(12));
+      expect(tester.getSize(badges).height, 56);
+      await tester.tap(find.text("View all badges"));
+      await tester.pumpAndSettle();
       await settings.setChatPreferences(
         settings.chatPreferences.copyWith(
           sevenTvPaints: false,
@@ -3450,6 +3481,8 @@ void main() {
     await _tapName(tester, "unknown-profile");
     expect(find.text("Subscription details unavailable"), findsOneWidget);
     expect(find.text("Account creation date unavailable"), findsOneWidget);
+    expect(find.byKey(const ValueKey("chat_user_followed")), findsNothing);
+    expect(find.text("View all badges"), findsNothing);
     expect(find.textContaining("months total"), findsNothing);
     expect(find.textContaining("Tier 1"), findsNothing);
     expect(find.byTooltip("12-month subscriber"), findsOneWidget);
@@ -4126,6 +4159,14 @@ class _FailingThreadClient extends _Client {
 class _Assets extends TwitchChatAssets {
   _Assets(_Client client)
     : super(clientLoader: () async => client, channelLogin: "channel", autoLoad: false);
+
+  final precachedMessages = <String>{};
+
+  @override
+  void precacheMessages(BuildContext context, Iterable<TwitchChatMessage> messages) {
+    precachedMessages.addAll(messages.map((message) => message.id));
+    super.precacheMessages(context, messages);
+  }
 
   @override
   void observeMessages(Iterable<TwitchChatMessage> messages) {}

@@ -49,6 +49,10 @@ class TwitchChatController extends ChangeNotifier {
   String? _privateUserId;
   ({String accessToken, String? gqlAccessToken})? _sessionCredentials;
   final Set<String> _privateNoticeIds = {};
+  ({String noticeId, String channelId, TwitchWatchStreak milestone})? _watchStreakShare;
+  int _watchStreakRevision = 0;
+  bool _isSharingWatchStreak = false;
+  String? _watchStreakShareError;
   final List<TwitchChatMessage> _messages = [];
   final List<TwitchChatMessage> _recentHistory = [];
   int _historyRequestedGeneration = -1;
@@ -64,6 +68,12 @@ class TwitchChatController extends ChangeNotifier {
   Timer? _notifyTimer;
   Timer? _sendTimer;
   Timer? _slowModeTimer;
+  Timer? _timeoutTimer;
+  Timer? _restrictionRefreshTimer;
+  bool _isBanned = false;
+  bool _isTimedOut = false;
+  DateTime? _timeoutEndsAt;
+  int _restrictionRevision = 0;
   DateTime? _lastMessageSentAt;
   DateTime? _slowModeRejectedUntil;
   Timer? _followerTimer;
@@ -126,9 +136,29 @@ class TwitchChatController extends ChangeNotifier {
   String? get chatAccessError => _chatAccessError;
   bool get isCheckingChatAccess => _isCheckingChatAccess;
   bool get isFollowingChannel => _isFollowingChannel;
+  bool get isBanned => _isBanned;
+  bool get isTimedOut =>
+      _isTimedOut && (_timeoutEndsAt == null || timeoutRemaining > Duration.zero);
+  bool get isChatRestricted => isBanned || isTimedOut;
+  Duration get timeoutRemaining {
+    final remaining = _timeoutEndsAt?.difference(DateTime.now()) ?? Duration.zero;
+    return remaining.isNegative ? Duration.zero : remaining;
+  }
+
   TwitchSubscriptionAnniversary? get subscriptionAnniversary => _subscriptionAnniversary;
   String? get subscriptionAnniversaryError => _subscriptionAnniversaryError;
   bool get isSharingSubscriptionAnniversary => _isSharingSubscriptionAnniversary;
+  bool get isSharingWatchStreak => _isSharingWatchStreak;
+  String? get watchStreakShareError => _watchStreakShareError;
+  bool canShareWatchStreak(TwitchChatMessage notice) =>
+      !_disposed &&
+      isSignedIn &&
+      !isChatRestricted &&
+      _status == TwitchChatStatus.connected &&
+      notice.isPrivate &&
+      notice.noticeType == "watch-streak" &&
+      _watchStreakShare?.noticeId == notice.id &&
+      _watchStreakShare?.milestone.canShare == true;
   bool get emoteOnlyRestricted =>
       roomState["emote-only"] == "1" &&
       currentUserLogin != channel &&
@@ -190,6 +220,7 @@ class TwitchChatController extends ChangeNotifier {
   bool get canSend =>
       _status == TwitchChatStatus.connected &&
       isSignedIn &&
+      !isChatRestricted &&
       subscriberChatEligible &&
       followerChatEligible &&
       slowModeWaitRemaining == Duration.zero;
@@ -208,12 +239,52 @@ class TwitchChatController extends ChangeNotifier {
     }
   }
 
+  void _setChatRestriction({bool banned = false, bool timedOut = false, DateTime? until}) {
+    ++_restrictionRevision;
+    _isBanned = banned;
+    _isTimedOut = timedOut;
+    _timeoutEndsAt = until;
+    if (isChatRestricted) {
+      _failSend();
+    }
+    _scheduleTimeout();
+    _scheduleRestrictionRefresh();
+  }
+
+  void _scheduleTimeout() {
+    _timeoutTimer?.cancel();
+    final remaining = timeoutRemaining;
+    if (!_disposed && isTimedOut && remaining > Duration.zero) {
+      _timeoutTimer = Timer(
+        remaining < const Duration(seconds: 1) ? remaining : const Duration(seconds: 1),
+        () {
+          _scheduleTimeout();
+          if (!isTimedOut) {
+            _scheduleRestrictionRefresh();
+          }
+          notifyListeners();
+        },
+      );
+    }
+  }
+
+  void _scheduleRestrictionRefresh() {
+    _restrictionRefreshTimer?.cancel();
+    if (!_disposed && isChatRestricted) {
+      _restrictionRefreshTimer = Timer(
+        const Duration(seconds: 30),
+        () => unawaited(refreshChatAccess()),
+      );
+    }
+  }
+
   Future<void> refreshChatAccess() async {
     if (_disposed) {
       return;
     }
     final generation = _generation;
     final revision = ++_accessRevision;
+    final restrictionRevision = _restrictionRevision;
     _isCheckingChatAccess = true;
     _chatAccessError = null;
     notifyListeners();
@@ -227,6 +298,15 @@ class TwitchChatController extends ChangeNotifier {
         return;
       }
       _chatAccess = access;
+      if (restrictionRevision == _restrictionRevision &&
+          isSignedIn &&
+          client.gqlAccessToken?.trim().isNotEmpty == true) {
+        _setChatRestriction(
+          banned: access.isBanned,
+          timedOut: access.timeoutEndsAt != null,
+          until: access.timeoutEndsAt,
+        );
+      }
       if (!subscriberChatEligible) {
         final userStateRevision = _userStateRevision;
         final subscribed = await client.fetchChannelSubscriptionStatus(channel);
@@ -255,6 +335,7 @@ class TwitchChatController extends ChangeNotifier {
         _isCheckingChatAccess = false;
         _scheduleFollowerEligibility();
         _scheduleSlowMode();
+        _scheduleRestrictionRefresh();
         notifyListeners();
       }
     }
@@ -298,6 +379,7 @@ class TwitchChatController extends ChangeNotifier {
     final anniversary = _subscriptionAnniversary;
     if (_disposed ||
         !isSignedIn ||
+        isChatRestricted ||
         _status != TwitchChatStatus.connected ||
         anniversary == null ||
         _isSharingSubscriptionAnniversary) {
@@ -312,6 +394,9 @@ class TwitchChatController extends ChangeNotifier {
     try {
       final client = await _loadSessionClient();
       if (!_isCurrent(generation) || revision != _anniversaryRevision) {
+        return false;
+      }
+      if (isChatRestricted) {
         return false;
       }
       await client.shareSubscriptionAnniversary(
@@ -334,6 +419,80 @@ class TwitchChatController extends ChangeNotifier {
     } finally {
       if (_isCurrent(generation) && revision == _anniversaryRevision) {
         _isSharingSubscriptionAnniversary = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> _loadWatchStreakShare(String noticeId, String channelId, int count) async {
+    final generation = _generation;
+    final revision = ++_watchStreakRevision;
+    _watchStreakShare = null;
+    _watchStreakShareError = null;
+    try {
+      final client = await _loadSessionClient();
+      if (!_isCurrent(generation) || revision != _watchStreakRevision) {
+        return;
+      }
+      final milestone = await client.fetchWatchStreak(channelId);
+      if (_isCurrent(generation) && revision == _watchStreakRevision && milestone?.value == count) {
+        _watchStreakShare = (noticeId: noticeId, channelId: channelId, milestone: milestone!);
+        notifyListeners();
+      }
+    } on Object {
+      // The achievement remains readable when its sharing status is unavailable.
+    }
+  }
+
+  Future<bool> shareWatchStreak(TwitchChatMessage notice, [String message = ""]) async {
+    final share = _watchStreakShare;
+    if (!canShareWatchStreak(notice) || share == null || _isSharingWatchStreak) {
+      return false;
+    }
+    final generation = _generation;
+    final revision = _watchStreakRevision;
+    _isSharingWatchStreak = true;
+    _watchStreakShareError = null;
+    notifyListeners();
+    try {
+      final client = await _loadSessionClient();
+      if (!_isCurrent(generation) || revision != _watchStreakRevision) {
+        return false;
+      }
+      final current = await client.fetchWatchStreak(share.channelId);
+      if (!_isCurrent(generation) || revision != _watchStreakRevision || isChatRestricted) {
+        return false;
+      }
+      if (current?.id != share.milestone.id ||
+          current?.value != share.milestone.value ||
+          current?.canShare != true) {
+        _watchStreakShare = null;
+        throw TwitchApiException("This watch streak is no longer available to share.");
+      }
+      final shareClient = await _loadSessionClient();
+      if (!_isCurrent(generation) || revision != _watchStreakRevision || isChatRestricted) {
+        return false;
+      }
+      await shareClient.shareWatchStreak(
+        channelId: share.channelId,
+        milestoneId: current!.id,
+        message: message,
+      );
+      if (!_isCurrent(generation) || revision != _watchStreakRevision) {
+        return false;
+      }
+      _watchStreakShare = null;
+      return true;
+    } on Object catch (error) {
+      if (_isCurrent(generation) && revision == _watchStreakRevision) {
+        _watchStreakShareError = error is TwitchApiException
+            ? error.message
+            : "Could not share your watch streak. Try again.";
+      }
+      return false;
+    } finally {
+      if (_isCurrent(generation)) {
+        _isSharingWatchStreak = false;
         notifyListeners();
       }
     }
@@ -398,6 +557,8 @@ class TwitchChatController extends ChangeNotifier {
         isVip: current.isVip,
         isSlowModeRestricted: current.isSlowModeRestricted,
         lastRecentChatMessageAt: current.lastRecentChatMessageAt,
+        isBanned: current.isBanned,
+        timeoutEndsAt: current.timeoutEndsAt,
       );
       _chatAccessError = null;
       _scheduleFollowerEligibility();
@@ -679,6 +840,10 @@ class TwitchChatController extends ChangeNotifier {
     _subscriptionAnniversaryError = null;
     _isSharingSubscriptionAnniversary = false;
     _anniversaryRefreshPending = false;
+    _isSharingWatchStreak = false;
+    _watchStreakShareError = null;
+    _watchStreakShare = null;
+    ++_watchStreakRevision;
     _chatAccess = null;
     _chatAccessError = null;
     _isFollowingChannel = false;
@@ -722,6 +887,7 @@ class TwitchChatController extends ChangeNotifier {
       _user = null;
     }
     if (_privateUserId != _user?.id) {
+      _setChatRestriction();
       _lastMessageSentAt = null;
       _slowModeRejectedUntil = null;
       _messages.removeWhere((message) => message.isPrivate);
@@ -730,6 +896,8 @@ class TwitchChatController extends ChangeNotifier {
       _privateNoticeIds.clear();
       _privateUserId = _user?.id;
     }
+    _scheduleTimeout();
+    _scheduleRestrictionRefresh();
     unawaited(refreshChatAccess());
     unawaited(refreshSubscriptionAnniversary());
     try {
@@ -880,9 +1048,13 @@ class TwitchChatController extends ChangeNotifier {
                   _sharedChatRoomId = null;
                 }
               },
-              onNotice: ({required id, required type, required text, action}) {
+              onNotice: ({required id, required type, required text, action, watchStreakCount}) {
                 if (_isCurrent(generation) && currentUserId == userId) {
+                  final duplicate = _privateNoticeIds.contains(id);
                   addPrivateNotice(id: id, type: type, text: text, action: action);
+                  if (!duplicate && watchStreakCount != null) {
+                    unawaited(_loadWatchStreakShare(id, channelId, watchStreakCount));
+                  }
                 }
               },
             );
@@ -1119,6 +1291,21 @@ class TwitchChatController extends ChangeNotifier {
         final moderatedAt = DateTime.fromMillisecondsSinceEpoch(
           int.tryParse(message.tags["tmi-sent-ts"] ?? "") ?? DateTime.now().millisecondsSinceEpoch,
         );
+        final isOwnRestriction =
+            message.command == "CLEARCHAT" &&
+            isSignedIn &&
+            (targetUserId != null
+                ? targetUserId == currentUserId
+                : login.isNotEmpty && login == currentUserLogin);
+        if (isOwnRestriction) {
+          _setChatRestriction(
+            banned: moderation == TwitchChatModeration.ban,
+            timedOut: moderation == TwitchChatModeration.timeout,
+            until: timeoutSeconds == null
+                ? null
+                : moderatedAt.add(Duration(seconds: timeoutSeconds)),
+          );
+        }
         bool matches(TwitchChatMessage item) =>
             item.noticeType != "system" &&
             !item.isPrivate &&
@@ -1172,7 +1359,8 @@ class TwitchChatController extends ChangeNotifier {
             }
           }
         }
-        if (!matchedVisibleMessage || moderation == TwitchChatModeration.cleared) {
+        if (!isOwnRestriction &&
+            (!matchedVisibleMessage || moderation == TwitchChatModeration.cleared)) {
           final targetLogin = message.command == "CLEARMSG"
               ? message.tags["login"].nullIfEmpty ?? ""
               : login;
@@ -1201,12 +1389,27 @@ class TwitchChatController extends ChangeNotifier {
         }
         _scheduleNotify();
       case "NOTICE":
+        final banned = message.tags["msg-id"] == "msg_banned";
+        final timedOut = message.tags["msg-id"] == "msg_timedout";
+        final moderationRejection = banned || timedOut;
+        if (moderationRejection && isSignedIn) {
+          final seconds = int.tryParse(
+            RegExp(r"(\d+)(?: more)? seconds?\b").firstMatch(message.text)?[1] ?? "",
+          );
+          _setChatRestriction(
+            banned: banned,
+            timedOut: timedOut,
+            until: !timedOut || seconds == null
+                ? null
+                : DateTime.now().add(Duration(seconds: seconds)),
+          );
+        }
         final rateLimited = message.tags["msg-id"] == "msg_ratelimit";
         final emoteOnlyRejection = message.tags["msg-id"] == "msg_emoteonly";
         final subscribersOnlyRejection = message.tags["msg-id"] == "msg_subsonly";
         if (rateLimited) {
           _sendRateLimitMessage = message.text;
-        } else if (!emoteOnlyRejection && !subscribersOnlyRejection) {
+        } else if (!emoteOnlyRejection && !subscribersOnlyRejection && !moderationRejection) {
           addPrivateNotice(
             id: message.tags["id"] ?? "private-${_systemMessageCount++}",
             type: "notice",
@@ -1233,7 +1436,11 @@ class TwitchChatController extends ChangeNotifier {
           _scheduleSlowMode();
         }
         _error =
-            rateLimited || followersOnlyRejection || subscribersOnlyRejection || emoteOnlyRejection
+            rateLimited ||
+                followersOnlyRejection ||
+                subscribersOnlyRejection ||
+                emoteOnlyRejection ||
+                moderationRejection
             ? null
             : message.text;
         if ((message.tags["msg-id"] ?? "").startsWith("msg_") ||
@@ -1395,6 +1602,8 @@ class TwitchChatController extends ChangeNotifier {
     _joinTimer?.cancel();
     _followerTimer?.cancel();
     _slowModeTimer?.cancel();
+    _timeoutTimer?.cancel();
+    _restrictionRefreshTimer?.cancel();
     _claimTimer?.cancel();
     _claimTimer = null;
     _privateNotices?.dispose();

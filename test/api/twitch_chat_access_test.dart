@@ -175,6 +175,39 @@ void main() {
     );
   });
 
+  test("chat access restores timeouts and bans and clears a lifted restriction", () async {
+    final expiresAt = DateTime.utc(2026, 9, 20, 12, 4, 3);
+    Map<String, Object?>? banStatus = {
+      "isPermanent": false,
+      "expiresAt": expiresAt.toIso8601String(),
+    };
+    final client = _client((request) async {
+      expect(request.headers["authorization"], "OAuth web-token");
+      expect((jsonDecode(request.body) as Map)["query"], contains("banStatus"));
+      return _json({
+        "data": {
+          "user": {
+            "id": "1",
+            "login": "channel",
+            "chatSettings": {"rules": <String>[]},
+            "self": {"isModerator": false, "isVIP": false, "banStatus": banStatus},
+          },
+        },
+      });
+    });
+    final timeout = await client.fetchChatAccess("channel");
+    expect(timeout.isBanned, isFalse);
+    expect(timeout.timeoutEndsAt?.toUtc(), expiresAt);
+    banStatus = {"isPermanent": true, "expiresAt": null};
+    final ban = await client.fetchChatAccess("channel");
+    expect(ban.isBanned, isTrue);
+    expect(ban.timeoutEndsAt, isNull);
+    banStatus = null;
+    final unrestricted = await client.fetchChatAccess("channel");
+    expect(unrestricted.isBanned, isFalse);
+    expect(unrestricted.timeoutEndsAt, isNull);
+  });
+
   test("following requires an authenticated acknowledgement for the selected channel", () async {
     var requests = 0;
     final client = _client((request) async {

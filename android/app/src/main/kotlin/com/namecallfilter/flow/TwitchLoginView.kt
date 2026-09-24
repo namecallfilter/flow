@@ -234,8 +234,40 @@ internal class TwitchLoginView(context: Context, messenger: BinaryMessenger, vie
         private var cookiePort: WebExtension.Port? = null
         private var extensionFailed = false
         private var nextImportId = 0L
+        private var requestObservation: Pair<JSONObject, (JSONObject) -> Unit>? = null
 
-        private fun runtimeFor(context: Context): GeckoRuntime {
+        internal fun observeRequests(context: Context, authorization: String, listener: (JSONObject) -> Unit): () -> Unit {
+            requestObservation?.second?.invoke(JSONObject().put("type", "contextFailed"))
+            val request = JSONObject().put("type", "observeRequests")
+                .put("requestId", ++nextImportId).put("authorization", authorization.trim())
+            requestObservation = request to listener
+            try {
+                runtimeFor(context)
+                if (extensionFailed) listener(JSONObject().put("type", "contextFailed")) else requestObservation()
+            } catch (_: Exception) {
+                requestObservation = null
+                listener(JSONObject().put("type", "contextFailed"))
+            }
+            return {
+                if (requestObservation?.first === request) {
+                    requestObservation = null
+                    try {
+                        cookiePort?.postMessage(JSONObject().put("type", "stopObservingRequests").put("requestId", request.getLong("requestId")))
+                    } catch (_: Exception) { }
+                }
+            }
+        }
+
+        private fun requestObservation() {
+            val request = requestObservation?.first ?: return
+            try {
+                cookiePort?.postMessage(request)
+            } catch (_: Exception) {
+                requestObservation?.second?.invoke(JSONObject().put("type", "contextFailed"))
+            }
+        }
+
+        internal fun runtimeFor(context: Context): GeckoRuntime {
             runtime?.let { return it }
             return GeckoRuntime.create(context.applicationContext).also { engine ->
                 runtime = engine
@@ -245,6 +277,7 @@ internal class TwitchLoginView(context: Context, messenger: BinaryMessenger, vie
                     if (extension == null) {
                         extensionFailed = true
                         activeView?.failImport()
+                        requestObservation?.second?.invoke(JSONObject().put("type", "contextFailed"))
                         activeView?.reportError("Couldn't prepare Twitch sign-in. Please restart Flow.")
                         return@accept
                     }
@@ -261,8 +294,12 @@ internal class TwitchLoginView(context: Context, messenger: BinaryMessenger, vie
                             cookiePort = port
                             port.setDelegate(object : WebExtension.PortDelegate {
                                 override fun onPortMessage(message: Any, source: WebExtension.Port) {
-                                    if (source === cookiePort && message is JSONObject && message.optString("type") == "cookies") {
-                                        activeView?.receiveCookies(message)
+                                    if (source === cookiePort && message is JSONObject) {
+                                        if (message.optString("type") == "cookies") activeView?.receiveCookies(message)
+                                        val observation = requestObservation
+                                        if (observation != null && message.optLong("requestId", -1) == observation.first.getLong("requestId")) {
+                                            observation.second(message)
+                                        }
                                     }
                                 }
 
@@ -270,15 +307,18 @@ internal class TwitchLoginView(context: Context, messenger: BinaryMessenger, vie
                                     if (source === cookiePort) {
                                         cookiePort = null
                                         activeView?.failImport()
+                                        requestObservation?.second?.invoke(JSONObject().put("type", "contextFailed"))
                                     }
                                 }
                             })
                             activeView?.requestCookies()
+                            requestObservation()
                         }
                     }, NATIVE_APP)
                 }, {
                     extensionFailed = true
                     activeView?.failImport()
+                    requestObservation?.second?.invoke(JSONObject().put("type", "contextFailed"))
                     activeView?.reportError("Couldn't prepare Twitch sign-in. Please restart Flow.")
                 })
             }
