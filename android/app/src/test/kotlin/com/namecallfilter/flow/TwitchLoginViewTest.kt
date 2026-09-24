@@ -28,6 +28,7 @@ class TwitchLoginViewTest {
         val redirect = "https://twitch.tv/login"
         assertTrue(isTwitchLoginCallback("https://www.twitch.tv/login/#access_token=example&state=test", redirect))
         assertTrue(isTwitchLoginCallback("https://twitch.tv/login?error=access_denied", redirect))
+        assertTrue(isTwitchLoginCallback("https://twitch.tv/login#access_token=example", " \t$redirect\r\n"))
         for (url in listOf("https://twitch.tv/login", "https://twitch.tv/login?state=test", "https://twitch.tv.attacker.test/login#access_token=example", "https://twitch.tv/other#access_token=example", "https://twitch.tv:8443/login#access_token=example")) {
             assertFalse(isTwitchLoginCallback(url, redirect))
         }

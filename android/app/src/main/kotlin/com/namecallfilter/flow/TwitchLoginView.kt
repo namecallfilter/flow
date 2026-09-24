@@ -289,7 +289,7 @@ internal class TwitchLoginView(context: Context, messenger: BinaryMessenger, vie
 internal fun isTwitchLoginCallback(url: String, redirect: String?): Boolean = try {
     require(!redirect.isNullOrBlank())
     val actual = URI(url)
-    val expected = URI(redirect)
+    val expected = URI(redirect.trim())
     require(actual.isAbsolute && actual.host != null && expected.isAbsolute && expected.host != null)
     fun host(uri: URI) = uri.host?.lowercase()?.let { if (it == "www.twitch.tv") "twitch.tv" else it }
     fun path(uri: URI) = uri.path.orEmpty().ifEmpty { "/" }.let { if (it.length > 1) it.removeSuffix("/") else it }
