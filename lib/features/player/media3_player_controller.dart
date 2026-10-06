@@ -110,6 +110,12 @@ abstract interface class TwitchPlayerController {
   Future<void> setQuality(String id);
 
   Future<void> setPictureInPictureEnabled({required bool enabled});
+
+  Future<void> setMediaMetadata({
+    required String title,
+    required String artist,
+    String? artworkUrl,
+  });
 }
 
 class MethodChannelTwitchPlayerController implements TwitchPlayerController {
@@ -173,6 +179,13 @@ class MethodChannelTwitchPlayerController implements TwitchPlayerController {
   @override
   Future<void> setPictureInPictureEnabled({required bool enabled}) =>
       _invoke("setPictureInPictureEnabled", enabled);
+
+  @override
+  Future<void> setMediaMetadata({
+    required String title,
+    required String artist,
+    String? artworkUrl,
+  }) => _invoke("setMediaMetadata", {"title": title, "artist": artist, "artworkUrl": artworkUrl});
 
   @override
   Future<void> togglePlayback() => _invoke("togglePlayback");

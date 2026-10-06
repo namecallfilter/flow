@@ -3623,6 +3623,13 @@ class _WatchTimeClient extends TwitchApiClient {
 
 class _FakePlayerController implements TwitchPlayerController {
   @override
+  Future<void> setMediaMetadata({
+    required String title,
+    required String artist,
+    String? artworkUrl,
+  }) async {}
+
+  @override
   Future<void> setPictureInPictureEnabled({required bool enabled}) async {
     _pictureInPictureEnabledValues.add(enabled);
   }

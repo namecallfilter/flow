@@ -41,8 +41,11 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.source.chunk.MediaChunk
+import androidx.media3.exoplayer.source.chunk.MediaChunkIterator
 import androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.exoplayer.trackselection.ExoTrackSelection
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.ui.PlayerView
 import io.flutter.plugin.common.BinaryMessenger
@@ -63,8 +66,9 @@ internal class TwitchPlayerView(
     messenger: BinaryMessenger,
     viewId: Int,
     private val initialUrl: String?,
-    private val mediaTitle: String,
-    private val mediaArtist: String,
+    private var mediaTitle: String,
+    private var mediaArtist: String,
+    private var mediaArtworkUrl: String?,
     initialQualityId: String,
     private val initialPositionMs: Long,
     private val isLive: Boolean,
@@ -97,9 +101,6 @@ internal class TwitchPlayerView(
         }
     }
     private val liveSpeedControl = TwitchLatencyPlaybackSpeedControl()
-    private val latencyCorrection = LiveLatencyCorrectionCoordinator(
-        maximumSeekAttempts = MAX_CORRECTION_SEEK_ATTEMPTS,
-    )
     private val player: ExoPlayer
     private var eventSink: EventChannel.EventSink? = null
     private var latencySession: TwitchLatencySession? = null
@@ -109,22 +110,20 @@ internal class TwitchPlayerView(
     private var lastPrimaryLatencyRealtimeMs: Long? = null
     private var latestError: String? = null
     private var latestQualities: List<Map<String, Any?>> = emptyList()
-    private var selectedQualityId = initialQualityId
+    @Volatile private var selectedQualityId = initialQualityId
     private var currentQualityLabel: String? = null
     private val qualityOverrides = mutableMapOf<String, TrackSelectionOverride>()
+    @Volatile private var adaptiveQualityIds = emptySet<String>()
+    @Volatile private var qualityOverrideActive = false
     private val adCues = mutableMapOf<String, TwitchAdCue>()
     private val stitchedAdLatencyFallback = StitchedAdLatencyFallback()
     private var latestAdEvent: Map<String, Any?> = inactiveAdEvent()
     private var hasRenderedFirstFrame = false
-    private var latestCorrectionMeasurement: LiveLatencyMeasurement? = null
-    private var correctionMeasurementSequence = 0L
-    private var lastCorrectionWaitReason: String? = null
+    private var loadStartedRealtimeMs = 0L
+    private var lastPlaybackLogRealtimeMs = 0L
     private var initialized = false
     private var disposed = false
     private var stopped = false
-    private var pausedAtRealtimeMs: Long? = null
-    private var correctionRequestedAtRealtimeMs: Long? = null
-    private var recoveryRequested = false
     private var resumeOnForeground = false
     private var pictureInPicture = false
     val isAudioOnly: Boolean
@@ -135,6 +134,7 @@ internal class TwitchPlayerView(
         get() = MediaMetadata.Builder()
             .putString(MediaMetadata.METADATA_KEY_TITLE, mediaTitle)
             .putString(MediaMetadata.METADATA_KEY_ARTIST, mediaArtist)
+            .putString(MediaMetadata.METADATA_KEY_ALBUM_ART_URI, mediaArtworkUrl)
             .apply {
                 if (!isLive && player.duration > 0) putLong(MediaMetadata.METADATA_KEY_DURATION, player.duration)
             }
@@ -176,23 +176,15 @@ internal class TwitchPlayerView(
             if (dictationPlayback) updateDictationPlayback()
             updateAdProgress()
             if (!isLive) emitState(updateSystemControls = false)
-            val correctionStartedAt = correctionRequestedAtRealtimeMs
-            if (
-                player.playWhenReady &&
-                correctionStartedAt != null &&
-                SystemClock.elapsedRealtime() - correctionStartedAt >= CORRECTION_TIMEOUT_MS
-            ) {
-                if (latencyCorrection.finishIfMetadataUnavailable(
-                        isPlaying = player.isPlaying,
-                        hasMeasuredLatency = latestLatencyMs != null,
-                    )
-                ) {
-                    correctionRequestedAtRealtimeMs = null
-                    lastCorrectionWaitReason = null
-                    Log.d(LOG_TAG, "live correction stopped: no timed latency metadata")
-                } else {
-                    requestPlaybackReload("live correction timed out")
-                }
+            val now = SystemClock.elapsedRealtime()
+            if (isLive && player.playWhenReady && now - lastPlaybackLogRealtimeMs >= 10_000L) {
+                lastPlaybackLogRealtimeMs = now
+                Log.d(
+                    LOG_TAG,
+                    "playback state=${player.playbackState} buffered=${player.totalBufferedDuration}ms " +
+                        "latency=${latestLatencyMs}ms speed=${liveSpeedControl.lastAdjustedPlaybackSpeed} " +
+                        "target=${liveSpeedControl.getTargetLiveOffsetUs() / 1000}ms",
+                )
             }
             mainHandler.postDelayed(this, AD_PROGRESS_INTERVAL_MS)
         }
@@ -200,37 +192,27 @@ internal class TwitchPlayerView(
     private val playbackListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
             if (playbackState == Player.STATE_BUFFERING) {
-                latestCorrectionMeasurement = null
                 if (hasRenderedFirstFrame && player.playWhenReady) {
                     Log.d(
                         LOG_TAG,
                         "rebuffer buffered=${player.totalBufferedDuration}ms " +
                             "media3LiveOffset=${player.currentLiveOffset}ms " +
-                            "measuredLatency=${latestLatencyMs}ms; " +
-                            "see speed-control decision for adjusted speed",
+                            "measuredLatency=${latestLatencyMs}ms",
                     )
                 }
             }
-            maybeApplyPendingLatencyCorrection()
             emitState()
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
-            maybeApplyPendingLatencyCorrection()
             emitState()
         }
 
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             updateDictationPlayback()
             if (!playWhenReady) {
-                latestCorrectionMeasurement = null
-                pausedAtRealtimeMs = SystemClock.elapsedRealtime()
-                correctionRequestedAtRealtimeMs = null
-                latencyCorrection.reset()
-            } else {
-                pausedAtRealtimeMs = null
+                liveSpeedControl.invalidateMeasurementForDiscontinuity("pause")
             }
-            maybeApplyPendingLatencyCorrection()
             emitState()
         }
 
@@ -239,6 +221,13 @@ internal class TwitchPlayerView(
         }
 
         override fun onPlayerError(error: PlaybackException) {
+            if (isLive && error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
+                Log.d(LOG_TAG, "recovering behind live window at default position")
+                liveSpeedControl.reset()
+                player.seekToDefaultPosition()
+                player.prepare()
+                return
+            }
             latestError = error.message ?: "The stream could not be played."
             Log.e(LOG_TAG, "playback failed", error)
             activity.updatePictureInPicture()
@@ -246,12 +235,13 @@ internal class TwitchPlayerView(
         }
 
         override fun onRenderedFirstFrame() {
+            if (!hasRenderedFirstFrame) {
+                Log.d(LOG_TAG, "first frame after=${SystemClock.elapsedRealtime() - loadStartedRealtimeMs}ms")
+            }
             hasRenderedFirstFrame = true
-            maybeApplyPendingLatencyCorrection()
         }
 
         override fun onTimelineChanged(timeline: Timeline, reason: Int) {
-            maybeApplyPendingLatencyCorrection()
             activity.updatePictureInPicture()
         }
 
@@ -263,7 +253,11 @@ internal class TwitchPlayerView(
     init {
         val trackSelector = DefaultTrackSelector(
             context,
-            adaptiveTrackSelectionFactory(isLive = isLive),
+            adaptiveTrackSelectionFactory(
+                isLive = isLive,
+                preferredQualityId = { selectedQualityId },
+                onVideoSelection = { ids -> if (!qualityOverrideActive) adaptiveQualityIds = ids },
+            ),
         )
         // Auto follows decoder support and connection capacity, including source
         // renditions above the display size and transitions between AVC and HEVC.
@@ -271,9 +265,8 @@ internal class TwitchPlayerView(
             .clearViewportSizeConstraints()
             .setAllowVideoMixedMimeTypeAdaptiveness(true)
             .build()
-        // Live startup may fetch only one completed segment before reaching
-        // server-paced prefetch. Use Media3's first-sample estimator instead of
-        // waiting for DefaultBandwidthMeter's 512 KiB / two-second threshold.
+        // Keep capacity measured by previous playback and learn from completed
+        // segments immediately; server-paced prefetch isn't a bandwidth sample.
         val bandwidthMeter = activity.playbackBandwidthMeter
         player = ExoPlayer.Builder(context)
             .setTrackSelector(trackSelector)
@@ -286,6 +279,14 @@ internal class TwitchPlayerView(
         player.playWhenReady = true
         player.addListener(playbackListener)
         player.addAnalyticsListener(object : AnalyticsListener {
+            override fun onDroppedVideoFrames(
+                eventTime: AnalyticsListener.EventTime,
+                droppedFrames: Int,
+                elapsedMs: Long,
+            ) {
+                Log.d(LOG_TAG, "dropped frames=$droppedFrames interval=${elapsedMs}ms")
+            }
+
             override fun onVideoInputFormatChanged(
                 eventTime: AnalyticsListener.EventTime,
                 format: Format,
@@ -297,6 +298,7 @@ internal class TwitchPlayerView(
                     Log.d(
                         LOG_TAG,
                         "video quality=$label mode=$selectedQualityId " +
+                            "codec=${format.sampleMimeType} reuse=${decoderReuseEvaluation?.result} " +
                             "bandwidth=${bandwidthMeter.bitrateEstimate}bps " +
                             "buffered=${player.totalBufferedDuration}ms",
                     )
@@ -382,6 +384,23 @@ internal class TwitchPlayerView(
 
                 "setQuality" -> setQuality(call.arguments as? String, result)
 
+                "setMediaMetadata" -> {
+                    val title = call.argument<String>("title")
+                    val artist = call.argument<String>("artist")
+                    val artworkUrl = call.argument<String>("artworkUrl")
+                    if (title == null || artist == null) {
+                        result.error("invalid_metadata", "A title and artist are required.", null)
+                    } else {
+                        if (title != mediaTitle || artist != mediaArtist || artworkUrl != mediaArtworkUrl) {
+                            mediaTitle = title
+                            mediaArtist = artist
+                            mediaArtworkUrl = artworkUrl
+                            activity.updatePictureInPicture()
+                        }
+                        result.success(null)
+                    }
+                }
+
                 "setPictureInPictureEnabled" -> {
                     val enabled = call.arguments as? Boolean
                     if (enabled == null) {
@@ -413,7 +432,6 @@ internal class TwitchPlayerView(
         mainHandler.removeCallbacks(adProgressTicker)
         sessionGeneration++
         liveSpeedControl.reset()
-        latencyCorrection.reset()
         metadataListener?.let(player::removeListener)
         metadataListener = null
         latencySession = null
@@ -508,9 +526,8 @@ internal class TwitchPlayerView(
         val playbackUrl = withDeviceSupportedTwitchCodecs(url)
         val generation = ++sessionGeneration
         liveSpeedControl.reset()
-        latencyCorrection.reset()
-        recoveryRequested = false
-        correctionRequestedAtRealtimeMs = null
+        loadStartedRealtimeMs = SystemClock.elapsedRealtime()
+        lastPlaybackLogRealtimeMs = loadStartedRealtimeMs
         latestLatencyMs = null
         lastPrimaryLatencyRealtimeMs = null
         latestError = null
@@ -518,12 +535,11 @@ internal class TwitchPlayerView(
         adCues.clear()
         stitchedAdLatencyFallback.reset()
         qualityOverrides.clear()
+        adaptiveQualityIds = emptySet()
+        qualityOverrideActive = false
         currentQualityLabel = null
         player.trackSelectionParameters = qualityParameters(player.trackSelectionParameters, selectedQualityId)
         hasRenderedFirstFrame = false
-        latestCorrectionMeasurement = null
-        correctionMeasurementSequence = 0L
-        lastCorrectionWaitReason = null
         if (!isLive) {
             val dataSourceFactory = DefaultDataSource.Factory(
                 playerView.context,
@@ -542,19 +558,12 @@ internal class TwitchPlayerView(
             player.prepare()
             return
         }
-        latencyCorrection.arm(
-            reason = LiveLatencyCorrectionReason.STARTUP,
-            targetLatencyMs = TARGET_LIVE_OFFSET_MS,
-            requireMeasurementAfterSequence = null,
-        )
-        logLatencyCorrectionArmed(LiveLatencyCorrectionReason.STARTUP, null)
         emitLatency(null)
         emitQualities()
         emitAd(null)
 
         metadataListener?.let(player::removeListener)
-        lateinit var session: TwitchLatencySession
-        session = TwitchLatencySession(
+        val session = TwitchLatencySession(
             onAcceptedLatency = { latencyMs ->
                 if (generation == sessionGeneration && player.playWhenReady) {
                     val measuredRealtimeMs = SystemClock.elapsedRealtime()
@@ -563,15 +572,7 @@ internal class TwitchPlayerView(
                         Log.d(LOG_TAG, "latency switched from stitched-ad timeline to transc_r")
                     }
                     emitLatency(latencyMs)
-                    val transcRMs = session.lastTranscR
-                    if (transcRMs != null) {
-                        recordLatencyMeasurement(
-                            latencyMs = latencyMs,
-                            source = LiveLatencyMeasurementSource.TRANSC_R,
-                            transcRMs = transcRMs,
-                            measuredRealtimeMs = measuredRealtimeMs,
-                        )
-                    }
+                    liveSpeedControl.updateLatencyMeasurement(latencyMs)
                 }
             },
         )
@@ -719,259 +720,42 @@ internal class TwitchPlayerView(
 
     private fun resumeAtLiveEdge() {
         if (stopped || disposed) return
-        if (!isLive) {
+        if (isLive) {
+            jumpToLiveEdge()
+        } else {
             if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
             player.play()
-            return
         }
-        requestLatencyCorrection(LiveLatencyCorrectionReason.RESUME)
     }
 
     private fun jumpToLiveEdge() {
-        if (isLive) requestLatencyCorrection(LiveLatencyCorrectionReason.EXPLICIT_JUMP)
-    }
-
-    private fun requestLatencyCorrection(reason: LiveLatencyCorrectionReason) {
-        if (stopped || disposed) return
-        // A new deliberate action may retry a URI refresh that previously failed.
-        recoveryRequested = false
-        val nowRealtimeMs = SystemClock.elapsedRealtime()
-        val pausedForMs = pausedAtRealtimeMs?.let { nowRealtimeMs - it }
-        val reload = shouldReloadLivePlayback(
-            pausedForMs = pausedForMs,
-            measuredLatencyMs = latestCorrectionMeasurement?.latencyMs,
-        ) || player.playerError != null
-        player.play()
-        if (reload) {
-            requestPlaybackReload("stale live playback on ${reason.name.lowercase()}")
-            return
-        }
-        correctionRequestedAtRealtimeMs = nowRealtimeMs
-        val useImmediateMeasurement = shouldUseImmediateLatencyCorrection(
-            reason = reason,
-            isPlaying = player.isPlaying,
-            measurement = latestCorrectionMeasurement,
-            nowRealtimeMs = nowRealtimeMs,
-            maximumAgeMs = CORRECTION_MEASUREMENT_MAX_AGE_MS,
-        )
-        val measurementBarrier = if (useImmediateMeasurement) {
-            null
-        } else {
-            correctionMeasurementSequence
-        }
-        latencyCorrection.arm(
-            reason = reason,
-            targetLatencyMs = TARGET_LIVE_OFFSET_MS,
-            requireMeasurementAfterSequence = measurementBarrier,
-        )
-        lastCorrectionWaitReason = null
-        if (!useImmediateMeasurement) {
-            liveSpeedControl.invalidateMeasurementForDiscontinuity(
-                "${reason.name.lowercase()} request",
-            )
-        }
-        logLatencyCorrectionArmed(reason, measurementBarrier, useImmediateMeasurement)
-        maybeApplyPendingLatencyCorrection()
-    }
-
-    private fun requestPlaybackReload(reason: String) {
-        if (recoveryRequested || disposed || !player.playWhenReady) {
-            return
-        }
-        recoveryRequested = true
-        correctionRequestedAtRealtimeMs = null
-        latencyCorrection.reset()
-        Log.d(LOG_TAG, "reloading playback: $reason")
-        if (isAudioOnly || pictureInPicture) {
-            val generation = sessionGeneration
-            methodChannel.invokeMethod("refreshPlaybackUri", null, object : MethodChannel.Result {
-                override fun success(result: Any?) {
-                    if (disposed || generation != sessionGeneration) return
-                    val url = result as? String
-                    val uri = url?.let { runCatching { URI(it) }.getOrNull() }
-                    if (url.isNullOrBlank() || uri?.scheme != "https" || uri.host.isNullOrBlank()) {
-                        error("invalid_playback_uri", "Flutter returned an invalid playback URI", null)
-                        return
-                    }
-                    load(url)
-                }
-
-                override fun error(code: String, message: String?, details: Any?) {
-                    if (disposed || generation != sessionGeneration) return
-                    recoveryRequested = false
-                    latestError = message ?: "Playback URI refresh failed ($code)"
-                    emitError(latestError!!)
-                }
-
-                override fun notImplemented() {
-                    error("unavailable", "Playback URI refresh is unavailable", null)
-                }
-            })
-        } else {
+        if (!isLive || stopped || disposed) return
+        if (player.playerError != null) {
+            player.play()
             emit(mapOf("type" to "reload"))
-        }
-    }
-
-    private fun maybeApplyPendingLatencyCorrection(): Boolean {
-        if (!latencyCorrection.hasPendingRequest) {
-            return false
-        }
-        if (
-            (!hasRenderedFirstFrame && selectedQualityId != AUDIO_ONLY_QUALITY_ID) ||
-            player.playbackState != Player.STATE_READY ||
-            !player.playWhenReady
-        ) {
-            logLatencyCorrectionWait("player ready")
-            return false
-        }
-
-        val measurement = latestCorrectionMeasurement
-        if (measurement == null) {
-            logLatencyCorrectionWait("post-action latency measurement")
-            return false
-        }
-        if (
-            correctionRequestedAtRealtimeMs != null &&
-            shouldReloadLivePlayback(measuredLatencyMs = measurement.latencyMs)
-        ) {
-            requestPlaybackReload("measured live latency exceeds correction window")
-            return false
-        }
-        val measurementAgeMs = SystemClock.elapsedRealtime() - measurement.measuredRealtimeMs
-        if (
-            measurementAgeMs < 0 ||
-            measurementAgeMs > CORRECTION_MEASUREMENT_MAX_AGE_MS
-        ) {
-            latestCorrectionMeasurement = null
-            logLatencyCorrectionWait("fresh latency measurement")
-            return false
-        }
-
-        val timeline = player.currentTimeline
-        val mediaItemIndex = player.currentMediaItemIndex
-        if (timeline.isEmpty || mediaItemIndex !in 0 until timeline.windowCount) {
-            logLatencyCorrectionWait("live window")
-            return false
-        }
-        val window = timeline.getWindow(mediaItemIndex, Timeline.Window())
-        if (!window.isLive()) {
-            logLatencyCorrectionWait("live window")
-            return false
-        }
-        val currentPositionMs = player.currentPosition
-        val bufferedPositionMs = player.bufferedPosition.takeUnless { it == C.TIME_UNSET }
-        val windowDurationMs = window.durationMs.takeUnless { it == C.TIME_UNSET }
-        val decision = latencyCorrection.evaluate(
-            measurement = measurement,
-            currentPositionMs = player.currentPosition,
-            bufferedPositionMs = bufferedPositionMs,
-            windowDurationMs = windowDurationMs,
-            bufferedSafetyMs = CORRECTION_EDGE_GUARD_MS,
-            minimumAdvanceMs = CORRECTION_MINIMUM_ADVANCE_MS,
-            targetToleranceMs = CORRECTION_TARGET_TOLERANCE_MS,
-        )
-        when (decision.outcome) {
-            LiveLatencyCorrectionOutcome.SEEK -> {
-                val seekPositionMs = checkNotNull(decision.seekPositionMs)
-                latestCorrectionMeasurement = null
-                lastCorrectionWaitReason = null
-                Log.d(
-                    LOG_TAG,
-                    "latency correction seek reason=${decision.reason} " +
-                        "attempt=${decision.seekAttempt}/$MAX_CORRECTION_SEEK_ATTEMPTS " +
-                        "latency=${measurement.latencyMs}ms source=${measurement.source} " +
-                        "transc_r=${measurement.transcRMs} sequence=${measurement.sequence} " +
-                        "from=${currentPositionMs}ms to=${seekPositionMs}ms " +
-                        "buffered=${bufferedPositionMs}ms window=${windowDurationMs}ms",
-                )
-                player.seekTo(mediaItemIndex, seekPositionMs)
-                // The pre-seek sample cannot verify or control the new position.
-                // The coordinator remains armed until a newer measurement arrives.
-                liveSpeedControl.invalidateMeasurementForDiscontinuity("latency correction seek")
-                return true
-            }
-            LiveLatencyCorrectionOutcome.COMPLETE -> {
-                correctionRequestedAtRealtimeMs = null
-                lastCorrectionWaitReason = null
-                Log.d(
-                    LOG_TAG,
-                    "latency correction verified reason=${decision.reason} " +
-                        "latency=${measurement.latencyMs}ms target=${TARGET_LIVE_OFFSET_MS}ms " +
-                        "attempts=${decision.seekAttempt}",
-                )
-            }
-            LiveLatencyCorrectionOutcome.WAIT_FOR_FRESH_MEASUREMENT -> {
-                logLatencyCorrectionWait(
-                    "post-action latency measurement",
-                    "source=${measurement.source} sequence=${measurement.sequence}",
-                )
-            }
-            LiveLatencyCorrectionOutcome.WAIT_FOR_BUFFER -> {
-                logLatencyCorrectionWait(
-                    "exact target position",
-                    "latency=${measurement.latencyMs}ms current=${currentPositionMs}ms " +
-                        "buffered=${bufferedPositionMs}ms window=${windowDurationMs}ms",
-                )
-            }
-            LiveLatencyCorrectionOutcome.FALLBACK_TO_SPEED -> {
-                lastCorrectionWaitReason = null
-                Log.d(
-                    LOG_TAG,
-                    "latency correction retry limit reason=${decision.reason} " +
-                        "latency=${measurement.latencyMs}ms; continuing bounded speed catch-up",
-                )
-                if (correctionRequestedAtRealtimeMs != null) {
-                    requestPlaybackReload("bounded correction did not reach live edge")
-                }
-            }
-            LiveLatencyCorrectionOutcome.INVALID_INPUT -> {
-                latestCorrectionMeasurement = null
-                logLatencyCorrectionWait("valid player positions")
-            }
-        }
-        return false
-    }
-
-    private fun logLatencyCorrectionArmed(
-        reason: LiveLatencyCorrectionReason,
-        measurementBarrier: Long?,
-        immediate: Boolean = false,
-    ) {
-        Log.d(
-            LOG_TAG,
-            "latency correction armed reason=$reason target=${TARGET_LIVE_OFFSET_MS}ms " +
-                "afterSequence=$measurementBarrier immediate=$immediate",
-        )
-    }
-
-    private fun recordLatencyMeasurement(
-        latencyMs: Long,
-        source: LiveLatencyMeasurementSource,
-        transcRMs: Long? = null,
-        measuredRealtimeMs: Long = SystemClock.elapsedRealtime(),
-    ) {
-        correctionMeasurementSequence++
-        latestCorrectionMeasurement = LiveLatencyMeasurement(
-            latencyMs = latencyMs,
-            sequence = correctionMeasurementSequence,
-            measuredRealtimeMs = measuredRealtimeMs,
-            source = source,
-            transcRMs = transcRMs,
-        )
-        liveSpeedControl.updateLatencyMeasurement(latencyMs, source)
-        maybeApplyPendingLatencyCorrection()
-    }
-
-    private fun logLatencyCorrectionWait(reason: String, detail: String? = null) {
-        if (reason == lastCorrectionWaitReason) {
             return
         }
-        lastCorrectionWaitReason = reason
-        Log.d(
-            LOG_TAG,
-            "latency correction waiting for $reason" +
-                detail?.let { " ($it)" }.orEmpty(),
-        )
+        latestError = null
+        val measuredLatencyMs = latestLatencyMs
+        val measurementAgeMs = lastPrimaryLatencyRealtimeMs?.let { SystemClock.elapsedRealtime() - it }
+        val liveShiftMs = if (
+            player.isPlaying && measurementAgeMs != null &&
+            measurementAgeMs in 0..PRIMARY_LATENCY_FRESHNESS_MS && measuredLatencyMs != null
+        ) measuredLatencyMs - TARGET_LIVE_OFFSET_MS else null
+        if (liveShiftMs != null && liveShiftMs <= 100L) {
+            Log.d(LOG_TAG, "live seek skipped at target latency=${measuredLatencyMs}ms")
+            return
+        }
+        liveSpeedControl.reset()
+        if (liveShiftMs != null) {
+            Log.d(LOG_TAG, "live seek forward=${liveShiftMs}ms latency=${measuredLatencyMs}ms")
+            player.seekTo(player.currentPosition + liveShiftMs)
+        } else {
+            Log.d(LOG_TAG, "live seek to precise default latency=${measuredLatencyMs}ms")
+            player.seekToDefaultPosition()
+        }
+        if (player.playbackState == Player.STATE_IDLE) player.prepare()
+        player.play()
     }
 
     private fun updateAdProgress() {
@@ -999,10 +783,6 @@ internal class TwitchPlayerView(
                 playbackEpochMs = playbackEpochMs,
             )?.let { latencyMs ->
                 emitLatency(latencyMs)
-                recordLatencyMeasurement(
-                    latencyMs = latencyMs,
-                    source = LiveLatencyMeasurementSource.STITCHED_AD_TIMELINE,
-                )
             }
         }
     }
@@ -1036,10 +816,7 @@ internal class TwitchPlayerView(
                 if (id in qualityOverrides) {
                     continue
                 }
-                qualityOverrides[id] = TrackSelectionOverride(
-                    group.mediaTrackGroup,
-                    trackIndex,
-                )
+                qualityOverrides[id] = TrackSelectionOverride(group.mediaTrackGroup, trackIndex)
                 qualities += mapOf(
                     "id" to id,
                     "label" to qualityLabel(format),
@@ -1054,18 +831,11 @@ internal class TwitchPlayerView(
         val selectedQualityIsVisible = visibleQualities.any { it["id"] == selectedQualityId }
         if (
             selectedQualityId != AUTO_QUALITY_ID && selectedQualityId != AUDIO_ONLY_QUALITY_ID &&
-            visibleQualities.isNotEmpty()
+            visibleQualities.isNotEmpty() && !selectedQualityIsVisible
         ) {
-            val override = qualityOverrides[selectedQualityId]
-            if (override != null) {
-                player.trackSelectionParameters = qualityParameters(
-                    player.trackSelectionParameters, selectedQualityId, override,
-                )
-            } else if (!selectedQualityIsVisible) {
-                clearVideoTrackOverride()
-                selectedQualityId = AUTO_QUALITY_ID
-            }
+            selectedQualityId = AUTO_QUALITY_ID
         }
+        applyQualitySelection()
         latestQualities = visibleQualities.map { quality ->
             mapOf(
                 "id" to quality["id"],
@@ -1080,37 +850,29 @@ internal class TwitchPlayerView(
             result.success(null)
             return
         }
-        if (id == AUTO_QUALITY_ID || id == AUDIO_ONLY_QUALITY_ID) {
-            player.trackSelectionParameters = qualityParameters(player.trackSelectionParameters, id)
-            finishQualityChange(id, result)
-            return
-        }
-
-        val override = id?.let(qualityOverrides::get)
-        if (id == null || override == null) {
+        if (id == null || (id != AUTO_QUALITY_ID && id != AUDIO_ONLY_QUALITY_ID && id !in qualityOverrides)) {
             result.error("invalid_quality", "That video quality is no longer available.", null)
             return
         }
-        player.trackSelectionParameters = qualityParameters(player.trackSelectionParameters, id, override)
-        finishQualityChange(id, result)
-    }
-
-    private fun finishQualityChange(id: String, result: MethodChannel.Result) {
-        val wasAudioOnly = selectedQualityId == AUDIO_ONLY_QUALITY_ID
         selectedQualityId = id
+        // Video quality is read at the next chunk boundary. Replacing an HLS
+        // track override would discard its buffered audio/video and force a seek.
+        applyQualitySelection()
+        Log.d(LOG_TAG, "quality requested=$id buffered=${player.totalBufferedDuration}ms")
         activity.updatePictureInPicture()
         emitQualities()
-        if (id == AUDIO_ONLY_QUALITY_ID || wasAudioOnly) {
-            latencyCorrection.reset()
-            correctionRequestedAtRealtimeMs = null
-        } else if (isLive && player.playWhenReady) {
-            requestLatencyCorrection(LiveLatencyCorrectionReason.QUALITY_CHANGE)
-        }
         result.success(null)
     }
 
-    private fun clearVideoTrackOverride() {
-        player.trackSelectionParameters = qualityParameters(player.trackSelectionParameters, AUTO_QUALITY_ID)
+    private fun applyQualitySelection() {
+        // A different decoder/group may not belong to the adaptive selection.
+        // Use Media3's standard override then, so every offered choice works.
+        val parameters = qualityParameters(
+            player.trackSelectionParameters, selectedQualityId, qualityOverrides[selectedQualityId],
+            if (isLive) adaptiveQualityIds else emptySet(),
+        )
+        qualityOverrideActive = parameters.overrides.keys.any { it.type == C.TRACK_TYPE_VIDEO }
+        if (parameters != player.trackSelectionParameters) player.trackSelectionParameters = parameters
     }
 
     private fun qualityLabel(format: Format): String {
@@ -1230,14 +992,20 @@ internal class TwitchPlayerView(
             parameters: TrackSelectionParameters,
             id: String,
             override: TrackSelectionOverride? = null,
+            adaptiveQualityIds: Set<String> = emptySet(),
         ): TrackSelectionParameters = parameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
             .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, id == AUDIO_ONLY_QUALITY_ID)
-            .apply { if (override != null) setOverrideForType(override) }
+            .apply { if (override != null && id !in adaptiveQualityIds) setOverrideForType(override) }
             .build()
 
-        internal fun adaptiveTrackSelectionFactory(clock: Clock = Clock.DEFAULT, isLive: Boolean = true) =
-            AdaptiveTrackSelection.Factory(
+        internal fun adaptiveTrackSelectionFactory(
+            clock: Clock = Clock.DEFAULT,
+            isLive: Boolean = true,
+            onVideoSelection: (Set<String>) -> Unit = {},
+            preferredQualityId: () -> String = { AUTO_QUALITY_ID },
+        ): ExoTrackSelection.Factory {
+            val adaptiveFactory = AdaptiveTrackSelection.Factory(
                 AUTO_QUALITY_MIN_DURATION_FOR_INCREASE_MS,
                 AUTO_QUALITY_MAX_DURATION_FOR_DECREASE_MS,
                 AUTO_QUALITY_MIN_DURATION_TO_RETAIN_MS,
@@ -1248,14 +1016,30 @@ internal class TwitchPlayerView(
                 AUTO_QUALITY_BUFFERED_FRACTION_TO_LIVE_EDGE,
                 clock,
             )
+            return ExoTrackSelection.Factory { definitions, bandwidthMeter, mediaPeriodId, timeline ->
+                adaptiveFactory.createTrackSelections(definitions, bandwidthMeter, mediaPeriodId, timeline)
+                    .map { selection ->
+                        if (isLive && selection?.trackGroup?.type == C.TRACK_TYPE_VIDEO) {
+                            val qualityIds = (0 until selection.length()).mapTo(mutableSetOf()) {
+                                val format = selection.getFormat(it)
+                                stableQualityId(format.height, format.frameRate)
+                            }
+                            onVideoSelection(qualityIds)
+                            Log.d(LOG_TAG, "quality selection created requested=${preferredQualityId()} available=$qualityIds")
+                            TwitchQualityTrackSelection(selection, preferredQualityId, clock)
+                        } else {
+                            selection
+                        }
+                    }.toTypedArray()
+            }
+        }
 
         const val LOG_TAG = "FlowTwitchPlayer"
         const val USER_AGENT = "Flow/1.0 (Android Media3)"
         const val AUTO_QUALITY_ID = "auto"
         const val AUDIO_ONLY_QUALITY_ID = "audio_only"
-        // Twitch's promoted prefetch segments distort Media3's calculated live
-        // offset. HLS startup, action seeks, and playback speed therefore share
-        // this validated transc_r target.
+        // Twitch prefetch distorts the timeline offset. Native adaptive speed
+        // control therefore uses validated transc_r latency for its target.
         const val TARGET_LIVE_OFFSET_MS = TwitchLatencyPlaybackSpeedControl.TARGET_LIVE_OFFSET_MS
         const val MIN_LIVE_OFFSET_MS = 1500L
         const val MAX_LIVE_OFFSET_MS = 3500L
@@ -1268,7 +1052,7 @@ internal class TwitchPlayerView(
         // Media3's live-edge adjustment. Promote once the real startup buffer is
         // healthy, while still selecting by measured bandwidth.
         const val AUTO_QUALITY_MIN_DURATION_FOR_INCREASE_MS = BUFFER_FOR_PLAYBACK_MS
-        // Keep the downgrade guard inside Twitch's 1.65-second live-edge buffer.
+        // Keep the downgrade guard inside the live-edge buffer.
         const val AUTO_QUALITY_MAX_DURATION_FOR_DECREASE_MS = 1_000
         const val AUTO_QUALITY_MIN_DURATION_TO_RETAIN_MS = MIN_BUFFER_MS
         const val AUTO_QUALITY_BANDWIDTH_FRACTION = 0.60f
@@ -1277,14 +1061,70 @@ internal class TwitchPlayerView(
         const val AD_PROGRESS_INTERVAL_MS = 500L
         const val EXPIRED_AD_CUE_RETENTION_MS = 30 * 60_000L
         const val PRIMARY_LATENCY_FRESHNESS_MS = 2500L
-        // Keep every correction seek above Media3's post-rebuffer threshold.
-        const val CORRECTION_EDGE_GUARD_MS = BUFFER_AFTER_REBUFFER_MS + 500L
-        const val CORRECTION_MINIMUM_ADVANCE_MS = 100L
-        const val CORRECTION_TARGET_TOLERANCE_MS = 100L
-        const val CORRECTION_MEASUREMENT_MAX_AGE_MS = 2500L
-        const val MAX_CORRECTION_SEEK_ATTEMPTS = 3
-        const val CORRECTION_TIMEOUT_MS = 8_000L
     }
+}
+
+// Keep the same selection and buffered chunks when the viewer changes quality.
+// Media3 still schedules downloads, switches decoders, and handles Auto/failover.
+@UnstableApi
+internal class TwitchQualityTrackSelection(
+    private val adaptive: ExoTrackSelection,
+    private val preferredQualityId: () -> String,
+    private val clock: Clock = Clock.DEFAULT,
+) : ExoTrackSelection by adaptive {
+    private var selectedIndex = adaptive.selectedIndex
+    private var manualSelection = false
+    private var lastLoggedRequest: String? = null
+
+    override fun updateSelectedTrack(
+        playbackPositionUs: Long,
+        bufferedDurationUs: Long,
+        availableDurationUs: Long,
+        queue: MutableList<out MediaChunk>,
+        mediaChunkIterators: Array<out MediaChunkIterator>,
+    ) {
+        adaptive.updateSelectedTrack(
+            playbackPositionUs, bufferedDurationUs, availableDurationUs, queue, mediaChunkIterators,
+        )
+        val requested = preferredQualityId()
+        val nowMs = clock.elapsedRealtime()
+        val requestedIndex = (0 until length()).firstOrNull { index ->
+            val format = getFormat(index)
+            stableQualityId(format.height, format.frameRate) == requested && !isTrackExcluded(index, nowMs)
+        }
+        selectedIndex = requestedIndex ?: adaptive.selectedIndex
+        manualSelection = requestedIndex != null
+        if (lastLoggedRequest != requested) {
+            lastLoggedRequest = requested
+            val available = (0 until length()).map {
+                val format = getFormat(it)
+                stableQualityId(format.height, format.frameRate)
+            }
+            Log.d(TwitchPlayerView.LOG_TAG,
+                "quality chunk requested=$requested selected=$selectedIndex manual=$requestedIndex available=$available")
+        }
+    }
+
+    override fun getSelectedIndex(): Int = selectedIndex
+
+    override fun getSelectedIndexInTrackGroup(): Int = getIndexInTrackGroup(selectedIndex)
+
+    override fun getSelectedFormat(): Format = getFormat(selectedIndex)
+
+    override fun getSelectionReason(): Int =
+        if (manualSelection) C.SELECTION_REASON_MANUAL else adaptive.selectionReason
+
+    override fun evaluateQueueSize(playbackPositionUs: Long, queue: MutableList<out MediaChunk>): Int =
+        if (preferredQualityId() == TwitchPlayerView.AUTO_QUALITY_ID) {
+            adaptive.evaluateQueueSize(playbackPositionUs, queue)
+        } else {
+            queue.size
+        }
+
+    override fun equals(other: Any?): Boolean =
+        other is TwitchQualityTrackSelection && adaptive == other.adaptive
+
+    override fun hashCode(): Int = adaptive.hashCode()
 }
 
 // A manifest's group/track indexes and bitrates can change on refresh. Resolution

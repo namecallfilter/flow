@@ -105,12 +105,23 @@ class TwitchPlayerQualityTest {
         assertFalse(restored.disabledTrackTypes.contains(C.TRACK_TYPE_VIDEO))
         assertEquals(videoOverride, restored.overrides[video])
         assertEquals(audioOverride, restored.overrides[audio])
+
+        val adaptive = TwitchPlayerView.qualityParameters(
+            restored, "video:720:30", videoOverride, setOf("video:720:30"),
+        )
+        assertFalse(adaptive.overrides.containsKey(video))
+        assertEquals(audioOverride, adaptive.overrides[audio])
+        val differentDecoder = TwitchPlayerView.qualityParameters(
+            adaptive, "video:720:30", videoOverride, setOf("video:1080:60"),
+        )
+        assertEquals(videoOverride, differentDecoder.overrides[video])
     }
 
     @Test
     fun autoUpgradesAfterBandwidthRecoveryWithinTheActualLiveBuffer() {
         var bandwidth = 500_000L
         var nowMs = 0L
+        var requestedQuality = "auto"
         val meter = object : BandwidthMeter {
             override fun getBitrateEstimate() = bandwidth
             override fun getTransferListener(): TransferListener? = null
@@ -153,7 +164,7 @@ class TwitchPlayerQualityTest {
             }
         }
         fun createSelection(isLive: Boolean) = checkNotNull(
-            TwitchPlayerView.adaptiveTrackSelectionFactory(clock, isLive).createTrackSelections(
+            TwitchPlayerView.adaptiveTrackSelectionFactory(clock, isLive) { requestedQuality }.createTrackSelections(
                 arrayOf(ExoTrackSelection.Definition(group, 0, 1, 2)),
                 meter,
                 MediaPeriodId(Any()),
@@ -182,6 +193,7 @@ class TwitchPlayerQualityTest {
             assertEquals(3, selection.evaluateQueueSize(0L, it))
             assertEquals(3, vodSelection.evaluateQueueSize(0L, it))
         }
+
         bandwidth = 50_000_000L
         update(1_650_000L)
         assertEquals("1440p60", selection.selectedFormat.id)
@@ -199,6 +211,18 @@ class TwitchPlayerQualityTest {
             assertEquals(3, selection.evaluateQueueSize(0L, it))
             assertEquals(3, vodSelection.evaluateQueueSize(0L, it))
         }
+
+        // A manual choice changes the next chunk, without throwing away the
+        // samples already queued for playback or replacing the selection.
+        requestedQuality = "video:1080:0"
+        assertEquals("160p", selection.selectedFormat.id)
+        update(1_650_000L)
+        assertEquals("1080p60", selection.selectedFormat.id)
+        assertEquals(C.SELECTION_REASON_MANUAL, selection.selectionReason)
+        queuedHd.forEach { assertEquals(3, selection.evaluateQueueSize(0L, it)) }
+        requestedQuality = "auto"
+        update(500_000L)
+        assertEquals("160p", selection.selectedFormat.id)
     }
 
     @Test

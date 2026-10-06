@@ -4,7 +4,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.LivePlaybackSpeedControl
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -14,10 +13,6 @@ class TwitchLatencyPlaybackSpeedControlTest {
     fun freshTranscRReplacesTimelineOffsetAndPreservesBufferedDuration() {
         val delegates = mutableListOf<RecordingLivePlaybackSpeedControl>()
         val controller = controller(clockMs = { 10_000L }, delegates = delegates)
-        controller.updateLatencyMeasurement(
-            latencyMs = 9_000L,
-            source = LiveLatencyMeasurementSource.STITCHED_AD_TIMELINE,
-        )
         assertSpeed(
             1.0f,
             controller.getAdjustedPlaybackSpeed(
@@ -39,6 +34,7 @@ class TwitchLatencyPlaybackSpeedControlTest {
             listOf(AdjustedSpeedCall(liveOffsetUs = 2_000_000L, bufferedDurationUs = 4_000_000L)),
             delegates.single().adjustedSpeedCalls,
         )
+        assertSpeed(DELEGATE_SPEED, controller.lastAdjustedPlaybackSpeed)
     }
 
     @Test
@@ -57,6 +53,7 @@ class TwitchLatencyPlaybackSpeedControlTest {
             ),
         )
         assertTrue(delegates.single().adjustedSpeedCalls.isEmpty())
+        assertSpeed(1f, controller.lastAdjustedPlaybackSpeed)
     }
 
     @Test
@@ -70,7 +67,7 @@ class TwitchLatencyPlaybackSpeedControlTest {
         controller.reset()
 
         assertEquals(2, delegates.size)
-        assertSame(liveConfiguration, delegates.last().receivedLiveConfiguration)
+        assertEquals(liveConfiguration, delegates.last().receivedLiveConfiguration)
         assertSpeed(
             1.0f,
             controller.getAdjustedPlaybackSpeed(
@@ -101,19 +98,38 @@ class TwitchLatencyPlaybackSpeedControlTest {
     }
 
     @Test
-    fun forwardsConfigurationButIgnoresTimelineOverridesAndRebuffer() {
+    fun forwardsRebufferAndAdaptiveTargetWithoutAcceptingDistortedTimelineOverrides() {
         val delegates = mutableListOf<RecordingLivePlaybackSpeedControl>()
         val controller = controller(clockMs = { 10_000L }, delegates = delegates)
         val liveConfiguration = liveConfiguration()
 
         controller.setLiveConfiguration(liveConfiguration)
+        controller.updateLatencyMeasurement(2_000L)
         controller.notifyRebuffer()
         controller.setTargetLiveOffsetOverrideUs(50_000_000L)
 
         val delegate = delegates.single()
-        assertSame(liveConfiguration, delegate.receivedLiveConfiguration)
-        assertEquals(0, delegate.rebufferCount)
+        assertEquals(liveConfiguration, delegate.receivedLiveConfiguration)
+        assertEquals(1, delegate.rebufferCount)
+        assertEquals(DELEGATE_TARGET_LIVE_OFFSET_US, controller.getTargetLiveOffsetUs())
         assertTrue(delegate.targetLiveOffsetOverridesUs.isEmpty())
+        assertSpeed(1.0f, adjustedSpeed(controller))
+        assertTrue(delegate.adjustedSpeedCalls.isEmpty())
+    }
+
+    @Test
+    fun repeatedRebuffersDoNotIncreaseTheConfiguredNativeTarget() {
+        val controller = TwitchLatencyPlaybackSpeedControl(
+            realtimeClockMs = { 10_000L },
+            logger = {},
+        )
+        controller.setLiveConfiguration(liveConfiguration())
+        repeat(3) {
+            controller.updateLatencyMeasurement(2_000L)
+            controller.notifyRebuffer()
+            assertEquals(1_600_000L, controller.getTargetLiveOffsetUs())
+            assertSpeed(1f, adjustedSpeed(controller))
+        }
     }
 
     private fun controller(

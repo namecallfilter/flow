@@ -15,15 +15,16 @@ internal class TwitchLatencyPlaybackSpeedControl(
     private val logger: (String) -> Unit = { message -> Log.d(LOG_TAG, message) },
     private val delegateFactory: () -> LivePlaybackSpeedControl = {
         DefaultLivePlaybackSpeedControl.Builder()
-            .setFallbackMinPlaybackSpeed(MIN_PLAYBACK_SPEED)
-            .setFallbackMaxPlaybackSpeed(MAX_PLAYBACK_SPEED)
-            .setMinUpdateIntervalMs(MIN_PLAYBACK_SPEED_UPDATE_INTERVAL_MS)
+            .setTargetLiveOffsetIncrementOnRebufferMs(0)
             .build()
     },
 ) : LivePlaybackSpeedControl {
     private var delegate = delegateFactory()
     private var liveConfiguration: MediaItem.LiveConfiguration? = null
     private var measurement: Measurement? = null
+    @Volatile
+    var lastAdjustedPlaybackSpeed = 1f
+        private set
 
     @Synchronized
     fun reset() {
@@ -34,11 +35,8 @@ internal class TwitchLatencyPlaybackSpeedControl(
     }
 
     @Synchronized
-    fun updateLatencyMeasurement(
-        latencyMs: Long,
-        source: LiveLatencyMeasurementSource = LiveLatencyMeasurementSource.TRANSC_R,
-    ) {
-        if (latencyMs < 0 || source != LiveLatencyMeasurementSource.TRANSC_R) {
+    fun updateLatencyMeasurement(latencyMs: Long) {
+        if (latencyMs < 0) {
             return
         }
         measurement = Measurement(latencyMs, realtimeClockMs())
@@ -63,7 +61,9 @@ internal class TwitchLatencyPlaybackSpeedControl(
 
     @Synchronized
     override fun notifyRebuffer() {
-        // Rebuffering must not move the validated transc_r correction target.
+        delegate.notifyRebuffer()
+        measurement = null
+        logger("rebuffer target=${Util.usToMs(delegate.targetLiveOffsetUs)}ms")
     }
 
     @Synchronized
@@ -72,19 +72,22 @@ internal class TwitchLatencyPlaybackSpeedControl(
         bufferedDurationUs: Long,
     ): Float {
         // Ignore Media3's timeline offset and use only a fresh transc_r measurement.
-        val currentMeasurement = measurement ?: return MIN_PLAYBACK_SPEED
-        val measurementAgeMs = realtimeClockMs() - currentMeasurement.realtimeMs
-        if (measurementAgeMs !in 0..MAX_MEASUREMENT_AGE_MS) {
-            return MIN_PLAYBACK_SPEED
+        val currentMeasurement = measurement
+        val measurementAgeMs = currentMeasurement?.let { realtimeClockMs() - it.realtimeMs } ?: -1L
+        val speed = if (currentMeasurement != null && measurementAgeMs in 0..MAX_MEASUREMENT_AGE_MS) {
+            delegate.getAdjustedPlaybackSpeed(
+                Util.msToUs(currentMeasurement.latencyMs),
+                bufferedDurationUs,
+            )
+        } else {
+            1f
         }
-        return delegate.getAdjustedPlaybackSpeed(
-            Util.msToUs(currentMeasurement.latencyMs),
-            bufferedDurationUs,
-        )
+        lastAdjustedPlaybackSpeed = speed
+        return speed
     }
 
     @Synchronized
-    override fun getTargetLiveOffsetUs(): Long = Util.msToUs(LOAD_CONTROL_TARGET_LIVE_OFFSET_MS)
+    override fun getTargetLiveOffsetUs(): Long = delegate.targetLiveOffsetUs
 
     private data class Measurement(
         val latencyMs: Long,
@@ -92,12 +95,10 @@ internal class TwitchLatencyPlaybackSpeedControl(
     )
 
     internal companion object {
-        const val TARGET_LIVE_OFFSET_MS = 1_650L
-        // DefaultLoadControl caps readiness at half the reported live target.
-        const val LOAD_CONTROL_TARGET_LIVE_OFFSET_MS = 3_000L
-        const val MIN_PLAYBACK_SPEED = 1.0f
-        const val MAX_PLAYBACK_SPEED = 1.03f
-        const val MIN_PLAYBACK_SPEED_UPDATE_INTERVAL_MS = 5_000L
+        const val TARGET_LIVE_OFFSET_MS = 1_600L
+        const val MIN_PLAYBACK_SPEED = DefaultLivePlaybackSpeedControl.DEFAULT_FALLBACK_MIN_PLAYBACK_SPEED
+        // Let native proportional control recover brief proxy/startup delays sooner.
+        const val MAX_PLAYBACK_SPEED = 1.10f
         const val MAX_MEASUREMENT_AGE_MS = 6_000L
         private const val LOG_TAG = "FlowTwitchPlayer"
     }

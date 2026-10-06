@@ -10,7 +10,7 @@ import org.junit.Test
 @UnstableApi
 class ServerTimePlaylistParserFactoryTest {
     @Test
-    fun everyLoadStartsAtLastCompletedSegmentBeforePrefetchAndAnchorsOnlyOnce() {
+    fun firstPlaylistUsesPreciseTailOfCompletedSegmentThenNativeLiveStart() {
         val factory = ServerTimePlaylistParserFactory(
             latencySession = TwitchLatencySession(onAcceptedLatency = {}),
         )
@@ -33,28 +33,24 @@ class ServerTimePlaylistParserFactoryTest {
         val first = factory.rewritePlaylist(playlist)
 
         assertEquals(1, first.lineSequence().count { it.startsWith("#EXT-X-START:") })
-        assertTrue(first.contains("#EXT-X-START:TIME-OFFSET=2.01,PRECISE=NO"))
+        assertTrue(first.contains("#EXT-X-START:TIME-OFFSET=3.5,PRECISE=YES"))
         assertTrue(first.contains("#EXT-X-PROGRAM-DATE-TIME:2026-09-05T12:00:00.000Z"))
         assertEquals(40L, mediaSequence(first))
         assertEquals(41L, segmentSequence(first, "segment-41.ts"))
         assertEquals(42L, segmentSequence(first, "segment-42.ts"))
-        // Future refreshes and variant switches use native live-edge positioning.
         val refreshed = playlist.replace("#EXT-X-START:TIME-OFFSET=-1.65,PRECISE=NO\n", "")
-        assertEquals(rewriteTwitchLowLatencyPlaylist(refreshed), factory.rewritePlaylist(refreshed))
         assertFalse(factory.rewritePlaylist(refreshed).contains("#EXT-X-START:"))
     }
 
     @Test
-    fun vodKeepsItsOriginalStartAndEmptyPlaylistsDoNotConsumeAnchor() {
-        val live = "#EXTM3U\n#EXTINF:2.0,\ncomplete.ts\n#EXT-X-TWITCH-PREFETCH:next.ts"
+    fun shortCompletedSegmentDoesNotMoveStartupBeforeItsStart() {
         val factory = ServerTimePlaylistParserFactory(
             latencySession = TwitchLatencySession(onAcceptedLatency = {}),
         )
-        val vod = "$live\n#EXT-X-ENDLIST"
+        val playlist = "#EXTM3U\n#EXTINF:2.0,\nfirst.ts\n#EXTINF:0.25,\nlast.ts\n#EXT-X-TWITCH-PREFETCH:next.ts"
+        val vod = "$playlist\n#EXT-X-ENDLIST"
         assertEquals(vod, factory.rewritePlaylist(vod))
-        val noComplete = "#EXTM3U\n#EXT-X-TWITCH-PREFETCH:next.ts"
-        assertEquals(rewriteTwitchLowLatencyPlaylist(noComplete), factory.rewritePlaylist(noComplete))
-        assertTrue(factory.rewritePlaylist(live).contains("#EXT-X-START:TIME-OFFSET=0.0,PRECISE=NO"))
+        assertTrue(factory.rewritePlaylist(playlist).contains("#EXT-X-START:TIME-OFFSET=2.0,PRECISE=YES"))
     }
 
     @Test
@@ -126,6 +122,10 @@ class ServerTimePlaylistParserFactoryTest {
         assertTrue(rewritten.contains("ID=\"stitched-ad-1\""))
         assertTrue(rewritten.contains("#EXT-X-PROGRAM-DATE-TIME:2026-07-28T12:00:00.000Z"))
         assertFalse(rewritten.contains("#EXT-X-TWITCH-PREFETCH:"))
+        assertEquals(1, rewritten.lines().count { it == "#EXT-X-INDEPENDENT-SEGMENTS" })
+        val alreadyIndependent = playlist.replace("#EXTM3U", "#EXTM3U\n#EXT-X-INDEPENDENT-SEGMENTS")
+        assertEquals(1, rewriteTwitchLowLatencyPlaylist(alreadyIndependent).lines()
+            .count { it == "#EXT-X-INDEPENDENT-SEGMENTS" })
 
         val vod = "$playlist\n#EXT-X-ENDLIST"
         assertEquals(vod, rewriteTwitchLowLatencyPlaylist(vod))
@@ -133,6 +133,10 @@ class ServerTimePlaylistParserFactoryTest {
             .replace("#EXT-X-TWITCH-PREFETCH:segment-41.ts\n", "")
             .replace("#EXT-X-TWITCH-PREFETCH:segment-42.ts", "")
         assertEquals(alreadyNormalized, rewriteTwitchLowLatencyPlaylist(alreadyNormalized))
+        assertFalse(rewriteTwitchLowLatencyPlaylist("$alreadyNormalized\n#EXT-X-TWITCH-PREFETCH:   ")
+            .contains("#EXT-X-INDEPENDENT-SEGMENTS"))
+        val master = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=6000000\nsource.m3u8"
+        assertEquals(master, rewriteTwitchLowLatencyPlaylist(master))
     }
 
     @Test

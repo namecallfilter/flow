@@ -55,7 +55,8 @@ class AudioPlaybackService : Service() {
         startForeground(
             1,
             builder
-                .setSmallIcon(R.drawable.ic_pip_play)
+                .setSmallIcon(R.drawable.ic_stat_flow)
+                .setLargeIcon(controller.metadata?.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART))
                 .setContentTitle(controller.metadata?.getString(MediaMetadata.METADATA_KEY_TITLE) ?: "Flow")
                 .setContentText(controller.metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST))
                 .setCategory(Notification.CATEGORY_TRANSPORT)

@@ -1786,6 +1786,13 @@ void _expectPaintsAbove(WidgetTester tester, Finder above, Finder below) {
 
 class _PlaybackProbe implements TwitchPlayerController {
   @override
+  Future<void> setMediaMetadata({
+    required String title,
+    required String artist,
+    String? artworkUrl,
+  }) async {}
+
+  @override
   Future<void> stop() async {}
 
   final eventsController = StreamController<TwitchPlayerEvent>.broadcast();

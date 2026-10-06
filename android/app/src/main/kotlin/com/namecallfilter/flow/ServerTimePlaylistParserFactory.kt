@@ -1,5 +1,6 @@
 package com.namecallfilter.flow
 
+import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSpec
 import androidx.media3.exoplayer.hls.playlist.DefaultHlsPlaylistParserFactory
@@ -37,10 +38,25 @@ internal class ServerTimePlaylistParserFactory(
         val playlistText = inputStream.readBytes().toString(StandardCharsets.UTF_8)
         prefetchSegments?.update(uri.toString(), playlistText)
         val rewrittenPlaylist = rewritePlaylist(playlistText)
-        parser.parse(
+        val playlist = parser.parse(
             uri,
             ByteArrayInputStream(rewrittenPlaylist.toByteArray(StandardCharsets.UTF_8)),
-        ).also { playlist -> capturePlaylistMetadata(playlist, playlistText) }
+        )
+        capturePlaylistMetadata(playlist, playlistText)
+        if (
+            playlist is HlsMediaPlaylist && !playlist.hasEndTag && !playlist.preciseStart &&
+            playlist.startOffsetUs == C.TIME_UNSET &&
+            playlistText.lineSequence().any {
+                it.startsWith(TWITCH_PREFETCH_PREFIX, ignoreCase = true) &&
+                    it.substringAfter(':').isNotBlank()
+            }
+        ) {
+            // Keep Media3's moving live default, without rounding it back to a
+            // full segment on LIVE/resume. EXT-X-START only exists at cold start.
+            playlist.withPreciseStart()
+        } else {
+            playlist
+        }
     }
 
     @Synchronized
@@ -72,6 +88,15 @@ internal class ServerTimePlaylistParserFactory(
     }
 
 }
+
+@UnstableApi
+private fun HlsMediaPlaylist.withPreciseStart() = HlsMediaPlaylist(
+    playlistType, baseUri, tags, startOffsetUs, true, startTimeUs,
+    hasDiscontinuitySequence, discontinuitySequence, mediaSequence, version,
+    targetDurationUs, partTargetDurationUs, hasIndependentSegments, hasEndTag,
+    hasProgramDateTime, protectionSchemes, segments, trailingParts, serverControl,
+    renditionReports, interstitials, lastSeenInitSegment,
+)
 
 // Promoting Twitch prefetch to EXTINF hides its server-paced nature from Media3.
 // Preserve that information so the native bandwidth meter ignores waits for
@@ -105,10 +130,9 @@ internal class TwitchPrefetchSegments {
         if (uri in uris) flags or DataSpec.FLAG_MIGHT_NOT_USE_FULL_NETWORK_SPEED else flags
 }
 
-// A startup inside server-paced prefetch cannot measure connection capacity.
-// Ask native HLS to start at the newest completed segment once; the existing
-// transc_r correction then advances playback to the normal 1.65-second target.
-// Do this for manual quality too, so a later switch to Auto has an estimate.
+// Fetch a completed segment once so Auto measures capacity instead of the
+// server-paced prefetch rate. Native precise start skips to its final 500ms,
+// keeping startup close to live without a subsequent correction seek.
 private fun anchorTwitchStartupPlaylist(playlist: String): String? {
     val lines = playlist.lines()
     if (
@@ -132,10 +156,10 @@ private fun anchorTwitchStartupPlaylist(playlist: String): String? {
             segmentDurationSeconds = null
         }
     }
-    val offset = lastCompleteStartSeconds ?: return null
+    val offset = maxOf(lastCompleteStartSeconds ?: return null, durationSeconds - 0.5)
     return lines.filterNot { it.startsWith("#EXT-X-START:", ignoreCase = true) }
         .toMutableList().apply {
-            add(1, "#EXT-X-START:TIME-OFFSET=$offset,PRECISE=NO")
+            add(1, "#EXT-X-START:TIME-OFFSET=$offset,PRECISE=YES")
         }.joinToString("\n")
 }
 
@@ -155,6 +179,7 @@ internal fun rewriteTwitchLowLatencyPlaylist(playlist: String): String {
         return playlist
     }
     var changed = false
+    var promotedPrefetch = false
     val rewritten = buildList {
         playlist.lineSequence().forEach { line ->
             when {
@@ -178,6 +203,7 @@ internal fun rewriteTwitchLowLatencyPlaylist(playlist: String): String {
                         add("#EXTINF:$TWITCH_SEGMENT_SECONDS.000,")
                         add(uri)
                         changed = true
+                        promotedPrefetch = true
                     } else {
                         add(line)
                     }
@@ -185,6 +211,12 @@ internal fun rewriteTwitchLowLatencyPlaylist(playlist: String): String {
 
                 else -> add(line)
             }
+        }
+        // Twitch's transcoder aligns rendition segments at IDR frames. Signal
+        // that contract so Media3 switches forward instead of rereading a segment.
+        // https://blog.twitch.tv/en/2017/10/23/live-video-transmuxing-transcoding-f-fmpeg-vs-twitch-transcoder-part-ii-4973f475f8a3/
+        if (promotedPrefetch && none { it.equals(INDEPENDENT_SEGMENTS_TAG, ignoreCase = true) }) {
+            add(1, INDEPENDENT_SEGMENTS_TAG)
         }
     }
     if (!changed) {
@@ -198,6 +230,7 @@ private const val TWITCH_PREFETCH_PREFIX = "#EXT-X-TWITCH-PREFETCH:"
 private const val TWITCH_SEGMENT_SECONDS = 2
 private const val STANDARD_HLS_TARGET_SECONDS = 10
 private const val END_LIST_TAG = "#EXT-X-ENDLIST"
+private const val INDEPENDENT_SEGMENTS_TAG = "#EXT-X-INDEPENDENT-SEGMENTS"
 private val X_SERVER_TIME = Regex(
     """X-SERVER-TIME\s*=\s*\"?(-?\d+(?:\.\d+)?)\"?""",
     RegexOption.IGNORE_CASE,

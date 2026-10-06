@@ -7,7 +7,7 @@ import "package:flutter_test/flutter_test.dart";
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test("forwards PiP preferences and stop to the native player", () async {
+  test("forwards PiP preferences, metadata and stop to the native player", () async {
     const viewId = 48;
     const channel = MethodChannel("flow/twitch_player/$viewId");
     final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -23,10 +23,23 @@ void main() {
     );
     await controller.setPictureInPictureEnabled(enabled: false);
     await controller.setPictureInPictureEnabled(enabled: true);
+    await controller.setMediaMetadata(
+      title: "Actual stream title",
+      artist: "Creator",
+      artworkUrl: "https://static-cdn.jtvnw.net/previews-ttv/live_user_creator-640x360.jpg",
+    );
     await controller.stop();
     expect(calls.map((call) => (call.method, call.arguments)), [
       ("setPictureInPictureEnabled", false),
       ("setPictureInPictureEnabled", true),
+      (
+        "setMediaMetadata",
+        {
+          "title": "Actual stream title",
+          "artist": "Creator",
+          "artworkUrl": "https://static-cdn.jtvnw.net/previews-ttv/live_user_creator-640x360.jpg",
+        },
+      ),
       ("stop", null),
     ]);
     controller.dispose();
@@ -188,6 +201,7 @@ void main() {
     await controller.seekTo(const Duration(seconds: 30));
     await controller.setQuality("auto");
     await controller.setPictureInPictureEnabled(enabled: false);
+    await controller.setMediaMetadata(title: "Actual stream title", artist: "Creator");
 
     expect(calls, isEmpty);
   });
