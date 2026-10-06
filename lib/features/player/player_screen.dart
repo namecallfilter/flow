@@ -242,6 +242,14 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     _playerController?.setPictureInPictureEnabled(enabled: _canEnterPictureInPicture),
   );
 
+  void _syncMediaMetadata() => unawaited(
+    _playerController?.setMediaMetadata(
+      title: _channel.title,
+      artist: _channel.name,
+      artworkUrl: _channel.thumbnailUrl,
+    ),
+  );
+
   bool get _appIsResumed => _appLifecycleState == AppLifecycleState.resumed;
 
   bool get _playbackSupported =>
@@ -617,8 +625,12 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     });
 
     try {
-      final proxyUrls = await _loadProxyUrls();
-      final uri = await _fetchPlaybackUri();
+      final playback = await Future.wait<Object>([
+        _loadProxyUrls(),
+        _fetchPlaybackUri(),
+      ]);
+      final proxyUrls = playback[0] as List<String>;
+      final uri = playback[1] as Uri;
       if (!mounted || generation != _loadGeneration) {
         return;
       }
@@ -809,6 +821,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
             _liveChannel = liveChannel;
           }
         });
+        _syncMediaMetadata();
         if (openVideo) {
           _host?.setChatOnly(enabled: false);
         }
@@ -872,6 +885,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     _playerController?.dispose();
     _playerController = controller;
     _syncPictureInPicture();
+    _syncMediaMetadata();
     _playerEvents = controller.events.listen(
       (event) {
         if (playbackSessionGeneration == _playbackSessionGeneration) {
@@ -1899,6 +1913,7 @@ class _PlayerViewport extends StatelessWidget {
                       initialQualityId: initialQualityId,
                       initialPosition: initialPosition,
                       mediaTitle: channel.title,
+                      mediaArtworkUrl: channel.thumbnailUrl,
                       mediaArtist: channel.name,
                       isLive: isLive,
                       pictureInPictureEnabled: pictureInPictureEnabled,

@@ -14,9 +14,12 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Rect
 import android.graphics.drawable.Icon
 import android.media.AudioAttributes
+import android.media.MediaMetadata
 import android.media.Ringtone
 import android.media.RingtoneManager
 import android.media.session.MediaSession
@@ -36,6 +39,14 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import java.io.IOException
+import java.util.concurrent.TimeUnit
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -51,6 +62,14 @@ class MainActivity : FlutterActivity() {
     private var playbackVisible = false
     private var playbackResumed = false
     private var backgroundAudioState: Pair<TwitchPlayerView, Boolean>? = null
+    private var mediaArtworkUrl: String? = null
+    private var mediaArtwork: Bitmap? = null
+    private var publishedMediaArtwork: Bitmap? = null
+    private var mediaArtworkCall: Call? = null
+    private val artworkClient by lazy {
+        OkHttpClient.Builder().callTimeout(4, TimeUnit.SECONDS)
+            .followRedirects(false).followSslRedirects(false).build()
+    }
     private val audioMediaSession = lazy {
         MediaSession(this, "Flow").apply {
             setSessionActivity(PendingIntent.getActivity(
@@ -274,6 +293,7 @@ class MainActivity : FlutterActivity() {
     internal fun unregisterPlayer(player: TwitchPlayerView) {
         if (activePlayer === player) {
             activePlayer = null
+            updateMediaArtwork(null)
             pictureInPictureSourceRect = null
             pictureInPictureVideoRect = null
             updatePictureInPicture()
@@ -314,10 +334,23 @@ class MainActivity : FlutterActivity() {
         val state = player?.let { it to it.pictureInPicturePlaying }
         if (player != null) {
             val session = audioMediaSession.value
-            session.setMetadata(player.mediaMetadata)
+            val metadata = player.mediaMetadata
+            updateMediaArtwork(metadata.getString(MediaMetadata.METADATA_KEY_ALBUM_ART_URI))
+            val previousMetadata = session.controller.metadata
+            val metadataChanged = mediaArtwork !== publishedMediaArtwork || listOf(
+                MediaMetadata.METADATA_KEY_TITLE, MediaMetadata.METADATA_KEY_ARTIST,
+                MediaMetadata.METADATA_KEY_ALBUM_ART_URI,
+            ).any { metadata.getString(it) != previousMetadata?.getString(it) } ||
+                metadata.getLong(MediaMetadata.METADATA_KEY_DURATION) !=
+                previousMetadata?.getLong(MediaMetadata.METADATA_KEY_DURATION)
+            if (metadataChanged) {
+                session.setMetadata(MediaMetadata.Builder(metadata)
+                    .putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, mediaArtwork).build())
+                publishedMediaArtwork = mediaArtwork
+            }
             session.setPlaybackState(player.mediaPlaybackState)
             session.isActive = true
-            if (state != backgroundAudioState) {
+            if (state != backgroundAudioState || metadataChanged) {
                 ContextCompat.startForegroundService(
                     this,
                     Intent(this, AudioPlaybackService::class.java).putExtra("session", session.sessionToken),
@@ -328,6 +361,46 @@ class MainActivity : FlutterActivity() {
             stopService(Intent(this, AudioPlaybackService::class.java))
         }
         backgroundAudioState = state
+    }
+
+    private fun updateMediaArtwork(address: String?) {
+        if (address == mediaArtworkUrl) return
+        mediaArtworkUrl = address
+        mediaArtwork = null
+        mediaArtworkCall?.cancel()
+        mediaArtworkCall = null
+        val url = address?.toHttpUrlOrNull() ?: return
+        if (!url.isHttps || url.host != "static-cdn.jtvnw.net") return
+        artworkClient.newCall(Request.Builder().url(url).build()).also { mediaArtworkCall = it }
+            .enqueue(object : Callback {
+                override fun onFailure(call: Call, error: IOException) = Unit
+
+                override fun onResponse(call: Call, response: Response) {
+                    val bitmap = try {
+                        response.use {
+                            if (!it.isSuccessful) return@use null
+                            val source = it.body?.source() ?: return@use null
+                            if (source.request(512 * 1024 + 1L)) return@use null
+                            val bytes = source.readByteArray()
+                            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                            if (bounds.outWidth !in 1..2048 || bounds.outHeight !in 1..2048) return@use null
+                            val options = BitmapFactory.Options().apply {
+                                inSampleSize = if (maxOf(bounds.outWidth, bounds.outHeight) > 1024) 2 else 1
+                            }
+                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                        }
+                    } catch (_: Exception) {
+                        null
+                    }
+                    runOnUiThread {
+                        if (isDestroyed || mediaArtworkCall !== call) return@runOnUiThread
+                        mediaArtworkCall = null
+                        mediaArtwork = bitmap
+                        updateAudioPlayback()
+                    }
+                }
+            })
     }
 
     private fun supportsPictureInPicture() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
@@ -466,6 +539,8 @@ class MainActivity : FlutterActivity() {
             window.decorView.setWindowInsetsAnimationCallback(null)
         }
         chatMentionSound?.stop()
+        mediaArtworkCall?.cancel()
+        mediaArtworkCall = null
         if (audioMediaSession.isInitialized()) audioMediaSession.value.release()
         stopService(Intent(this, AudioPlaybackService::class.java))
         if (supportsPictureInPicture()) unregisterReceiver(pictureInPictureReceiver)

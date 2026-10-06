@@ -17,6 +17,7 @@ class Media3PlayerView extends StatelessWidget {
     this.initialPosition = Duration.zero,
     this.mediaTitle = "Flow",
     this.mediaArtist = "",
+    this.mediaArtworkUrl,
     this.isLive = true,
     this.pictureInPictureEnabled = true,
   });
@@ -28,6 +29,7 @@ class Media3PlayerView extends StatelessWidget {
   final Duration initialPosition;
   final String mediaTitle;
   final String mediaArtist;
+  final String? mediaArtworkUrl;
   final bool isLive;
   final bool pictureInPictureEnabled;
   final ValueChanged<TwitchPlayerController> onControllerCreated;
@@ -70,6 +72,7 @@ class Media3PlayerView extends StatelessWidget {
             "positionMs": initialPosition.inMilliseconds,
             "title": mediaTitle,
             "artist": mediaArtist,
+            "artworkUrl": mediaArtworkUrl,
             "isLive": isLive,
             "pictureInPictureEnabled": pictureInPictureEnabled,
           },
@@ -106,6 +109,7 @@ class Media3PlayerView extends StatelessWidget {
     properties.add(DiagnosticsProperty<Duration>("initialPosition", initialPosition));
     properties.add(StringProperty("mediaTitle", mediaTitle));
     properties.add(StringProperty("mediaArtist", mediaArtist));
+    properties.add(StringProperty("mediaArtworkUrl", mediaArtworkUrl));
     properties.add(DiagnosticsProperty<bool>("isLive", isLive));
     properties.add(DiagnosticsProperty<bool>("pictureInPictureEnabled", pictureInPictureEnabled));
     properties.add(

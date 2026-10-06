@@ -86,8 +86,7 @@ internal class TwitchLatencySession(
             return
         }
 
-        // Resume/jump freshness barriers must be anchored to accepted metadata.
-        // A rejected future or otherwise invalid value must not poison them.
+        // Only accepted metadata may update the measured stream timestamp.
         transcR.set(parsedTranscRMs)
         logger("latency accepted=${latencyMs}ms")
         onAcceptedLatency(latencyMs)
