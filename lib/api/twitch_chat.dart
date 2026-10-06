@@ -541,6 +541,9 @@ class TwitchChatController extends ChangeNotifier {
         _scheduleNotify();
       }
     } on Object {
+      if (_partnerLoadGeneration == generation) {
+        _partnerLoadGeneration = -1;
+      }
       // Chat remains usable when Twitch's celebration query is unavailable.
     }
   }
@@ -956,6 +959,9 @@ class TwitchChatController extends ChangeNotifier {
     _isPrivileged = false;
     _isSubscriber = false;
     _partnerAnniversary = null;
+    if (_isUpdatingRaid) {
+      _joinedRaidId = null;
+    }
     _isUpdatingRaid = false;
     _subscriptionAnniversary = null;
     _subscriptionAnniversaryError = null;
@@ -1008,6 +1014,8 @@ class TwitchChatController extends ChangeNotifier {
       _user = null;
     }
     if (_privateUserId != _user?.id) {
+      _joinedRaidId = null;
+      _raidError = null;
       _setChatRestriction();
       _lastMessageSentAt = null;
       _slowModeRejectedUntil = null;
@@ -1597,6 +1605,9 @@ class TwitchChatController extends ChangeNotifier {
         if (message.tags["msg-id"] == "msg_channel_suspended") {
           ++_generation;
           _closeSocket();
+          _receiveRaid(null);
+          _pins?.dispose();
+          _pins = null;
           _status = TwitchChatStatus.disconnected;
         }
         notifyListeners();
@@ -1736,8 +1747,6 @@ class TwitchChatController extends ChangeNotifier {
   }
 
   void _closeSocket() {
-    _receiveRaid(null);
-    _raidExpiry?.cancel();
     _sharedChatRoomId = null;
     _sendRateLimitMessage = null;
     _failSend();
@@ -1768,6 +1777,7 @@ class TwitchChatController extends ChangeNotifier {
     _disposed = true;
     ++_generation;
     _closeSocket();
+    _raidExpiry?.cancel();
     _notifyTimer?.cancel();
     _pins?.dispose();
     predictionUpdates.dispose();

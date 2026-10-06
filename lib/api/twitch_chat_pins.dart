@@ -323,7 +323,6 @@ class TwitchChatPins extends ChangeNotifier {
   }
 
   void _closeSocket() {
-    onRaidUpdate?.call(null);
     _pendingSubscriptions.clear();
     _deadline?.cancel();
     _readyDeadline?.cancel();
@@ -345,6 +344,7 @@ class TwitchChatPins extends ChangeNotifier {
     ++_generation;
     _expiry?.cancel();
     _closeSocket();
+    onRaidUpdate?.call(null);
     super.dispose();
   }
 }

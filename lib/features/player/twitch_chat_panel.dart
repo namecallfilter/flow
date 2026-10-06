@@ -390,6 +390,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
     final controller = widget.controller;
     final raid = controller?.raid;
     if (!_chatIsVisible ||
+        controller?.status != TwitchChatStatus.connected ||
         raid?.isGoing != true ||
         controller?.isRaidJoined != true ||
         controller!.isUpdatingRaid ||
@@ -411,6 +412,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
         if (!mounted ||
             !_chatIsVisible ||
             widget.controller != controller ||
+            controller.status != TwitchChatStatus.connected ||
             controller.raid?.id != raid.id ||
             !controller.isRaidJoined ||
             controller.isUpdatingRaid) {
