@@ -730,6 +730,11 @@ internal class TwitchPlayerView(
 
     private fun jumpToLiveEdge() {
         if (!isLive || stopped || disposed) return
+        if (player.playerError != null) {
+            player.play()
+            emit(mapOf("type" to "reload"))
+            return
+        }
         latestError = null
         val measuredLatencyMs = latestLatencyMs
         val measurementAgeMs = lastPrimaryLatencyRealtimeMs?.let { SystemClock.elapsedRealtime() - it }

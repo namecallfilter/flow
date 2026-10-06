@@ -14,7 +14,9 @@ internal class TwitchLatencyPlaybackSpeedControl(
     private val realtimeClockMs: () -> Long = SystemClock::elapsedRealtime,
     private val logger: (String) -> Unit = { message -> Log.d(LOG_TAG, message) },
     private val delegateFactory: () -> LivePlaybackSpeedControl = {
-        DefaultLivePlaybackSpeedControl.Builder().build()
+        DefaultLivePlaybackSpeedControl.Builder()
+            .setTargetLiveOffsetIncrementOnRebufferMs(0)
+            .build()
     },
 ) : LivePlaybackSpeedControl {
     private var delegate = delegateFactory()

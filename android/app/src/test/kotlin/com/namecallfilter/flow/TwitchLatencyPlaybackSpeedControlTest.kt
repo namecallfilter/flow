@@ -117,6 +117,21 @@ class TwitchLatencyPlaybackSpeedControlTest {
         assertTrue(delegate.adjustedSpeedCalls.isEmpty())
     }
 
+    @Test
+    fun repeatedRebuffersDoNotIncreaseTheConfiguredNativeTarget() {
+        val controller = TwitchLatencyPlaybackSpeedControl(
+            realtimeClockMs = { 10_000L },
+            logger = {},
+        )
+        controller.setLiveConfiguration(liveConfiguration())
+        repeat(3) {
+            controller.updateLatencyMeasurement(2_000L)
+            controller.notifyRebuffer()
+            assertEquals(1_600_000L, controller.getTargetLiveOffsetUs())
+            assertSpeed(1f, adjustedSpeed(controller))
+        }
+    }
+
     private fun controller(
         clockMs: () -> Long,
         delegates: MutableList<RecordingLivePlaybackSpeedControl>,
