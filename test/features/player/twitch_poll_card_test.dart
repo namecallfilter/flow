@@ -120,6 +120,42 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets("poll headers alternate after voting and after results arrive", (tester) async {
+    final client = _Client()..hasVoted = true;
+    final controller = TwitchChatController(
+      clientLoader: () async => client,
+      channel: "channel",
+      autoConnect: false,
+    );
+    addTearDown(controller.dispose);
+    for (final status in ["ACTIVE", "COMPLETED"]) {
+      client.status = status;
+      for (final showTotals in [false, true, false]) {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: TwitchPollCard(
+              data: client.snapshot,
+              controller: controller,
+              pendingTransactions: const {},
+              refresh: () async {},
+              dismiss: () {},
+              showTotals: showTotals,
+            ),
+          ),
+        );
+        final header = find.descendant(
+          of: find.byType(Row).first,
+          matching: find.byType(Text),
+        );
+        expect(
+          tester.widget<Text>(header).data,
+          showTotals ? (status == "ACTIVE" ? "100 votes" : "Option 4") : client.title,
+        );
+      }
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets("four poll choices show vote bars and preserve a paid retry after switching cards", (
     tester,
   ) async {

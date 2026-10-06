@@ -1418,6 +1418,25 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
                 onToggleChatOnly: _toggleChatOnly,
                 onOpenSettings: _openChatSettings,
                 onReportUser: _reportUser,
+                onRaid: (raid) => openStreamPlayer(
+                  context,
+                  builder: (_) => StreamPlayerScreen(
+                    apiCache: widget.apiCache,
+                    preferences: widget.preferences,
+                    channel: StreamChannel(
+                      id: raid.targetChannelId,
+                      login: raid.targetLogin,
+                      name: raid.targetDisplayName,
+                      initials: initialsForName(raid.targetDisplayName),
+                      title: "",
+                      category: "",
+                      viewers: "",
+                      avatarImageUrl: raid.targetProfileImageUrl,
+                      avatarColors: colorsForText(raid.targetChannelId),
+                      thumbnailColors: colorsForText(raid.targetChannelId),
+                    ),
+                  ),
+                ),
                 onOpenChannel: (login) => _openChannel(
                   ChannelPreview(login: login, displayName: login),
                 ),

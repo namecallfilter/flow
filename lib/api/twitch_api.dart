@@ -4,6 +4,7 @@ import "dart:math" as math;
 
 import "package:flow/api/twitch_chat_message.dart";
 import "package:flow/api/twitch_cookie_extractor.dart";
+import "package:flow/api/twitch_partner_anniversary.dart";
 import "package:flow/api/twitch_polls.dart";
 import "package:flow/api/twitch_predictions.dart";
 import "package:flow/graphql/FlowAcceptPredictionTerms.graphql.dart";
@@ -2352,6 +2353,64 @@ class TwitchApiClient {
       throw TwitchApiException("Twitch could not determine your subscription status.");
     }
     return _mapValue(self["subscriptionBenefit"]) != null;
+  }
+
+  Future<TwitchPartnerAnniversary?> fetchPartnerAnniversary(String channelId) async {
+    final data = await _query(
+      () => _graphQlClient.query(
+        graphql.QueryOptions<Map<String, dynamic>>(
+          document: graphql.gql(r"""
+            query FlowPartnerAnniversary($channelID: ID!) {
+              channel(id: $channelID) {
+                id
+                activeStreamEventCelebration { id __typename }
+              }
+            }
+          """),
+          variables: {"channelID": channelId},
+          fetchPolicy: graphql.FetchPolicy.noCache,
+          parserFn: (data) => data,
+        ),
+      ),
+      "FlowPartnerAnniversary",
+    );
+    final celebration = _mapValue(_mapValue(data["channel"])?["activeStreamEventCelebration"]);
+    final id = _nonEmptyValue(celebration?["id"] as String?);
+    return id != null && celebration?["__typename"] == "PartnerAnniversaryStreamEventCelebration"
+        ? TwitchPartnerAnniversary(id: id)
+        : null;
+  }
+
+  Future<void> setRaidParticipation({required String raidId, required bool joined}) async {
+    if (_nonEmptyValue(gqlAccessToken) == null) {
+      throw TwitchApiException("Sign in to Twitch before joining a raid.");
+    }
+    if (raidId.trim().isEmpty) {
+      throw TwitchApiException("Choose an active raid.");
+    }
+    final operation = joined ? "JoinRaid" : "LeaveRaid";
+    final field = joined ? "joinRaid" : "leaveRaid";
+    final data = await _query(
+      () => _authenticatedGraphQlClient.mutate(
+        graphql.MutationOptions<Map<String, dynamic>>(
+          document: graphql.gql("""
+            mutation $operation(\$input: ${operation}Input!) {
+              $field(input: \$input) { raidID }
+            }
+          """),
+          variables: {
+            "input": {"raidID": raidId},
+          },
+          fetchPolicy: graphql.FetchPolicy.noCache,
+          parserFn: (data) => data,
+        ),
+      ),
+      operation,
+      retryIntegrityChallenge: true,
+    );
+    if (_mapValue(data[field])?["raidID"] != raidId) {
+      throw TwitchApiException("Twitch did not confirm your raid participation. Try again.");
+    }
   }
 
   Future<TwitchSubscriptionAnniversary?> fetchSubscriptionAnniversary(String login) async {

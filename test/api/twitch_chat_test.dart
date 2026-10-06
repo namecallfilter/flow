@@ -4,6 +4,7 @@ import "dart:io";
 
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_chat.dart";
+import "package:flow/api/twitch_partner_anniversary.dart";
 import "package:flutter_test/flutter_test.dart";
 
 void main() {
@@ -23,6 +24,157 @@ void main() {
     addTearDown(chat.dispose);
     return chat;
   }
+
+  testWidgets("partner anniversary retries failures without releasing a newer request", (
+    tester,
+  ) async {
+    final failed = Completer<TwitchPartnerAnniversary?>();
+    final client = _Client()..loadPartner = () => failed.future;
+    late _Socket socket;
+    final chat = TwitchChatController(
+      channel: "channel",
+      clientLoader: () async => client,
+      socketConnector: () async => socket = _Socket(),
+      pinSocketConnector: () async => _Socket(),
+      loadPrivateNotices: false,
+      loadRecentHistory: false,
+    );
+    await tester.pump();
+    socket.acknowledgeJoin(roomId: "1");
+    await tester.pump();
+    failed.completeError(TwitchApiException("Temporary failure"));
+    await tester.pump();
+    client.loadPartner = () async => const TwitchPartnerAnniversary(id: "retried");
+    socket.acknowledgeJoin(roomId: "1");
+    await tester.pump();
+    expect(client.partnerLoads, 2);
+    expect(chat.partnerAnniversary?.id, "retried");
+
+    final old = Completer<TwitchPartnerAnniversary?>();
+    client.loadPartner = () => old.future;
+    chat.reconnect();
+    await tester.pump();
+    socket.acknowledgeJoin(roomId: "1");
+    await tester.pump();
+    final current = Completer<TwitchPartnerAnniversary?>();
+    client.loadPartner = () => current.future;
+    chat.reconnect();
+    await tester.pump();
+    socket.acknowledgeJoin(roomId: "1");
+    await tester.pump();
+    old.completeError(TwitchApiException("Stale failure"));
+    await tester.pump();
+    socket.acknowledgeJoin(roomId: "1");
+    await tester.pump();
+    expect(client.partnerLoads, 4);
+    current.complete(const TwitchPartnerAnniversary(id: "current"));
+    await tester.pump();
+    expect(chat.partnerAnniversary?.id, "current");
+    chat.dispose();
+  });
+
+  testWidgets("joined raids survive reconnects and still expire or cancel", (tester) async {
+    final irc = <_Socket>[];
+    final hermes = <_Socket>[];
+    final chat = TwitchChatController(
+      channel: "channel",
+      clientLoader: () async => _Client(),
+      socketConnector: () async => (irc..add(_Socket())).last,
+      pinSocketConnector: () async => (hermes..add(_Socket())).last,
+      loadPrivateNotices: false,
+      loadRecentHistory: false,
+    );
+    await tester.pump();
+    irc.last.acknowledgeJoin(roomId: "1");
+    await tester.pump();
+    hermes.last.authenticateHermes();
+    hermes.last.raid("raid_update_v2");
+    final joining = chat.setRaidParticipation(joined: true);
+    await tester.pump();
+    expect(await joining, isTrue);
+    final raid = chat.raid;
+    irc.last._incoming.add(":tmi.twitch.tv RECONNECT\r\n");
+    expect(chat.raid, same(raid));
+    expect(chat.isRaidJoined, isTrue);
+    await tester.pump(const Duration(seconds: 1));
+    irc.last.acknowledgeJoin(roomId: "1");
+    await tester.pump();
+    expect(irc, hasLength(2));
+    expect(chat.isRaidJoined, isTrue);
+    hermes.last._incoming.add(jsonEncode({"type": "reconnect"}));
+    await tester.pump(const Duration(seconds: 1));
+    hermes.last.authenticateHermes();
+    expect(hermes, hasLength(2));
+    expect(chat.raid, same(raid));
+    expect(chat.isRaidJoined, isTrue);
+    hermes.last.raid("raid_go_v2");
+    expect(chat.raid?.isGoing, isTrue);
+    expect(chat.isRaidJoined, isTrue);
+    hermes.last.raid("raid_cancel_v2");
+    expect(chat.raid, isNull);
+    expect(chat.isRaidJoined, isFalse);
+    hermes.last.raid("raid_update_v2");
+    await tester.pump(const Duration(minutes: 2));
+    expect(chat.raid, isNull);
+    chat.dispose();
+  });
+
+  testWidgets("reconnect drops uncertain raid participation and changed account membership", (
+    tester,
+  ) async {
+    var client = _Client();
+    late _Socket irc;
+    late _Socket hermes;
+    final chat = TwitchChatController(
+      channel: "channel",
+      clientLoader: () async => client,
+      socketConnector: () async => irc = _Socket(),
+      pinSocketConnector: () async => hermes = _Socket(),
+      loadPrivateNotices: false,
+      loadRecentHistory: false,
+    );
+    Future<void> connected() async {
+      await tester.pump();
+      irc.acknowledgeJoin(roomId: "1");
+      await tester.pump();
+      hermes.authenticateHermes();
+    }
+
+    await connected();
+    hermes.raid("raid_update_v2");
+    final joining = chat.setRaidParticipation(joined: true);
+    await tester.pump();
+    expect(await joining, isTrue);
+    final pending = Completer<void>();
+    client.onRaidChange = () => pending.future;
+    final leaving = chat.setRaidParticipation(joined: false);
+    await tester.pump();
+    chat.reconnect();
+    await connected();
+    pending.complete();
+    await tester.pump();
+    expect(await leaving, isFalse);
+    hermes.raid("raid_go_v2");
+    expect(chat.raid?.isGoing, isTrue);
+    expect(chat.isRaidJoined, isFalse);
+    hermes.raid("raid_cancel_v2");
+    hermes.raid("raid_update_v2");
+    client.onRaidChange = null;
+    final rejoining = chat.setRaidParticipation(joined: true);
+    await tester.pump();
+    expect(await rejoining, isTrue);
+    client = _Client(signedIn: false);
+    chat.reconnect();
+    await connected();
+    expect(chat.raid, isNotNull);
+    expect(chat.isRaidJoined, isFalse);
+    irc._incoming.add(
+      "@msg-id=msg_channel_suspended :tmi.twitch.tv NOTICE #channel :Suspended\r\n",
+    );
+    expect(chat.raid, isNull);
+    expect(hermes.closed, isTrue);
+    chat.dispose();
+  });
 
   test("anniversaries load, keep failed shares retryable, and prevent duplicate shares", () async {
     const anniversary = TwitchSubscriptionAnniversary(id: "anniversary", months: 5);
@@ -1110,6 +1262,50 @@ void main() {
     expect(chat.conversation.last.noticeText, "newchatter was timed out for 60 seconds.");
   });
 
+  test(
+    "revises ban and timeout notices while retaining originals and ignoring older updates",
+    () async {
+      final chat = controller();
+      await server.join(chat);
+      server.send(
+        "@id=original;user-id=77;tmi-sent-ts=1000 :alice!a@tmi PRIVMSG #channel :original text\r\n"
+        "@target-user-id=77;tmi-sent-ts=2000 :tmi.twitch.tv CLEARCHAT #channel :alice\r\n"
+        "@target-user-id=99;tmi-sent-ts=2000 :tmi.twitch.tv CLEARCHAT #channel :newchatter\r\n",
+      );
+      await _waitFor(() => chat.conversation.length == 2);
+      final noticeId = chat.conversation.last.id;
+      void restriction({required int timestamp, int? seconds}) => server.send(
+        "@target-user-id=77;tmi-sent-ts=$timestamp${seconds == null ? '' : ';ban-duration=$seconds'} "
+        ":tmi.twitch.tv CLEARCHAT #channel :alice\r\n"
+        "@target-user-id=99;tmi-sent-ts=$timestamp${seconds == null ? '' : ';ban-duration=$seconds'} "
+        ":tmi.twitch.tv CLEARCHAT #channel :newchatter\r\n",
+      );
+      restriction(timestamp: 3000, seconds: 60);
+      await _waitFor(() => chat.conversation.last.moderation == TwitchChatModeration.timeout);
+      expect(chat.conversation.first.text, "original text");
+      expect(chat.conversation.first.isDeleted, isTrue);
+      expect(chat.conversation.first.timeoutSeconds, 60);
+      expect(chat.conversation.last.id, noticeId);
+      expect(chat.conversation.last.isDeleted, isFalse);
+      expect(chat.conversation.last.noticeText, "newchatter was timed out for 60 seconds.");
+      expect(chat.conversationHistory.last.noticeText, chat.conversation.last.noticeText);
+      restriction(timestamp: 4000);
+      await _waitFor(() => chat.conversation.last.moderation == TwitchChatModeration.ban);
+      expect(chat.conversation.every((item) => item.timeoutSeconds == null), isTrue);
+      expect(chat.conversation.last.noticeText, "newchatter was permanently banned.");
+      restriction(timestamp: 3500, seconds: 15);
+      server.send("@id=processed :other!o@tmi PRIVMSG #channel :after stale update\r\n");
+      await _waitFor(() => chat.conversation.length == 3);
+      expect(
+        chat.conversation.take(2).every((item) => item.moderation == TwitchChatModeration.ban),
+        isTrue,
+      );
+      expect(chat.conversation[1].id, noticeId);
+      expect(chat.conversation[1].isDeleted, isFalse);
+      expect(chat.conversationHistory[1].noticeText, "newchatter was permanently banned.");
+    },
+  );
+
   test("retains subscription, announcement and raid notices with identity and system text", () async {
     final chat = controller();
     await server.join(chat);
@@ -1139,6 +1335,44 @@ void main() {
     expect(chat.conversation.last.noticeType, "raid");
     expect(chat.conversation.last.noticeText, "100 raiders joined!");
     expect(chat.conversation.last.text, isEmpty);
+  });
+
+  test("recognizes anonymous gifts and moderator anniversaries from Twitch notices", () async {
+    final chat = controller();
+    await server.join(chat);
+    server.send(
+      "@id=anonymous-id;msg-id=subgift;login=giftuser;user-id=274598607;system-msg=Anonymous\\sgift "
+      ":tmi.twitch.tv USERNOTICE #channel\r\n"
+      "@id=anonymous-login;msg-id=submysterygift;login=AnAnonymousGifter;system-msg=Anonymous\\sgifts "
+      ":tmi.twitch.tv USERNOTICE #channel\r\n"
+      "@id=anonymous-legacy;msg-id=anonsubgift;system-msg=Anonymous\\sgift "
+      ":tmi.twitch.tv USERNOTICE #channel\r\n"
+      "@id=anonymous-shared;msg-id=sharedchatnotice;source-msg-id=submysterygift;source-room-id=2;login=ananonymousgifter;system-msg=Anonymous\\sgifts "
+      ":tmi.twitch.tv USERNOTICE #channel\r\n"
+      "@id=named;msg-id=subgift;login=alice;display-name=AnAnonymousGifter;system-msg=Named\\sgift "
+      ":tmi.twitch.tv USERNOTICE #channel\r\n"
+      "@id=mod-months;msg-id=modiversary;msg-param-months=6;login=preetmerchant;display-name=PREETMERCHANT;badges=moderator/1;emotes=25:0-4 "
+      ":tmi.twitch.tv USERNOTICE #channel :Kappa\r\n"
+      "@id=mod-year;msg-id=modiversary;msg-param-months=12;login=mod;display-name=Mod "
+      ":tmi.twitch.tv USERNOTICE #channel\r\n"
+      "@id=mod-system;msg-id=modiversary;msg-param-months=24;login=mod;system-msg=Existing\\sanniversary\\stext "
+      ":tmi.twitch.tv USERNOTICE #channel\r\n",
+    );
+    await _waitFor(() => chat.conversation.length == 8);
+    final messages = {for (final item in chat.conversation) item.id: item};
+    for (final id in ["anonymous-id", "anonymous-login", "anonymous-legacy", "anonymous-shared"]) {
+      expect(messages[id]!.isAnonymousGift, isTrue, reason: id);
+      expect(messages[id]!.copyWith(isDeleted: true).isAnonymousGift, isTrue);
+    }
+    expect(messages["named"]!.isAnonymousGift, isFalse);
+    final mod = messages["mod-months"]!;
+    expect(mod.noticeType, "modiversary");
+    expect(mod.noticeText, "PREETMERCHANT has been a Moderator for 6 months!");
+    expect(mod.text, "Kappa");
+    expect(mod.emotes.single.id, "25");
+    expect(mod.badges, ["moderator/1"]);
+    expect(messages["mod-year"]!.noticeText, "Mod has been a Moderator for 1 year!");
+    expect(messages["mod-system"]!.noticeText, "Existing anniversary text");
   });
 
   test("retains advance subscription duration without changing complete or ongoing notices", () async {
@@ -2316,11 +2550,27 @@ class _Client extends TwitchApiClient {
   Future<TwitchSubscriptionAnniversary?> Function()? loadAnniversary;
   Future<void> Function()? onShareAnniversary;
   int anniversaryLoads = 0;
+  int partnerLoads = 0;
+  Future<TwitchPartnerAnniversary?> Function()? loadPartner;
+  Future<void> Function()? onRaidChange;
   int anniversaryShares = 0;
   int watchStreakLoads = 0;
   int watchStreakShares = 0;
   Future<TwitchWatchStreak?> Function()? loadWatchStreak;
   Future<void> Function()? onShareWatchStreak;
+
+  @override
+  Future<TwitchPartnerAnniversary?> fetchPartnerAnniversary(String channelId) async {
+    partnerLoads++;
+    return loadPartner?.call();
+  }
+
+  @override
+  Future<TwitchPinnedChat?> fetchPinnedChat(String channelId) async => null;
+
+  @override
+  Future<void> setRaidParticipation({required String raidId, required bool joined}) async =>
+      onRaidChange?.call();
 
   @override
   Future<TwitchWatchStreak?> fetchWatchStreak(String channelId) async {
@@ -2430,7 +2680,32 @@ class _Socket extends Stream<Object?> implements WebSocket {
   bool closed = false;
   @override
   Duration? pingInterval;
-  void acknowledgeJoin() => _incoming.add(":tmi.twitch.tv ROOMSTATE #channel\r\n");
+  void acknowledgeJoin({String? roomId}) => _incoming.add(
+    "${roomId == null ? '' : '@room-id=$roomId '}:tmi.twitch.tv ROOMSTATE #channel\r\n",
+  );
+
+  void raid(String type) {
+    final request = subscriptions.last;
+    _incoming.add(
+      jsonEncode({
+        "type": "notification",
+        "notification": {
+          "type": "pubsub",
+          "subscription": {"id": (request["subscribe"]! as Map)["id"]},
+          "pubsub": jsonEncode({
+            "type": type,
+            "raid": {
+              "id": "raid",
+              "source_id": "1",
+              "target_id": "2",
+              "target_login": "destination",
+            },
+          }),
+        },
+      }),
+    );
+  }
+
   void authenticateHermes() {
     _incoming.add(
       jsonEncode({

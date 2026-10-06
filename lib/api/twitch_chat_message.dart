@@ -121,6 +121,12 @@ class TwitchChatMessage {
   final int? timeoutSeconds;
   final DateTime? moderatedAt;
 
+  bool get isAnonymousGift =>
+      (noticeType?.contains("gift") ?? false) &&
+      (noticeType!.startsWith("anon") ||
+          userId == "274598607" ||
+          login.toLowerCase() == "ananonymousgifter");
+
   TwitchChatMessage copyWith({
     bool? isOwn,
     bool? isHistorical,

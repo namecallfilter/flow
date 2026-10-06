@@ -18,6 +18,7 @@ class TwitchPredictionCard extends StatefulWidget {
     required this.isVisible,
     required this.showSheet,
     this.pinnedChat,
+    this.raid,
     super.key,
   });
 
@@ -25,6 +26,7 @@ class TwitchPredictionCard extends StatefulWidget {
   final bool isVisible;
   final Future<void> Function(WidgetBuilder builder) showSheet;
   final ({String id, DateTime? createdAt, Widget child})? pinnedChat;
+  final ({String id, Widget child})? raid;
 
   @override
   State<TwitchPredictionCard> createState() => _TwitchPredictionCardState();
@@ -36,6 +38,7 @@ class TwitchPredictionCard extends StatefulWidget {
     properties.add(FlagProperty("isVisible", value: isVisible, ifTrue: "visible"));
     properties.add(ObjectFlagProperty<Object>.has("showSheet", showSheet));
     properties.add(ObjectFlagProperty<Object>.has("pinnedChat", pinnedChat));
+    properties.add(ObjectFlagProperty<Object>.has("raid", raid));
   }
 }
 
@@ -50,6 +53,8 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
   String? _newest;
   String? _pinId;
   DateTime? _pinSeenAt;
+  String? _raidId;
+  DateTime? _raidSeenAt;
   bool _showAll = false;
   final _collapsedPredictions = <String>{};
   bool _showTotals = false;
@@ -84,6 +89,7 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
       _selected = null;
       _newest = null;
       _pinId = null;
+      _raidId = null;
       _showAll = false;
       _collapsedPredictions.clear();
       _showTotals = false;
@@ -279,10 +285,16 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
         _pinId = pin?.id;
         _pinSeenAt = DateTime.now();
       }
+      final raid = widget.raid;
+      if (_raidId != raid?.id) {
+        _raidId = raid?.id;
+        _raidSeenAt = DateTime.now();
+      }
       final entries =
           <({String id, DateTime createdAt, TwitchPrediction? event})>[
             if (pin != null)
               (id: "pin-${pin.id}", createdAt: pin.createdAt ?? _pinSeenAt!, event: null),
+            if (raid != null) (id: "raid-${raid.id}", createdAt: _raidSeenAt!, event: null),
             for (final event in events)
               (
                 id: "prediction-${event.id}",
@@ -319,8 +331,11 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
                   controller: widget.controller,
                   refresh: _refresh,
                   pendingTransactions: _pendingTransactions,
+                  showTotals: _showTotals,
                   dismiss: () => setState(() => _dismissedPoll = poll.id),
                 )
+              : entries[index].id.startsWith("raid-")
+              ? raid!.child
               : pin!.child,
       };
       return Padding(
@@ -399,11 +414,11 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
     final winner = event.outcomes
         .where((outcome) => outcome.id == event.winningOutcomeId)
         .firstOrNull;
-    final title =
-        winner?.title ??
-        (event.outcomes.length == 2 && _showTotals
-            ? event.outcomes.map((outcome) => formatCompactCount(outcome.points)).join(" vs ")
-            : event.title);
+    final title = _showTotals
+        ? winner == null && event.outcomes.length == 2
+              ? event.outcomes.map((outcome) => formatCompactCount(outcome.points)).join(" vs ")
+              : event.title
+        : winner?.title ?? event.title;
     void toggleExpanded() => setState(() {
       if (expanded) {
         _collapsedPredictions.add(event.id);
@@ -440,7 +455,7 @@ class _TwitchPredictionCardState extends State<TwitchPredictionCard> with Widget
                       Expanded(
                         child: Row(
                           children: [
-                            if (winner != null) ...[
+                            if (winner != null && !_showTotals) ...[
                               Transform.translate(
                                 offset: const Offset(-1.5, 0),
                                 child: const Icon(

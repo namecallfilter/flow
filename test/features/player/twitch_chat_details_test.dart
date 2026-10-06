@@ -2248,7 +2248,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets("gift icons distinguish anonymous gifts and system notices stay quiet", (
+  testWidgets("gift and moderator notice icons are distinct and system notices stay quiet", (
     tester,
   ) async {
     final controller = _Controller(_Client());
@@ -2263,11 +2263,19 @@ void main() {
       ),
       const TwitchChatMessage(
         id: "anon",
-        login: "",
-        displayName: "Anonymous",
+        login: "ananonymousgifter",
+        displayName: "AnAnonymousGifter",
         text: "",
-        noticeType: "anonsubgift",
+        noticeType: "submysterygift",
         noticeText: "An anonymous user gifted a subscription",
+      ),
+      const TwitchChatMessage(
+        id: "modiversary",
+        login: "preetmerchant",
+        displayName: "PREETMERCHANT",
+        text: "hmm",
+        noticeType: "modiversary",
+        noticeText: "PREETMERCHANT has been a Moderator for 6 months!",
       ),
       const TwitchChatMessage(
         id: "system",
@@ -2288,6 +2296,18 @@ void main() {
         (widget) => widget is SvgPicture && widget.semanticsLabel == "Anonymous gift",
       ),
       findsOneWidget,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is SvgPicture && widget.semanticsLabel == "Moderator anniversary",
+      ),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.star_rounded), findsNothing);
+    expect(find.textContaining("PREETMERCHANT: hmm", findRichText: true), findsOneWidget);
+    expect(
+      (_highlight(tester, "modiversary").border! as Border).left.color,
+      const Color(0xFF00AD03),
     );
     final system = _highlight(tester, "system");
     expect(system.color, isNull);
@@ -2316,6 +2336,9 @@ void main() {
       ),
       "prime": find.byWidgetPredicate(
         (widget) => widget is SvgPicture && widget.semanticsLabel == "Prime subscription",
+      ),
+      "modiversary": find.byWidgetPredicate(
+        (widget) => widget is SvgPicture && widget.semanticsLabel == "Moderator anniversary",
       ),
       "first": find.byIcon(Icons.auto_awesome),
     };
