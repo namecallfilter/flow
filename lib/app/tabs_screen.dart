@@ -1,6 +1,7 @@
 import "dart:async";
 import "dart:math" as math;
 
+import "package:flow/api/go_live_notifications.dart";
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_auth.dart";
@@ -14,9 +15,11 @@ import "package:flow/features/following/following_screen.dart";
 import "package:flow/features/following/following_store.dart";
 import "package:flow/features/following/twitch_login_offer_screen.dart";
 import "package:flow/features/player/player_navigation.dart";
+import "package:flow/features/player/player_screen.dart";
 import "package:flow/features/settings/settings_screen.dart";
 import "package:flow/shared/external_url_opener.dart";
 import "package:flow/shared/preferences/preferences.dart";
+import "package:flow/shared/twitch/twitch_display_mappers.dart";
 import "package:flow/shared/widgets/app_bottom_nav.dart";
 import "package:flow/shared/widgets/scroll_reactive_chrome.dart";
 import "package:flutter/foundation.dart";
@@ -206,6 +209,73 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
     if (_appIsResumed) {
       unawaited(_refreshTopLevelData(refresh: false));
     }
+    if (GoLiveNotifications.supported) {
+      GoLiveNotifications.platform.setMethodCallHandler((call) async {
+        if (call.method == "opened") {
+          await _openGoLiveNotification();
+        }
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        unawaited(_openGoLiveNotification());
+        unawaited(_syncLiveNotifications());
+      });
+    }
+  }
+
+  Future<void> _syncLiveNotifications() async {
+    try {
+      await _initialSessionRestore;
+      await GoLiveNotifications.instance.sync(_apiCache.clientLoader);
+    } on Object {
+      // Retry on the next resume; no background polling.
+    }
+  }
+
+  Future<void> _stopLiveNotifications() async {
+    if (!GoLiveNotifications.supported) {
+      return;
+    }
+    try {
+      await GoLiveNotifications.instance.disable();
+    } on Object {
+      // Local alerts are off; keep the old credentials for deletion on the next resume.
+    }
+  }
+
+  Future<void> _openGoLiveNotification() async {
+    try {
+      await _initialSessionRestore;
+      final login = await GoLiveNotifications.platform.invokeMethod<String>("consumeOpen");
+      if (!mounted || login == null || !RegExp(r"^[a-zA-Z0-9_]{1,25}$").hasMatch(login)) {
+        return;
+      }
+      await openStreamPlayer(
+        context,
+        builder: (_) => StreamPlayerScreen(
+          apiCache: _apiCache,
+          preferences: _preferences,
+          channel: streamChannelFromStream(
+            TwitchFollowedStream(
+              id: "",
+              userId: "",
+              userLogin: login,
+              userName: login,
+              gameName: "",
+              title: "Live now",
+              viewerCount: 0,
+            ),
+          ),
+        ),
+      );
+    } on Object {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Could not open the notified channel. Try opening it from Following."),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _restoreInitialSession() async {
@@ -256,6 +326,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
 
   void _completeInitialLogin(TwitchAuthConnection connection) {
     _followingStore.applyConnection(connection);
+    unawaited(_syncLiveNotifications());
     setState(() {
       _showStartupLoginOffer = false;
       _startupLoginMessage = null;
@@ -264,6 +335,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
 
   Future<void> _signOutAndContinue() async {
     try {
+      await _stopLiveNotifications();
       await _followingStore.signOut();
     } on Object catch (error) {
       debugPrint("Couldn't clear the Twitch session: $error");
@@ -342,6 +414,10 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
   }
 
   Future<void> _connectTwitchAccount() async {
+    await _stopLiveNotifications();
+    if (!mounted) {
+      return;
+    }
     final connection = await openTwitchLoginOfferScreen(
       context,
       _authController,
@@ -363,6 +439,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
     _isHandlingMe = true;
     final messenger = ScaffoldMessenger.of(context);
     try {
+      await _stopLiveNotifications();
       await _followingStore.signOut();
       if (mounted) {
         messenger.showSnackBar(
@@ -418,6 +495,9 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
 
   @override
   void dispose() {
+    if (GoLiveNotifications.supported) {
+      GoLiveNotifications.platform.setMethodCallHandler(null);
+    }
     WidgetsBinding.instance.removeObserver(this);
     _subscriptionSyncReaction();
     _topLevelRefreshTimer?.cancel();
@@ -433,6 +513,7 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
     _appIsResumed = state == AppLifecycleState.resumed;
     if (_appIsResumed && !wasResumed) {
       unawaited(_refreshTopLevelData(refresh: true));
+      unawaited(_syncLiveNotifications());
     }
   }
 
@@ -599,6 +680,9 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
                       twitchAccount: _followingStore.profileUser,
                       onSwitchTwitchAccount: _switchTwitchAccount,
                       onSignOutTwitch: _signOutFromSettings,
+                      notificationClientLoader: _followingStore.isLoggedIn
+                          ? _apiCache.clientLoader
+                          : null,
                       bottomNavigationBar: const SizedBox.shrink(),
                     ),
                   ),

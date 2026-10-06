@@ -1,3 +1,5 @@
+import java.util.Base64
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -5,6 +7,7 @@ plugins {
 }
 
 dependencies {
+    implementation("com.google.firebase:firebase-messaging:25.0.1")
     val media3Version = "1.11.0"
     implementation("androidx.media3:media3-exoplayer:$media3Version")
     implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
@@ -17,6 +20,7 @@ dependencies {
 }
 
 android {
+    buildFeatures { resValues = true }
     namespace = "com.namecallfilter.flow"
     compileSdk {
         version = release(37) { minorApiLevel = 1 }
@@ -29,6 +33,17 @@ android {
     }
 
     defaultConfig {
+        val defines = (project.findProperty("dart-defines") as? String).orEmpty()
+            .split(',').filter { it.isNotEmpty() }.associate {
+                val value = String(Base64.getDecoder().decode(it)).split('=', limit = 2)
+                value[0] to value.getOrElse(1) { "" }
+            }
+        mapOf(
+            "google_app_id" to "FLOW_FIREBASE_APP_ID",
+            "google_api_key" to "FLOW_FIREBASE_API_KEY",
+            "gcm_defaultSenderId" to "FLOW_FIREBASE_SENDER_ID",
+            "project_id" to "FLOW_FIREBASE_PROJECT_ID",
+        ).forEach { (resource, define) -> resValue("string", resource, defines[define].orEmpty()) }
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.namecallfilter.flow"
         manifestPlaceholders["appLabel"] = "Flow"

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://unpkg.com/wrangler@4.147.0/config-schema.json",
+  "name": "flow-go-live",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-05",
+  "durable_objects": {
+    "bindings": [{ "name": "RELAY", "class_name": "GoLiveRelay" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["GoLiveRelay"] }]
+}

@@ -32,6 +32,8 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.upstream.experimental.ExperimentalBandwidthMeter
+import com.google.firebase.FirebaseApp
+import com.google.firebase.messaging.FirebaseMessaging
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
@@ -41,6 +43,8 @@ import kotlin.math.roundToInt
 
 @UnstableApi
 class MainActivity : FlutterActivity() {
+    private var goLiveChannel: MethodChannel? = null
+    private var goLivePermissionResult: MethodChannel.Result? = null
     // Keep measured capacity when opening another player, including long-segment VODs.
     internal val playbackBandwidthMeter by lazy {
         ExperimentalBandwidthMeter.Builder(applicationContext).build()
@@ -103,6 +107,61 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        goLiveChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "flow/go_live").apply {
+            setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "status" -> result.success(mapOf(
+                        "configured" to listOf(R.string.google_app_id, R.string.google_api_key,
+                            R.string.gcm_defaultSenderId, R.string.project_id).all { getString(it).isNotBlank() },
+                        "permission" to GoLiveMessagingService.notificationsAllowed(this@MainActivity),
+                    ))
+                    "requestPermission" -> {
+                        if (Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+                            result.success(GoLiveMessagingService.notificationsAllowed(this@MainActivity))
+                        } else if (goLivePermissionResult != null) {
+                            result.error("busy", "Notification permission is already being requested.", null)
+                        } else {
+                            goLivePermissionResult = result
+                            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1002)
+                        }
+                    }
+                    "token" -> {
+                        if (FirebaseApp.initializeApp(this@MainActivity) == null) {
+                            result.error("not_configured", "Firebase is not configured in this build.", null)
+                        } else FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                            if (task.isSuccessful) result.success(task.result)
+                            else result.error("token_failed", "Could not register this device for notifications.", null)
+                        }
+                    }
+                    "resetToken" -> {
+                        if (FirebaseApp.initializeApp(this@MainActivity) == null) {
+                            result.error("not_configured", "Firebase is not configured in this build.", null)
+                        } else FirebaseMessaging.getInstance().deleteToken().addOnCompleteListener { task ->
+                            if (task.isSuccessful) result.success(null)
+                            else result.error("token_reset_failed", "Could not reset this device's notifications.", null)
+                        }
+                    }
+                    "setChannels" -> {
+                        val channels = call.argument<List<String>>("channels").orEmpty().toSet()
+                        getSharedPreferences("go_live", Context.MODE_PRIVATE).edit()
+                            .putBoolean("enabled", channels.isNotEmpty()).putStringSet("channels", channels)
+                            .putString("user_id", call.argument<String>("userId").orEmpty())
+                            .remove("token_base").remove("token_uploaded").apply()
+                        if (FirebaseApp.getApps(this@MainActivity).isNotEmpty()) {
+                            FirebaseMessaging.getInstance().isAutoInitEnabled = channels.isNotEmpty()
+                        }
+                        result.success(null)
+                    }
+                    "consumeOpen" -> {
+                        val login = intent.getStringExtra("flow_go_live_channel")
+                            ?.takeIf { it.matches(Regex("[a-zA-Z0-9_]{1,25}")) }
+                        intent.removeExtra("flow_go_live_channel")
+                        result.success(login)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
         window.decorView.viewTreeObserver.addOnPreDrawListener(::pictureInPictureFrameReady)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val keyboardChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "flow/keyboard")
@@ -187,6 +246,21 @@ class MainActivity : FlutterActivity() {
                     result.notImplemented()
                 }
             }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.hasExtra("flow_go_live_channel")) goLiveChannel?.invokeMethod("opened", null)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 1002) {
+            goLivePermissionResult?.success(grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED &&
+                GoLiveMessagingService.notificationsAllowed(this))
+            goLivePermissionResult = null
+        }
     }
 
     private fun playChatMention(result: MethodChannel.Result) {
