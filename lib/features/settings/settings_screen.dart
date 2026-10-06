@@ -1,5 +1,6 @@
 import "dart:async";
 
+import "package:flow/api/go_live_notifications.dart";
 import "package:flow/api/twitch_api.dart";
 import "package:flow/app/app_settings_store.dart";
 import "package:flow/app/radius.dart";
@@ -30,6 +31,7 @@ class SettingsScreen extends StatefulWidget {
     this.twitchAccount,
     this.onSwitchTwitchAccount,
     this.onSignOutTwitch,
+    this.notificationClientLoader,
   });
 
   final Widget? bottomNavigationBar;
@@ -41,6 +43,7 @@ class SettingsScreen extends StatefulWidget {
   final TwitchUser? twitchAccount;
   final AsyncCallback? onSwitchTwitchAccount;
   final AsyncCallback? onSignOutTwitch;
+  final Future<TwitchApiClient> Function()? notificationClientLoader;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -66,6 +69,9 @@ class SettingsScreen extends StatefulWidget {
     properties.add(DiagnosticsProperty<AppSettingsStore?>("settingsStore", settingsStore));
     properties.add(DiagnosticsProperty<TwitchUser?>("twitchAccount", twitchAccount));
     properties.add(
+      ObjectFlagProperty<Object?>.has("notificationClientLoader", notificationClientLoader),
+    );
+    properties.add(
       ObjectFlagProperty<AsyncCallback?>.has(
         "onSwitchTwitchAccount",
         onSwitchTwitchAccount,
@@ -82,6 +88,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late final AppSettingsStore _settingsStore;
   bool _settingsLoadFailed = false;
   bool _isSaving = false;
+  final _notifications = GoLiveNotifications.instance;
+  bool _notificationsConfigured = false;
+  bool _notificationsSignedIn = false;
+  bool _notificationsSaving = false;
+  bool _notificationPermission = true;
   final _chatSliderValues = <String, double>{};
 
   @override
@@ -95,12 +106,76 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (!_settingsStore.isLoaded) {
       unawaited(_loadSettings());
     }
+    if (GoLiveNotifications.supported) {
+      _notifications.addListener(_notificationsChanged);
+      unawaited(_loadNotifications());
+    }
+  }
+
+  @override
+  void didUpdateWidget(SettingsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (GoLiveNotifications.supported &&
+        oldWidget.notificationClientLoader != widget.notificationClientLoader) {
+      _notificationsSignedIn = false;
+      unawaited(_loadNotifications());
+    }
   }
 
   @override
   void dispose() {
+    _notifications.removeListener(_notificationsChanged);
     _scrollController.dispose();
     super.dispose();
+  }
+
+  void _notificationsChanged() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _loadNotifications() async {
+    try {
+      await _notifications.load();
+      final status = await _notifications.status();
+      final loader = widget.notificationClientLoader;
+      final client = await loader?.call();
+      if (mounted && loader == widget.notificationClientLoader) {
+        setState(() {
+          _notificationsConfigured = status["configured"] == true;
+          _notificationsSignedIn = client?.accessToken.isNotEmpty ?? false;
+          _notificationPermission = status["permission"] == true;
+        });
+      }
+    } on Object {
+      // Keep the toggle unavailable if device notification setup cannot be read.
+    }
+  }
+
+  Future<void> _changeNotifications(bool enabled) async {
+    setState(() => _notificationsSaving = true);
+    try {
+      if (enabled) {
+        await _notifications.enable(widget.notificationClientLoader!);
+      } else {
+        await _notifications.disable();
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        final message = error is TwitchApiException
+            ? error.message
+            : error is StateError
+            ? error.message
+            : "Couldn't update live notifications. Please try again.";
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      }
+    } finally {
+      await _loadNotifications();
+      if (mounted) {
+        setState(() => _notificationsSaving = false);
+      }
+    }
   }
 
   Future<void> _loadSettings() async {
@@ -380,6 +455,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
                             onTap: widget.onSignOutTwitch == null
                                 ? null
                                 : () => unawaited(widget.onSignOutTwitch!()),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: AppSpacing.md),
+                    ],
+                    if (GoLiveNotifications.supported) ...[
+                      _SettingsGroup(
+                        children: [
+                          _SettingsRow(
+                            icon: Icons.notifications_active_outlined,
+                            title: "Live Notifications",
+                            subtitle: !_notificationsConfigured
+                                ? "Setup required in this build."
+                                : _notifications.pendingUnregister
+                                ? "Off. Removal will retry when Flow opens."
+                                : !_notificationsSignedIn
+                                ? "Sign in to Twitch to enable."
+                                : _notifications.enabled && !_notificationPermission
+                                ? "Allow Flow notifications in Android settings."
+                                : "Uses Twitch’s Always and Go Live Only channels.",
+                            trailing: Switch(
+                              value: _notifications.enabled,
+                              onChanged:
+                                  !_notificationsSaving &&
+                                      (_notifications.enabled ||
+                                          (_notificationsConfigured &&
+                                              _notificationsSignedIn))
+                                  ? (value) => unawaited(_changeNotifications(value))
+                                  : null,
+                            ),
                           ),
                         ],
                       ),

@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Flow relay device checks</title>
+<style>body{font:16px system-ui;margin:24px;background:#15121b;color:#f5f0fa}button{font:inherit;padding:14px;border:0;border-radius:12px;background:#c5a3ff}li{margin:12px 0}.pass{color:#90edac}.fail{color:#ff9b9b}</style>
+<h1>Flow relay checks</h1><p>Runs here on the device. Uses simulated storage; no Twitch or Firebase requests.</p>
+<button id="run">Run checks</button><ol id="results"></ol><p id="summary"></p>
+<script type="module">
+import worker, { GoLiveRelay } from "./worker.js";
+const encode = (text) => new TextEncoder().encode(text);
+const assert = (condition, message) => { if (!condition) throw new Error(message); };
+document.querySelector("#run").onclick = async () => {
+  document.querySelector("#run").disabled = true;
+  const values = new Map();
+  let nextAlarm = null, sent = 0, passed = 0, metadataCalls = 0;
+  let missingAvatar = false, missingTitle = false;
+  const messages = [];
+  const storage = {
+    get: async (key) => structuredClone(values.get(key)),
+    put: async (key, value) => values.set(key, structuredClone(value)),
+    delete: async (key) => values.delete(key),
+    list: async ({ prefix }) => new Map([...values].filter(([key]) => key.startsWith(prefix)).sort(([a], [b]) => a.localeCompare(b))),
+    transaction: async (callback) => callback(storage),
+    getAlarm: async () => nextAlarm,
+    setAlarm: async (value) => { nextAlarm = value; },
+  };
+  const env = { TWITCH_CLIENT_ID: "test", TWITCH_CLIENT_SECRET: "test", TWITCH_WEBHOOK_SECRET: "b".repeat(32), FIREBASE_SERVICE_ACCOUNT: "{}" };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    if (url.startsWith("https://api.twitch.tv/helix/")) {
+      metadataCalls++;
+      assert(options.headers.Authorization === "Bearer app-token", "Wrong metadata authorization");
+      if (url.endsWith("/channels?broadcaster_id=123")) return missingTitle ? new Response(null, { status: 503 }) : Response.json({ data: [{ title: "Tonight's stream title" }] });
+      assert(url.endsWith("/users?id=123"), "Wrong metadata endpoint");
+      if (missingAvatar) throw new Error("Profile lookup unavailable");
+      return Response.json({ data: [{ profile_image_url: "https://static-cdn.jtvnw.net/jtv_user_pictures/example-profile_image-300x300.png" }] });
+    }
+    if (url.startsWith("https://fcm.googleapis.com/")) {
+      messages.push(JSON.parse(options.body).message);
+      return Response.json({ name: "test-delivery" });
+    }
+    assert(url === "https://id.twitch.tv/oauth2/validate", "Unexpected upstream request");
+    const authorization = options.headers.Authorization;
+    if (authorization === "OAuth unavailable") return new Response(null, { status: 503 });
+    if (authorization === "OAuth another-account") return Response.json({ user_id: "999" });
+    return authorization === "OAuth device-check-token" ? Response.json({ user_id: "321" }) : new Response(null, { status: 401 });
+  };
+  const relay = new GoLiveRelay({ storage }, env);
+  relay.reconcile = async () => {};
+  relay.send = async () => { sent++; };
+  env.RELAY = { idFromName: (name) => name, get: () => relay };
+  const id = "12345678-1234-1234-1234-123456789abc";
+  const device = (method, body, token = "device-check-token") => worker.fetch(new Request(`https://relay.test/v1/devices/${id}`, { method, headers: { Authorization: `Bearer ${token}` }, body: body === undefined ? undefined : JSON.stringify(body) }), env);
+  const event = { subscription: { type: "stream.online", id: "subscription", condition: { broadcaster_user_id: "123" } }, event: { id: "stream1", broadcaster_user_id: "123", broadcaster_user_login: "example", broadcaster_user_name: "Example", type: "live", started_at: new Date().toISOString() } };
+  const webhook = async (payload, { bad = false, time = new Date().toISOString() } = {}) => {
+    const body = JSON.stringify(payload), messageId = crypto.randomUUID();
+    const key = await crypto.subtle.importKey("raw", encode(env.TWITCH_WEBHOOK_SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const signature = [...new Uint8Array(await crypto.subtle.sign("HMAC", key, encode(messageId + time + body)))].map((value) => value.toString(16).padStart(2, "0")).join("");
+    return worker.fetch(new Request("https://relay.test/webhooks/twitch", { method: "POST", body, headers: { "Twitch-Eventsub-Message-Id": messageId, "Twitch-Eventsub-Message-Timestamp": time, "Twitch-Eventsub-Message-Type": "notification", "Twitch-Eventsub-Message-Signature": `sha256=${bad ? "0".repeat(64) : signature}` } }), env);
+  };
+  const check = async (name, action) => {
+    const item = document.createElement("li");
+    try { await action(); item.textContent = `PASS: ${name}`; item.className = "pass"; passed++; }
+    catch (error) { item.textContent = `FAIL: ${name}: ${error.message}`; item.className = "fail"; }
+    document.querySelector("#results").append(item);
+  };
+  await check("Reject invalid Twitch sign-in", async () => assert((await device("PUT", {}, "wrong")).status === 401, "Expected 401"));
+  await check("Validation outage does not accept or invalidate sign-in", async () => assert((await device("PUT", {}, "unavailable")).status === 503, "Expected 503"));
+  await check("Reject malformed registration", async () => assert((await device("PUT", null)).status === 400, "Expected 400"));
+  await check("Accept channel selection", async () => assert((await device("PUT", { token: "test-token".repeat(4), channels: ["123", "123"] })).status === 202, "Expected 202"));
+  await check("Never return device token", async () => { const body = await (await device("GET")).json(); assert(!("token" in body) && body.channels.length === 1, "Private token or duplicate channel exposed"); });
+  await check("Another account cannot read a device or spoof its owner", async () => {
+    const response = await worker.fetch(new Request(`https://relay.test/v1/devices/${id}`, { headers: { Authorization: "Bearer another-account", "X-Flow-User-Id": "321" } }), env);
+    assert((await response.json()).channels.length === 0, "Account data leaked through a spoofed owner header");
+  });
+  await check("Another account cannot change a device token", async () => {
+    const response = await device("PATCH", { token: "foreign-token".repeat(4), previousToken: "test-token".repeat(4) }, "another-account");
+    assert(response.status === 404 && (await storage.get(`device:321:${id}`)).token === "test-token".repeat(4), "Another account changed the token");
+  });
+  await check("Another account cannot delete a device", async () => {
+    await device("DELETE", undefined, "another-account");
+    assert(await storage.get(`device:321:${id}`), "Another account deleted the device");
+  });
+  await check("Accounts with the same installation ID keep separate selections", async () => {
+    assert((await device("PUT", { token: "foreign-token".repeat(4), channels: ["456"] }, "another-account")).status === 202, "Second account registration rejected");
+    assert((await storage.get(`device:321:${id}`)).channels.join() === "123" && (await storage.get(`device:999:${id}`)).channels.join() === "456", "Account selections collided");
+    await device("DELETE", undefined, "another-account");
+  });
+  await check("Token refresh preserves selected channels", async () => {
+    const response = await device("PATCH", { token: "rotated-token".repeat(4), previousToken: "test-token".repeat(4) });
+    const saved = await storage.get(`device:321:${id}`);
+    assert(response.status === 204 && saved.token === "rotated-token".repeat(4) && saved.channels.join() === "123", "Token update lost channel selection");
+  });
+  await check("Repeated token refresh is idempotent", async () => assert((await device("PATCH", { token: "rotated-token".repeat(4), previousToken: "test-token".repeat(4) })).status === 204, "Expected 204"));
+  await check("Stale token refresh cannot overwrite a newer token", async () => {
+    const response = await device("PATCH", { token: "stale-callback-token".repeat(2), previousToken: "test-token".repeat(4) });
+    assert(response.status === 409 && (await storage.get(`device:321:${id}`)).token === "rotated-token".repeat(4), "Stale update replaced current token");
+  });
+  await check("Reject tampered webhook", async () => assert((await webhook(event, { bad: true })).status === 403, "Expected 403"));
+  await check("Reject expired signature", async () => assert((await webhook(event, { time: new Date(Date.now() - 660_000).toISOString() })).status === 403, "Expected 403"));
+  await check("Persist signed event once across retries", async () => { await webhook(event); await webhook(event); assert((await storage.list({ prefix: "push:" })).size === 1, "Duplicate or missing delivery"); });
+  await check("Deliver one notification", async () => { nextAlarm = null; await relay.alarm(); assert(sent === 1 && !(await storage.list({ prefix: "push:" })).size, "Wrong delivery count"); });
+  await check("Ignore unselected broadcaster", async () => { const other = structuredClone(event); other.subscription.condition.broadcaster_user_id = other.event.broadcaster_user_id = "456"; await webhook(other); assert(!(await storage.list({ prefix: "push:" })).size, "Wrong channel queued"); });
+  await check("Opt-out cancels pending notification", async () => { const another = structuredClone(event); another.event.id = "stream2"; await webhook(another); await device("DELETE"); nextAlarm = null; await relay.alarm(); assert(sent === 1, "Sent after opt-out"); });
+  await check("Token refresh cannot resurrect a deleted device", async () => {
+    const response = await device("PATCH", { token: "replacement-token".repeat(3), previousToken: "rotated-token".repeat(4) });
+    assert(response.status === 404 && !await storage.get(`device:321:${id}`), "Deleted device was recreated");
+  });
+  await check("Future retries cannot starve ready jobs or spin alarms", async () => {
+    await device("PUT", { token: "test-token".repeat(4), channels: ["123"] });
+    for (let i = 0; i < 21; i++) await storage.put(`push:${String(i).padStart(2, "0")}`, { event: event.event, deviceId: `321:${id}`, expires: Date.now() + 300_000, next: i === 20 ? 0 : Date.now() + 60_000, attempt: 0 });
+    nextAlarm = null; await relay.alarm();
+    assert(sent === 2 && nextAlarm > Date.now() + 30_000, "Starved delivery or immediate retry loop");
+  });
+  await check("Five failing channels cannot starve the sixth subscription", async () => {
+    await device("PUT", { token: "test-token".repeat(4), channels: ["901", "902", "903", "904", "905", "906"] });
+    const attempted = [];
+    relay.twitch = async (_path, _method, body) => {
+      const channel = body.condition.broadcaster_user_id;
+      attempted.push(channel);
+      return channel === "906" ? Response.json({ data: [{ id: "sixth-subscription" }] }, { status: 202 }) : new Response(null, { status: 400 });
+    };
+    for (let i = 0; i < 2; i++) await GoLiveRelay.prototype.reconcile.call(relay).catch(() => {});
+    assert(attempted.includes("906") && (await storage.get("channel:906"))?.id === "sixth-subscription", "Valid channel starved behind failures");
+  });
+  const payloadRelay = new GoLiveRelay({ storage }, env);
+  payloadRelay.twitchToken = { value: "app-token", expires: Date.now() + 3_600_000 };
+  payloadRelay.googleToken = async () => "firebase-token";
+  const payloadJob = { event: { ...event.event, id: "metadata-check" }, deviceId: `321:${id}`, expires: Date.now() + 300_000 };
+  await check("Notification has stream title and avatar, shared across deliveries", async () => {
+    await payloadRelay.send({ token: "first-device" }, payloadJob);
+    await payloadRelay.send({ token: "second-device" }, payloadJob);
+    const data = messages.at(-1).data;
+    assert(metadataCalls === 2 && messages.length === 2, "Metadata refetched for each device");
+    assert(data.title === "Example is live!" && data.stream_title === "Tonight's stream title" && data.avatar_url.endsWith("300x300.png"), "Wrong notification content");
+    assert(messages.at(-1).android.priority === "HIGH" && data.user_id === "321", "Delivery policy changed");
+  });
+  await check("Missing avatar or title cannot prevent a notification", async () => {
+    missingAvatar = true;
+    await payloadRelay.send({ token: "first-device" }, { ...payloadJob, event: { ...payloadJob.event, id: "missing-avatar" } });
+    assert(messages.at(-1).data.avatar_url === "" && messages.at(-1).data.stream_title === "Tonight's stream title", "Avatar failure lost title or alert");
+    missingTitle = true; missingAvatar = false;
+    await payloadRelay.send({ token: "first-device" }, { ...payloadJob, event: { ...payloadJob.event, id: "missing-title" } });
+    assert(messages.at(-1).data.stream_title === "" && messages.at(-1).data.avatar_url.endsWith("300x300.png") && messages.length === 4, "Title failure lost avatar or alert");
+  });
+  globalThis.fetch = originalFetch;
+  document.querySelector("#summary").textContent = `${passed}/23 checks passed`;
+};
+</script></html>

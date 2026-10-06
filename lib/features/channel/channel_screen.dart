@@ -1,6 +1,7 @@
 import "dart:async";
 import "dart:math" as math;
 
+import "package:flow/api/go_live_notifications.dart";
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/app/radius.dart";
@@ -68,6 +69,8 @@ class _ChannelScreenState extends State<ChannelScreen> {
   ({String channelId, bool isFollowing})? _follow;
   bool _followBusy = false;
   bool _followFailed = false;
+  bool _notificationBusy = false;
+  TwitchChannelNotificationSetting? _notificationSetting;
   bool _isOwnChannel = false;
   bool _isVisible = false;
 
@@ -107,7 +110,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
   }
 
   Future<void> _updateFollow({bool toggle = false}) async {
-    if (_followBusy) {
+    if (_followBusy || _notificationBusy) {
       return;
     }
     var reload = false;
@@ -179,6 +182,9 @@ class _ChannelScreenState extends State<ChannelScreen> {
         return;
       }
       setState(() {
+        if (_followSession != session || access?.isFollowing != true) {
+          _notificationSetting = null;
+        }
         _followSession = session;
         _isOwnChannel = isOwnChannel;
         _follow = access == null
@@ -198,6 +204,96 @@ class _ChannelScreenState extends State<ChannelScreen> {
       if (mounted) {
         setState(() => _followBusy = false);
         if (reload) {
+          unawaited(_updateFollow());
+        }
+      }
+    }
+  }
+
+  Future<void> _changeNotifications() async {
+    final follow = _follow;
+    if (_notificationBusy || _followBusy || follow?.isFollowing != true) {
+      return;
+    }
+    var reloadFollow = false;
+    setState(() => _notificationBusy = true);
+    try {
+      final client = await widget.apiCache.clientLoader();
+      final session = (client.accessToken, client.gqlAccessToken);
+      if (session != _followSession) {
+        reloadFollow = true;
+        return;
+      }
+      final current = await client.fetchChannelNotificationSetting(widget.initialChannel.login);
+      if (!mounted) {
+        return;
+      }
+      setState(() => _notificationSetting = current);
+      final selected = await showDialog<TwitchChannelNotificationSetting>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: const Text("Channel notifications"),
+          children: [
+            for (final setting in TwitchChannelNotificationSetting.values)
+              ListTile(
+                key: ValueKey("channel_notifications_${setting.value}"),
+                title: Text(setting.label),
+                selected: setting == current,
+                trailing: setting == current ? const Icon(Icons.check_rounded) : null,
+                onTap: () => Navigator.pop(context, setting),
+              ),
+          ],
+        ),
+      );
+      if (selected == null || selected == current || !mounted) {
+        return;
+      }
+      final currentClient = await widget.apiCache.clientLoader();
+      if (session != (currentClient.accessToken, currentClient.gqlAccessToken)) {
+        reloadFollow = true;
+        return;
+      }
+      await client.setChannelNotificationSetting(
+        follow!.channelId,
+        setting: selected,
+      );
+      final saved = await client.fetchChannelNotificationSetting(widget.initialChannel.login);
+      if (saved != selected) {
+        throw TwitchApiException("Twitch did not save the notification setting. Try again.");
+      }
+      if (mounted) {
+        setState(() => _notificationSetting = saved);
+      }
+      try {
+        await GoLiveNotifications.instance.sync(widget.apiCache.clientLoader);
+      } on Object {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Saved on Twitch. Flow will sync when reopened.")),
+          );
+        }
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              error is TwitchApiException
+                  ? error.message.contains("failed integrity check")
+                        ? "Twitch couldn't verify this change. Sign in again and try."
+                        : error.message.replaceFirst(
+                            RegExp(r"^Twitch GraphQL \w+ failed: "),
+                            "Twitch could not update notifications: ",
+                          )
+                  : "Could not update channel notifications. Try again.",
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _notificationBusy = false);
+        if (reloadFollow) {
           unawaited(_updateFollow());
         }
       }
@@ -334,7 +430,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
                           ? const SkeletonShimmer(child: _channelFollowButtonSkeleton)
                           : FilledButton.tonalIcon(
                               key: const ValueKey("channel_follow_button"),
-                              onPressed: _followBusy
+                              onPressed: _followBusy || _notificationBusy
                                   ? null
                                   : () => unawaited(_updateFollow(toggle: !_followFailed)),
                               icon: Icon(
@@ -352,6 +448,27 @@ class _ChannelScreenState extends State<ChannelScreen> {
                                     : "Follow",
                               ),
                             ),
+                      notificationButton: _follow?.isFollowing == true && !_isOwnChannel
+                          ? IconButton.filledTonal(
+                              key: const ValueKey("channel_notifications_button"),
+                              tooltip: _notificationSetting == null
+                                  ? "Channel notifications"
+                                  : "Channel notifications: ${_notificationSetting!.label}",
+                              onPressed: _notificationBusy || _followBusy
+                                  ? null
+                                  : () => unawaited(_changeNotifications()),
+                              icon: _notificationBusy
+                                  ? const SizedBox.square(
+                                      dimension: 20,
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    )
+                                  : Icon(
+                                      _notificationSetting == TwitchChannelNotificationSetting.never
+                                          ? Icons.notifications_off_outlined
+                                          : Icons.notifications_outlined,
+                                    ),
+                            )
+                          : null,
                       onProfileTap: playerChannel == null || liveStream == null
                           ? null
                           : () => _openChannelPlayer(playerChannel),
@@ -742,6 +859,7 @@ class _ChannelHeader extends StatelessWidget {
     required this.channel,
     required this.initialChannel,
     required this.followButton,
+    this.notificationButton,
     required this.onProfileTap,
     required this.onChatTap,
     required this.onCategoryTap,
@@ -750,6 +868,7 @@ class _ChannelHeader extends StatelessWidget {
   final TwitchChannelDetails? channel;
   final ChannelPreview initialChannel;
   final Widget followButton;
+  final Widget? notificationButton;
   final VoidCallback? onProfileTap;
   final VoidCallback? onChatTap;
   final VoidCallback? onCategoryTap;
@@ -904,6 +1023,7 @@ class _ChannelHeader extends StatelessWidget {
               runSpacing: AppSpacing.xs,
               children: [
                 followButton,
+                ?notificationButton,
                 if (onChatTap != null)
                   OutlinedButton.icon(
                     key: const ValueKey("channel_chat_button"),

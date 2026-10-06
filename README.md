@@ -20,6 +20,9 @@ Twitch sign-in uses the public client ID and redirect URI in
 `lib/api/twitch_auth.dart`. Normal `flutter run` and `flutter build apk`
 commands include this configuration; no `.env` file or extra flags are needed.
 
+Live notifications additionally need the Firebase client options and Worker URL
+described in [the notification setup guide](workers/go-live/README.md#configured-release).
+
 The sign-in screen embeds GeckoView. Keep its version in
 `android/app/build.gradle.kts` updated with Mozilla's security releases;
 system WebView updates do not update this bundled engine. After OAuth validation,

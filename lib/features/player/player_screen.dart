@@ -774,10 +774,10 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         if (mounted && generation == _viewerRefreshGeneration && stream != null) {
           _watchTime?.updateStream(stream);
         }
-        if (_waitingForLive && stream != null) {
+        if (stream != null) {
           liveChannel = streamChannelFromStream(
             stream,
-            avatarImageUrl: widget.channel.avatarImageUrl,
+            avatarImageUrl: stream.profileImageUrl ?? _channel.avatarImageUrl,
           );
         }
       } else {
@@ -798,6 +798,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
             _viewerText = formatCompactCount(viewerCount);
           }
           _startedAt = startedAt ?? _startedAt;
+          _liveChannel = liveChannel ?? _liveChannel;
           if ((restartIfLive || openVideo) && _streamEnded) {
             _releasePlayback();
             _streamEnded = false;
@@ -806,7 +807,6 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
           if (openVideo) {
             _waitingForLive = false;
             _chatOnly = false;
-            _liveChannel = liveChannel;
           }
         });
         if (openVideo) {
@@ -1114,12 +1114,10 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
 
   Future<void> _openChannel([ChannelPreview? channel]) async {
     channel ??= ChannelPreview(
-      login: widget.channel.login.trim().isEmpty
-          ? widget.channel.name.trim()
-          : widget.channel.login.trim(),
-      displayName: widget.channel.name,
-      avatarImageUrl: widget.channel.avatarImageUrl,
-      isPartner: widget.channel.isPartner,
+      login: _channel.login.trim().isEmpty ? _channel.name.trim() : _channel.login.trim(),
+      displayName: _channel.name,
+      avatarImageUrl: _channel.avatarImageUrl,
+      isPartner: _channel.isPartner,
       isLive: _isLive && !_streamEnded,
     );
     if (channel.login.isEmpty) {
@@ -1240,6 +1238,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
     Widget builder(BuildContext context) => SettingsScreen(
       showBackButton: true,
       settingsStore: _chatSettingsStore,
+      notificationClientLoader: widget.apiCache.clientLoader,
     );
     await _openOverlayPage(builder);
   }
@@ -1592,15 +1591,15 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
         const SizedBox(width: 4),
         Semantics(
           button: true,
-          label: "Open ${widget.channel.name} channel",
+          label: "Open ${_channel.name} channel",
           child: GestureDetector(
             key: const ValueKey("player_chat_profile_button"),
             onTap: () => unawaited(_openChannel()),
             child: AvatarRing(
-              initials: widget.channel.initials,
+              initials: _channel.initials,
               size: 36,
-              avatarColors: widget.channel.avatarColors,
-              imageUrl: widget.channel.avatarImageUrl,
+              avatarColors: _channel.avatarColors,
+              imageUrl: _channel.avatarImageUrl,
             ),
           ),
         ),
@@ -1612,7 +1611,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
             children: [
               Semantics(
                 button: true,
-                label: "Open ${widget.channel.name} channel",
+                label: "Open ${_channel.name} channel",
                 child: GestureDetector(
                   key: const ValueKey("player_chat_name_button"),
                   behavior: HitTestBehavior.opaque,
@@ -1625,7 +1624,7 @@ class _StreamPlayerScreenState extends State<StreamPlayerScreen> with WidgetsBin
                       TextSpan(
                         children: [
                           TextSpan(
-                            text: widget.channel.name,
+                            text: _channel.name,
                             style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
                           TextSpan(text: "  ${_channel.title}"),

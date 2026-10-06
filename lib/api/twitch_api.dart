@@ -157,6 +157,18 @@ class TwitchFollowedChannel {
   final DateTime? followedAt;
 }
 
+enum TwitchChannelNotificationSetting {
+  always("ALWAYS", "Always"),
+  personalized("PERSONALIZED", "Personalized"),
+  goLiveOnly("LIVE_UP_ONLY", "Go Live Only"),
+  never("NEVER", "Never");
+
+  const TwitchChannelNotificationSetting(this.value, this.label);
+
+  final String value;
+  final String label;
+}
+
 class TwitchChannelInfo {
   const TwitchChannelInfo({
     required this.broadcasterId,
@@ -652,6 +664,138 @@ class TwitchApiClient {
     } while (after != null && cursors.add(after));
 
     return channels.values.toList();
+  }
+
+  /// Includes Twitch's enabled Always and Go Live Only choices; excludes Personalized and Off.
+  Future<Set<String>> fetchLiveNotificationChannelIds() async {
+    final channels = <String>{};
+    final cursors = <String>{};
+    String? after;
+    do {
+      final data = await _query(
+        () => _authenticatedGraphQlClient.query(
+          graphql.QueryOptions<Map<String, dynamic>>(
+            document: graphql.gql(r"""
+              query FlowLiveNotificationChannels($after: Cursor) {
+                currentUser {
+                  notificationEnrollmentFollows(first: 100, after: $after, order: ASC) {
+                    edges {
+                      cursor
+                      disableNotifications
+                      node { id }
+                      notificationSettings { isEnabled followsSettingState }
+                    }
+                    pageInfo { hasNextPage }
+                  }
+                }
+              }
+            """),
+            variables: {"after": after},
+            fetchPolicy: graphql.FetchPolicy.noCache,
+            parserFn: (data) => data,
+          ),
+        ),
+        "FlowLiveNotificationChannels",
+        retryIntegrityChallenge: true,
+      );
+      final connection = _mapValue(
+        _mapValue(data["currentUser"])?["notificationEnrollmentFollows"],
+      );
+      _requireFollowingConnection(connection, "FlowLiveNotificationChannels");
+      for (final edge in _edgeList(connection)) {
+        final node = _mapValue(edge["node"]);
+        if (node == null) {
+          continue;
+        }
+        final id = _stringValue(node["id"]);
+        final settings = _mapValue(edge["notificationSettings"]);
+        final state = settings?["followsSettingState"];
+        if (id.isEmpty ||
+            settings?["isEnabled"] is! bool ||
+            !const {"ALWAYS", "LIVE_UP_ONLY", "PERSONALIZED", "NEVER"}.contains(state)) {
+          throw TwitchApiException("Twitch returned incomplete live notification settings.");
+        }
+        if (edge["disableNotifications"] != true &&
+            settings?["isEnabled"] == true &&
+            const {"ALWAYS", "LIVE_UP_ONLY"}.contains(state)) {
+          channels.add(id);
+        }
+      }
+      after = _connectionCursor(connection);
+      if (after != null && !cursors.add(after)) {
+        throw TwitchApiException("Twitch repeated a page of live notification settings.");
+      }
+    } while (after != null);
+    return channels;
+  }
+
+  Future<TwitchChannelNotificationSetting> fetchChannelNotificationSetting(String login) async {
+    final data = await _query(
+      () => _authenticatedGraphQlClient.query(
+        graphql.QueryOptions<Map<String, dynamic>>(
+          document: graphql.gql(r"""
+            query FlowChannelNotificationSetting($login: String!) {
+              user(login: $login) {
+                self {
+                  follower {
+                    disableNotifications
+                    notificationSettings { isEnabled followsSettingState }
+                  }
+                }
+              }
+            }
+          """),
+          variables: {"login": login.trim().toLowerCase()},
+          fetchPolicy: graphql.FetchPolicy.noCache,
+          parserFn: (data) => data,
+        ),
+      ),
+      "FlowChannelNotificationSetting",
+      retryIntegrityChallenge: true,
+    );
+    final follower = _mapValue(_mapValue(_mapValue(data["user"])?["self"])?["follower"]);
+    final settings = _mapValue(follower?["notificationSettings"]);
+    final setting = TwitchChannelNotificationSetting.values
+        .where((value) => value.value == settings?["followsSettingState"])
+        .firstOrNull;
+    if (setting == null || settings?["isEnabled"] is! bool) {
+      throw TwitchApiException("Could not load this channel's notification settings.");
+    }
+    return follower?["disableNotifications"] == true || settings?["isEnabled"] == false
+        ? TwitchChannelNotificationSetting.never
+        : setting;
+  }
+
+  Future<void> setChannelNotificationSetting(
+    String channelId, {
+    required TwitchChannelNotificationSetting setting,
+  }) async {
+    final id = channelId.trim();
+    if (!RegExp(r"^\d+$").hasMatch(id)) {
+      throw TwitchApiException("Choose a valid Twitch channel for notifications.");
+    }
+    final data = await _query(
+      () => _authenticatedGraphQlClient.mutate(
+        graphql.MutationOptions<Map<String, dynamic>>(
+          document: graphql.gql(r"""
+              mutation FlowSetChannelNotificationSetting($input: SetLiveNotificationsEnrollmentInput!) {
+                setLiveNotificationsEnrollment(input: $input) { error }
+              }
+          """),
+          variables: {
+            "input": {"channelID": id, "settingState": setting.value},
+          },
+          fetchPolicy: graphql.FetchPolicy.noCache,
+          parserFn: (data) => data,
+        ),
+      ),
+      "FlowSetChannelNotificationSetting",
+      retryIntegrityChallenge: true,
+    );
+    final result = _mapValue(data["setLiveNotificationsEnrollment"]);
+    if (result == null || !result.containsKey("error") || result["error"] != null) {
+      throw TwitchApiException("Twitch did not confirm the notification change.");
+    }
   }
 
   Future<Map<String, TwitchUser>> fetchUsersByIds(List<String> ids) async {
