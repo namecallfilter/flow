@@ -97,8 +97,14 @@ void main() {
       var malformed = false;
       var repeated = false;
       var pages = 0;
-      Map<String, Object?> edge(String id, String state, {bool enabled = true}) => {
+      Map<String, Object?> edge(
+        String id,
+        String state, {
+        bool enabled = true,
+        bool legacyDisabled = false,
+      }) => {
         "cursor": "page-2",
+        "disableNotifications": legacyDisabled,
         "node": {"id": id},
         "notificationSettings": malformed
             ? null
@@ -113,6 +119,7 @@ void main() {
           final body = jsonDecode(request.body) as Map<String, dynamic>;
           expect(request.headers["authorization"], "OAuth web-token");
           expect(body["query"], contains("notificationEnrollmentFollows"));
+          expect(body["query"], contains("disableNotifications"));
           final variables = body["variables"] as Map<String, dynamic>;
           final first = variables["after"] == null;
           return http.Response(
@@ -127,6 +134,8 @@ void main() {
                             edge("3", "PERSONALIZED"),
                             edge("4", "NEVER"),
                             edge("5", "ALWAYS", enabled: false),
+                            edge("7", "ALWAYS", legacyDisabled: true),
+                            edge("8", "LIVE_UP_ONLY", legacyDisabled: true),
                           ]
                         : [edge("1", "ALWAYS"), edge("6", "LIVE_UP_ONLY")],
                     "pageInfo": {"hasNextPage": first || repeated},

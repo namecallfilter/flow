@@ -681,6 +681,7 @@ class TwitchApiClient {
                   notificationEnrollmentFollows(first: 100, after: $after, order: ASC) {
                     edges {
                       cursor
+                      disableNotifications
                       node { id }
                       notificationSettings { isEnabled followsSettingState }
                     }
@@ -714,7 +715,9 @@ class TwitchApiClient {
             !const {"ALWAYS", "LIVE_UP_ONLY", "PERSONALIZED", "NEVER"}.contains(state)) {
           throw TwitchApiException("Twitch returned incomplete live notification settings.");
         }
-        if (settings?["isEnabled"] == true && const {"ALWAYS", "LIVE_UP_ONLY"}.contains(state)) {
+        if (edge["disableNotifications"] != true &&
+            settings?["isEnabled"] == true &&
+            const {"ALWAYS", "LIVE_UP_ONLY"}.contains(state)) {
           channels.add(id);
         }
       }

@@ -90,6 +90,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _isSaving = false;
   final _notifications = GoLiveNotifications.instance;
   bool _notificationsConfigured = false;
+  bool _notificationsSignedIn = false;
   bool _notificationsSaving = false;
   bool _notificationPermission = true;
   final _chatSliderValues = <String, double>{};
@@ -112,6 +113,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   @override
+  void didUpdateWidget(SettingsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (GoLiveNotifications.supported &&
+        oldWidget.notificationClientLoader != widget.notificationClientLoader) {
+      _notificationsSignedIn = false;
+      unawaited(_loadNotifications());
+    }
+  }
+
+  @override
   void dispose() {
     _notifications.removeListener(_notificationsChanged);
     _scrollController.dispose();
@@ -128,9 +139,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       await _notifications.load();
       final status = await _notifications.status();
-      if (mounted) {
+      final loader = widget.notificationClientLoader;
+      final client = await loader?.call();
+      if (mounted && loader == widget.notificationClientLoader) {
         setState(() {
           _notificationsConfigured = status["configured"] == true;
+          _notificationsSignedIn = client?.accessToken.isNotEmpty ?? false;
           _notificationPermission = status["permission"] == true;
         });
       }
@@ -456,7 +470,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 ? "Setup required in this build."
                                 : _notifications.pendingUnregister
                                 ? "Off. Removal will retry when Flow opens."
-                                : widget.notificationClientLoader == null
+                                : !_notificationsSignedIn
                                 ? "Sign in to Twitch to enable."
                                 : _notifications.enabled && !_notificationPermission
                                 ? "Allow Flow notifications in Android settings."
@@ -467,7 +481,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                   !_notificationsSaving &&
                                       (_notifications.enabled ||
                                           (_notificationsConfigured &&
-                                              widget.notificationClientLoader != null))
+                                              _notificationsSignedIn))
                                   ? (value) => unawaited(_changeNotifications(value))
                                   : null,
                             ),

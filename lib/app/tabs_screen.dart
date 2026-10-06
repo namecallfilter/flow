@@ -414,16 +414,16 @@ class _FlowTabsScreenState extends State<FlowTabsScreen>
   }
 
   Future<void> _connectTwitchAccount() async {
-    await _stopLiveNotifications();
-    if (!mounted) {
-      return;
-    }
     final connection = await openTwitchLoginOfferScreen(
       context,
       _authController,
       openTwitchLogin: widget.openTwitchLogin,
     );
     if (!mounted || connection == null) {
+      return;
+    }
+    await _stopLiveNotifications();
+    if (!mounted) {
       return;
     }
     _followingStore.applyConnection(connection);
