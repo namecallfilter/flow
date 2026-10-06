@@ -1110,6 +1110,50 @@ void main() {
     expect(chat.conversation.last.noticeText, "newchatter was timed out for 60 seconds.");
   });
 
+  test(
+    "revises ban and timeout notices while retaining originals and ignoring older updates",
+    () async {
+      final chat = controller();
+      await server.join(chat);
+      server.send(
+        "@id=original;user-id=77;tmi-sent-ts=1000 :alice!a@tmi PRIVMSG #channel :original text\r\n"
+        "@target-user-id=77;tmi-sent-ts=2000 :tmi.twitch.tv CLEARCHAT #channel :alice\r\n"
+        "@target-user-id=99;tmi-sent-ts=2000 :tmi.twitch.tv CLEARCHAT #channel :newchatter\r\n",
+      );
+      await _waitFor(() => chat.conversation.length == 2);
+      final noticeId = chat.conversation.last.id;
+      void restriction({required int timestamp, int? seconds}) => server.send(
+        "@target-user-id=77;tmi-sent-ts=$timestamp${seconds == null ? '' : ';ban-duration=$seconds'} "
+        ":tmi.twitch.tv CLEARCHAT #channel :alice\r\n"
+        "@target-user-id=99;tmi-sent-ts=$timestamp${seconds == null ? '' : ';ban-duration=$seconds'} "
+        ":tmi.twitch.tv CLEARCHAT #channel :newchatter\r\n",
+      );
+      restriction(timestamp: 3000, seconds: 60);
+      await _waitFor(() => chat.conversation.last.moderation == TwitchChatModeration.timeout);
+      expect(chat.conversation.first.text, "original text");
+      expect(chat.conversation.first.isDeleted, isTrue);
+      expect(chat.conversation.first.timeoutSeconds, 60);
+      expect(chat.conversation.last.id, noticeId);
+      expect(chat.conversation.last.isDeleted, isFalse);
+      expect(chat.conversation.last.noticeText, "newchatter was timed out for 60 seconds.");
+      expect(chat.conversationHistory.last.noticeText, chat.conversation.last.noticeText);
+      restriction(timestamp: 4000);
+      await _waitFor(() => chat.conversation.last.moderation == TwitchChatModeration.ban);
+      expect(chat.conversation.every((item) => item.timeoutSeconds == null), isTrue);
+      expect(chat.conversation.last.noticeText, "newchatter was permanently banned.");
+      restriction(timestamp: 3500, seconds: 15);
+      server.send("@id=processed :other!o@tmi PRIVMSG #channel :after stale update\r\n");
+      await _waitFor(() => chat.conversation.length == 3);
+      expect(
+        chat.conversation.take(2).every((item) => item.moderation == TwitchChatModeration.ban),
+        isTrue,
+      );
+      expect(chat.conversation[1].id, noticeId);
+      expect(chat.conversation[1].isDeleted, isFalse);
+      expect(chat.conversationHistory[1].noticeText, "newchatter was permanently banned.");
+    },
+  );
+
   test("retains subscription, announcement and raid notices with identity and system text", () async {
     final chat = controller();
     await server.join(chat);
@@ -1139,6 +1183,44 @@ void main() {
     expect(chat.conversation.last.noticeType, "raid");
     expect(chat.conversation.last.noticeText, "100 raiders joined!");
     expect(chat.conversation.last.text, isEmpty);
+  });
+
+  test("recognizes anonymous gifts and moderator anniversaries from Twitch notices", () async {
+    final chat = controller();
+    await server.join(chat);
+    server.send(
+      "@id=anonymous-id;msg-id=subgift;login=giftuser;user-id=274598607;system-msg=Anonymous\\sgift "
+      ":tmi.twitch.tv USERNOTICE #channel\r\n"
+      "@id=anonymous-login;msg-id=submysterygift;login=AnAnonymousGifter;system-msg=Anonymous\\sgifts "
+      ":tmi.twitch.tv USERNOTICE #channel\r\n"
+      "@id=anonymous-legacy;msg-id=anonsubgift;system-msg=Anonymous\\sgift "
+      ":tmi.twitch.tv USERNOTICE #channel\r\n"
+      "@id=anonymous-shared;msg-id=sharedchatnotice;source-msg-id=submysterygift;source-room-id=2;login=ananonymousgifter;system-msg=Anonymous\\sgifts "
+      ":tmi.twitch.tv USERNOTICE #channel\r\n"
+      "@id=named;msg-id=subgift;login=alice;display-name=AnAnonymousGifter;system-msg=Named\\sgift "
+      ":tmi.twitch.tv USERNOTICE #channel\r\n"
+      "@id=mod-months;msg-id=modiversary;msg-param-months=6;login=preetmerchant;display-name=PREETMERCHANT;badges=moderator/1;emotes=25:0-4 "
+      ":tmi.twitch.tv USERNOTICE #channel :Kappa\r\n"
+      "@id=mod-year;msg-id=modiversary;msg-param-months=12;login=mod;display-name=Mod "
+      ":tmi.twitch.tv USERNOTICE #channel\r\n"
+      "@id=mod-system;msg-id=modiversary;msg-param-months=24;login=mod;system-msg=Existing\\sanniversary\\stext "
+      ":tmi.twitch.tv USERNOTICE #channel\r\n",
+    );
+    await _waitFor(() => chat.conversation.length == 8);
+    final messages = {for (final item in chat.conversation) item.id: item};
+    for (final id in ["anonymous-id", "anonymous-login", "anonymous-legacy", "anonymous-shared"]) {
+      expect(messages[id]!.isAnonymousGift, isTrue, reason: id);
+      expect(messages[id]!.copyWith(isDeleted: true).isAnonymousGift, isTrue);
+    }
+    expect(messages["named"]!.isAnonymousGift, isFalse);
+    final mod = messages["mod-months"]!;
+    expect(mod.noticeType, "modiversary");
+    expect(mod.noticeText, "PREETMERCHANT has been a Moderator for 6 months!");
+    expect(mod.text, "Kappa");
+    expect(mod.emotes.single.id, "25");
+    expect(mod.badges, ["moderator/1"]);
+    expect(messages["mod-year"]!.noticeText, "Mod has been a Moderator for 1 year!");
+    expect(messages["mod-system"]!.noticeText, "Existing anniversary text");
   });
 
   test("retains advance subscription duration without changing complete or ongoing notices", () async {

@@ -7,7 +7,9 @@ import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_api_cache.dart";
 import "package:flow/api/twitch_chat_message.dart";
 import "package:flow/api/twitch_chat_pins.dart";
+import "package:flow/api/twitch_partner_anniversary.dart";
 import "package:flow/api/twitch_private_chat.dart";
+import "package:flow/api/twitch_raids.dart";
 import "package:flutter/foundation.dart";
 
 export "package:flow/api/twitch_chat_message.dart";
@@ -44,6 +46,13 @@ class TwitchChatController extends ChangeNotifier {
   final bool loadPrivateNotices;
   final bool loadRecentHistory;
   TwitchChatPins? _pins;
+  TwitchRaid? _raid;
+  String? _joinedRaidId;
+  String? _raidError;
+  bool _isUpdatingRaid = false;
+  Timer? _raidExpiry;
+  TwitchPartnerAnniversary? _partnerAnniversary;
+  int _partnerLoadGeneration = -1;
   final predictionUpdates = ChangeNotifier();
   TwitchPrivateChatNotices? _privateNotices;
   String? _privateUserId;
@@ -125,6 +134,11 @@ class TwitchChatController extends ChangeNotifier {
   TwitchPinnedChat? get pinnedChat => _pins?.pin;
   TwitchChatMessage? get pinnedMessage => pinnedChat?.message;
   DateTime? get pinnedUntil => _pins?.pin?.endsAt;
+  TwitchRaid? get raid => _raid;
+  bool get isRaidJoined => _raid != null && _joinedRaidId == _raid!.id;
+  bool get isUpdatingRaid => _isUpdatingRaid;
+  String? get raidError => _raidError;
+  TwitchPartnerAnniversary? get partnerAnniversary => _partnerAnniversary;
   TwitchChatStatus get status => _status;
   String? get error => _error;
   String? get sendRateLimitMessage => _sendRateLimitMessage;
@@ -514,6 +528,111 @@ class TwitchChatController extends ChangeNotifier {
 
   Future<bool> followChannel() => _setFollowing(true);
 
+  Future<void> _loadPartnerAnniversary(String channelId, int generation) async {
+    if (_partnerLoadGeneration == generation) {
+      return;
+    }
+    _partnerLoadGeneration = generation;
+    try {
+      final client = await _loadSessionClient();
+      final anniversary = await client.fetchPartnerAnniversary(channelId);
+      if (_isCurrent(generation)) {
+        _partnerAnniversary = anniversary;
+        _scheduleNotify();
+      }
+    } on Object {
+      // Chat remains usable when Twitch's celebration query is unavailable.
+    }
+  }
+
+  void _receiveRaid(Map<String, Object?>? event) {
+    if (_disposed) {
+      return;
+    }
+    if (event == null) {
+      _raidExpiry?.cancel();
+      _raid = null;
+      _joinedRaidId = null;
+      _raidError = null;
+      _scheduleNotify();
+      return;
+    }
+    final next = TwitchRaid.fromPubSub(event);
+    if (next == null || next.sourceChannelId != _roomState["room-id"]) {
+      return;
+    }
+    if (next.isEnded) {
+      if (next.id != _raid?.id) {
+        return;
+      }
+      if (!next.isGoing) {
+        _receiveRaid(null);
+        return;
+      }
+      final previous = _raid!;
+      _raid = TwitchRaid(
+        id: previous.id,
+        sourceChannelId: previous.sourceChannelId,
+        targetChannelId: previous.targetChannelId,
+        targetLogin: previous.targetLogin,
+        targetDisplayName: previous.targetDisplayName,
+        targetProfileImageUrl: previous.targetProfileImageUrl,
+        viewerCount: next.viewerCount,
+        type: next.type,
+        transitionJitterSeconds: next.transitionJitterSeconds,
+      );
+    } else {
+      if (next.id != _raid?.id) {
+        _joinedRaidId = null;
+        _raidError = null;
+      } else if (_raid!.isEnded) {
+        return;
+      }
+      _raid = next;
+    }
+    _raidExpiry?.cancel();
+    _raidExpiry = Timer(
+      Duration(seconds: next.remainingDurationSeconds.clamp(0, 120) + 120),
+      () => _receiveRaid(null),
+    );
+    _scheduleNotify();
+  }
+
+  Future<bool> setRaidParticipation({required bool joined}) async {
+    final current = _raid;
+    if (_disposed || !isSignedIn || current == null || current.isEnded || _isUpdatingRaid) {
+      return false;
+    }
+    final generation = _generation;
+    _isUpdatingRaid = true;
+    _raidError = null;
+    notifyListeners();
+    try {
+      final client = await _loadSessionClient();
+      if (!_isCurrent(generation) || _raid?.id != current.id || _raid!.isEnded) {
+        return false;
+      }
+      await client.setRaidParticipation(raidId: current.id, joined: joined);
+      if (!_isCurrent(generation) || _raid?.id != current.id) {
+        return false;
+      }
+      _joinedRaidId = joined ? current.id : null;
+      return true;
+    } on Object catch (error) {
+      if (_isCurrent(generation) && _raid?.id == current.id) {
+        _raidError = error is TwitchApiException
+            ? error.message
+            : "Could not update raid. Try again.";
+      }
+      return false;
+    } finally {
+      if (_isCurrent(generation)) {
+        _isUpdatingRaid = false;
+        notifyListeners();
+      }
+    }
+  }
+
   Future<bool> unfollowChannel() => _setFollowing(false);
 
   Future<bool> _setFollowing(bool follow) async {
@@ -836,6 +955,8 @@ class TwitchChatController extends ChangeNotifier {
     _userColor = null;
     _isPrivileged = false;
     _isSubscriber = false;
+    _partnerAnniversary = null;
+    _isUpdatingRaid = false;
     _subscriptionAnniversary = null;
     _subscriptionAnniversaryError = null;
     _isSharingSubscriptionAnniversary = false;
@@ -1021,6 +1142,9 @@ class TwitchChatController extends ChangeNotifier {
           final channelId = message.tags["room-id"].nullIfEmpty;
           if (channelId != null) {
             unawaited(_loadRecentHistory(channelId, generation));
+            if (loadPins) {
+              unawaited(_loadPartnerAnniversary(channelId, generation));
+            }
           }
           if (loadPins && channelId != null && _pins?.channelId != channelId) {
             _pins?.dispose();
@@ -1030,6 +1154,7 @@ class TwitchChatController extends ChangeNotifier {
               loadInitial: () async => (await clientLoader()).fetchPinnedChat(channelId),
               onPredictionUpdate: predictionUpdates.notifyListeners,
               onPollUpdate: predictionUpdates.notifyListeners,
+              onRaidUpdate: _receiveRaid,
             )..addListener(_scheduleNotify);
           }
           final userId = currentUserId;
@@ -1162,6 +1287,9 @@ class TwitchChatController extends ChangeNotifier {
       case "PRIVMSG":
       case "USERNOTICE":
         final isNotice = message.command == "USERNOTICE";
+        final noticeType = message.tags["msg-id"] == "sharedchatnotice"
+            ? message.tags["source-msg-id"].nullIfEmpty ?? message.tags["msg-id"]
+            : message.tags["msg-id"];
         final login = isNotice
             ? message.tags["login"].nullIfEmpty ?? ""
             : message.prefix.split("!").first;
@@ -1179,9 +1307,18 @@ class TwitchChatController extends ChangeNotifier {
         final isAction =
             message.text.startsWith("\u0001ACTION ") && message.text.endsWith("\u0001");
         final text = isAction ? message.text.substring(8, message.text.length - 1) : message.text;
-        final isSubscription =
-            isNotice && (message.tags["msg-id"] == "sub" || message.tags["msg-id"] == "resub");
+        final isSubscription = isNotice && (noticeType == "sub" || noticeType == "resub");
         var noticeText = isNotice ? message.tags["system-msg"].nullIfEmpty : null;
+        if (isNotice && noticeType == "modiversary" && noticeText == null) {
+          final name = message.tags["display-name"].nullIfEmpty ?? login;
+          final months = int.tryParse(message.tags["msg-param-months"] ?? "");
+          final years = months != null && months > 0 && months % 12 == 0;
+          final count = years ? months ~/ 12 : months;
+          final unit = years ? "year" : "month";
+          noticeText = months != null && months > 0
+              ? "$name has been a Moderator for $count $unit${count == 1 ? '' : 's'}!"
+              : "$name is celebrating their Moderator anniversary!";
+        }
         final prepaidMonths = int.tryParse(message.tags["msg-param-multimonth-duration"] ?? "");
         if (isSubscription &&
             const {"1000", "2000", "3000"}.contains(message.tags["msg-param-sub-plan"]) &&
@@ -1225,10 +1362,10 @@ class TwitchChatController extends ChangeNotifier {
           isPrimeSubscription: isSubscription && message.tags["msg-param-sub-plan"] == "Prime",
           noticeType: !isNotice
               ? null
-              : message.tags["msg-id"] == "viewermilestone" &&
+              : noticeType == "viewermilestone" &&
                     message.tags["msg-param-category"] == "watch-streak"
               ? "watch-streak"
-              : message.tags["msg-id"].nullIfEmpty ?? "notice",
+              : noticeType.nullIfEmpty ?? "notice",
           noticeText: noticeText,
           parentMessageId: parentId,
           parentUserId: message.tags["reply-parent-user-id"].nullIfEmpty,
@@ -1288,6 +1425,14 @@ class TwitchChatController extends ChangeNotifier {
             : timeoutSeconds == null
             ? TwitchChatModeration.ban
             : TwitchChatModeration.timeout;
+        final updatesRestriction =
+            moderation == TwitchChatModeration.ban || moderation == TwitchChatModeration.timeout;
+        String moderationNoticeText(String name) => switch (moderation) {
+          TwitchChatModeration.timeout => "$name was timed out for $timeoutSeconds seconds.",
+          TwitchChatModeration.ban => "$name was permanently banned.",
+          TwitchChatModeration.deleted => "$name’s message was deleted.",
+          TwitchChatModeration.cleared => "Chat was cleared.",
+        };
         final moderatedAt = DateTime.fromMillisecondsSinceEpoch(
           int.tryParse(message.tags["tmi-sent-ts"] ?? "") ?? DateTime.now().millisecondsSinceEpoch,
         );
@@ -1323,13 +1468,15 @@ class TwitchChatController extends ChangeNotifier {
             pendingHistory.add((item) {
               if (!matches(item) ||
                   (message.command != "CLEARMSG" && item.timestamp?.isAfter(moderatedAt) == true) ||
-                  (item.isDeleted &&
-                      moderation != TwitchChatModeration.ban &&
-                      moderation != TwitchChatModeration.timeout)) {
+                  item.moderatedAt?.isAfter(moderatedAt) == true ||
+                  (item.isDeleted && !updatesRestriction)) {
                 return item;
               }
               return item.copyWith(
-                isDeleted: true,
+                isDeleted: !(item.noticeType == "moderation" && updatesRestriction),
+                noticeText: item.noticeType == "moderation" && updatesRestriction
+                    ? moderationNoticeText(item.displayName)
+                    : null,
                 moderation: moderation,
                 timeoutSeconds: timeoutSeconds,
                 moderatedAt: moderatedAt,
@@ -1347,11 +1494,13 @@ class TwitchChatController extends ChangeNotifier {
             if (identical(buffer, _messages)) {
               matchedVisibleMessage = true;
             }
-            if (!item.isDeleted ||
-                moderation == TwitchChatModeration.ban ||
-                moderation == TwitchChatModeration.timeout) {
+            if (item.moderatedAt?.isAfter(moderatedAt) != true &&
+                (!item.isDeleted || updatesRestriction)) {
               buffer[index] = item.copyWith(
-                isDeleted: true,
+                isDeleted: !(item.noticeType == "moderation" && updatesRestriction),
+                noticeText: item.noticeType == "moderation" && updatesRestriction
+                    ? moderationNoticeText(item.displayName)
+                    : null,
                 moderation: moderation,
                 timeoutSeconds: timeoutSeconds,
                 moderatedAt: moderatedAt,
@@ -1373,13 +1522,7 @@ class TwitchChatController extends ChangeNotifier {
               userId: targetUserId,
               text: "",
               noticeType: "moderation",
-              noticeText: switch (moderation) {
-                TwitchChatModeration.timeout =>
-                  "$displayName was timed out for $timeoutSeconds seconds.",
-                TwitchChatModeration.ban => "$displayName was permanently banned.",
-                TwitchChatModeration.deleted => "$displayName’s message was deleted.",
-                TwitchChatModeration.cleared => "Chat was cleared.",
-              },
+              noticeText: moderationNoticeText(displayName),
               moderation: moderation,
               timeoutSeconds: timeoutSeconds,
               moderatedAt: moderatedAt,
@@ -1593,6 +1736,8 @@ class TwitchChatController extends ChangeNotifier {
   }
 
   void _closeSocket() {
+    _receiveRaid(null);
+    _raidExpiry?.cancel();
     _sharedChatRoomId = null;
     _sendRateLimitMessage = null;
     _failSend();

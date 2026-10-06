@@ -172,7 +172,10 @@ void main() {
   testWidgets("compact titles rotate every four seconds and expired predictions stay hidden", (
     tester,
   ) async {
-    final client = _Client()..closesAt = DateTime.now().add(const Duration(seconds: 10));
+    final client = _Client()
+      ..selectedOutcome = "blue"
+      ..pointsSpent = 100
+      ..closesAt = DateTime.now().add(const Duration(seconds: 10));
     final controller = TwitchChatController(
       clientLoader: () async => client,
       channel: "channel",
@@ -215,6 +218,36 @@ void main() {
     controller.predictionUpdates.notifyListeners();
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey("prediction-event")), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets("resolved predictions keep rotating between winner and question", (tester) async {
+    final client = _Client()
+      ..status = "RESOLVED"
+      ..selectedOutcome = "blue";
+    final controller = TwitchChatController(
+      clientLoader: () async => client,
+      channel: "channel",
+      autoConnect: false,
+    );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: TwitchPredictionCard(
+          controller: controller,
+          isVisible: true,
+          showSheet: (_) async {},
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.text("Lions"), findsOneWidget);
+    await tester.pump(const Duration(seconds: 4));
+    expect(find.text("Who wins?"), findsOneWidget);
+    expect(find.text("Lions"), findsNothing);
+    await tester.pump(const Duration(seconds: 4));
+    expect(find.text("Lions"), findsOneWidget);
+    expect(find.text("Who wins?"), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -280,7 +313,7 @@ void main() {
     client.status = "RESOLVE_PENDING";
     controller.predictionUpdates.notifyListeners();
     await tester.pumpAndSettle();
-    expect(find.text("Lions"), findsOneWidget);
+    expect(find.text("Who wins?"), findsOneWidget);
     expect(find.text("See Details"), findsOneWidget);
     expect(find.byTooltip("Minimize prediction"), findsOneWidget);
     await tester.pump(const Duration(seconds: 60));
@@ -335,12 +368,13 @@ void main() {
       autoConnect: false,
     );
     addTearDown(controller.dispose);
-    Widget app({String? pin = "old", DateTime? createdAt}) => MaterialApp(
+    Widget app({String? pin = "old", DateTime? createdAt, String? raid}) => MaterialApp(
       home: Scaffold(
         body: TwitchPredictionCard(
           controller: controller,
           isVisible: true,
           showSheet: (_) async {},
+          raid: raid == null ? null : (id: "raid", child: Text(raid)),
           pinnedChat: pin == null
               ? null
               : (
@@ -382,6 +416,18 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey("prediction-event")), findsOneWidget);
     expect(find.text("View All (2)"), findsNothing);
+    await tester.pumpWidget(app(pin: null, raid: "Join raid"));
+    await tester.pumpAndSettle();
+    expect(find.text("Join raid"), findsOneWidget);
+    final raidPeek = tester.getRect(find.byKey(const ValueKey("highlight-stack-peek")));
+    await tester.tapAt(Offset(raidPeek.center.dx, raidPeek.top + 4));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey("highlight-select-prediction-event")));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(app(pin: null, raid: "Leave raid"));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey("prediction-event")), findsOneWidget);
+    expect(find.text("Leave raid"), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 

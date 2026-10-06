@@ -15,6 +15,7 @@ class TwitchPollCard extends StatefulWidget {
     required this.refresh,
     required this.dismiss,
     required this.pendingTransactions,
+    this.showTotals = false,
     super.key,
   });
 
@@ -23,6 +24,7 @@ class TwitchPollCard extends StatefulWidget {
   final Future<void> Function() refresh;
   final VoidCallback dismiss;
   final Map<(String, String, String, String, int), String> pendingTransactions;
+  final bool showTotals;
 
   @override
   State<TwitchPollCard> createState() => _TwitchPollCardState();
@@ -35,6 +37,7 @@ class TwitchPollCard extends StatefulWidget {
     properties.add(ObjectFlagProperty<Object>.has("refresh", refresh));
     properties.add(ObjectFlagProperty<VoidCallback>.has("dismiss", dismiss));
     properties.add(ObjectFlagProperty<Object>.has("pendingTransactions", pendingTransactions));
+    properties.add(FlagProperty("showTotals", value: showTotals, ifTrue: "show totals"));
   }
 }
 
@@ -135,6 +138,14 @@ class _TwitchPollCardState extends State<TwitchPollCard> {
         : null;
     final total = poll.votes;
     final maximum = poll.choices.fold(0, (value, choice) => max(value, choice.votes));
+    final summary = !poll.isOpen && maximum > 0
+        ? poll.choices
+              .where((choice) => choice.votes == maximum)
+              .map((choice) => choice.title)
+              .join(" / ")
+        : poll.choices.length == 2
+        ? poll.choices.map((choice) => formatCompactCount(choice.votes)).join(" vs ")
+        : "${formatCompactCount(total)} votes";
     return Card.outlined(
       margin: EdgeInsets.zero,
       color: Theme.of(context).scaffoldBackgroundColor,
@@ -153,7 +164,7 @@ class _TwitchPollCardState extends State<TwitchPollCard> {
                   children: [
                     Expanded(
                       child: Text(
-                        poll.title,
+                        widget.showTotals ? summary : poll.title,
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleSmall,

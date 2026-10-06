@@ -5,6 +5,8 @@ import "dart:ui" show BoxHeightStyle;
 import "package:flow/api/twitch_api.dart";
 import "package:flow/api/twitch_chat.dart";
 import "package:flow/api/twitch_chat_assets.dart";
+import "package:flow/api/twitch_partner_anniversary.dart";
+import "package:flow/api/twitch_raids.dart";
 import "package:flow/api/twitch_vod_chat.dart";
 import "package:flow/app/app_settings_store.dart";
 import "package:flow/features/player/chat_username.dart";
@@ -44,6 +46,7 @@ class TwitchChatPanel extends StatefulWidget {
     this.settingsStore,
     this.onOpenSettings,
     this.onOpenChannel,
+    this.onRaid,
     this.onReportUser,
     this.onSubscribe,
     this.onInlineBackHandlerChanged,
@@ -59,6 +62,7 @@ class TwitchChatPanel extends StatefulWidget {
   final AppSettingsStore? settingsStore;
   final AsyncCallback? onOpenSettings;
   final Future<void> Function(String login)? onOpenChannel;
+  final Future<void> Function(TwitchRaid raid)? onRaid;
   final Future<void> Function(String login)? onReportUser;
   final AsyncCallback? onSubscribe;
   final ValueChanged<VoidCallback?>? onInlineBackHandlerChanged;
@@ -87,6 +91,7 @@ class TwitchChatPanel extends StatefulWidget {
     properties.add(DiagnosticsProperty<AppSettingsStore?>("settingsStore", settingsStore));
     properties.add(ObjectFlagProperty<AsyncCallback?>.has("onOpenSettings", onOpenSettings));
     properties.add(ObjectFlagProperty<Object?>.has("onOpenChannel", onOpenChannel));
+    properties.add(ObjectFlagProperty<Object?>.has("onRaid", onRaid));
     properties.add(ObjectFlagProperty<Object?>.has("onReportUser", onReportUser));
     properties.add(ObjectFlagProperty<Object?>.has("onSubscribe", onSubscribe));
     properties.add(
@@ -128,6 +133,9 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
   TwitchChatMessage? _replyTo;
   String? _dismissedPinId;
   (TwitchChatController, String?, String)? _dismissedAnniversary;
+  (TwitchChatController, String)? _dismissedPartnerAnniversary;
+  String? _redirectedRaidId;
+  Timer? _raidTransition;
   String? _minimizedPinId;
   String? _autoCollapsePinId;
   Timer? _pinCollapseTimer;
@@ -194,6 +202,9 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
       oldWidget.controller?.setAutoClaimChannelPoints(enabled: false);
       _closeSheets();
       oldWidget._source.removeListener(_chatChanged);
+      _raidTransition?.cancel();
+      _raidTransition = null;
+      _redirectedRaidId = null;
       widget._source.addListener(_chatChanged);
       _resetMentionAlerts();
       _draft.clear();
@@ -230,10 +241,12 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
     );
     _requestMentionNotifications();
     _updateKeepScreenOn();
+    _followRaid();
   }
 
   @override
   void dispose() {
+    _raidTransition?.cancel();
     if (_keepingScreenOn) {
       unawaited(_invokeChatNotification<void>("setKeepScreenOn", {"enabled": false}));
     }
@@ -258,6 +271,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _appLifecycleState = state;
+    _followRaid();
     _requestMentionNotifications();
     _updateKeepScreenOn();
   }
@@ -372,7 +386,212 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
     }
   }
 
+  void _followRaid() {
+    final controller = widget.controller;
+    final raid = controller?.raid;
+    if (!_chatIsVisible ||
+        raid?.isGoing != true ||
+        controller?.isRaidJoined != true ||
+        controller!.isUpdatingRaid ||
+        widget.onRaid == null) {
+      _raidTransition?.cancel();
+      _raidTransition = null;
+      return;
+    }
+    if (_redirectedRaidId == raid!.id || _raidTransition != null) {
+      return;
+    }
+    _raidTransition = Timer(
+      Duration(
+        milliseconds: (Random().nextDouble() * raid.transitionJitterSeconds.clamp(0, 30) * 1000)
+            .round(),
+      ),
+      () {
+        _raidTransition = null;
+        if (!mounted ||
+            !_chatIsVisible ||
+            widget.controller != controller ||
+            controller.raid?.id != raid.id ||
+            !controller.isRaidJoined ||
+            controller.isUpdatingRaid) {
+          return;
+        }
+        _redirectedRaidId = raid.id;
+        _closeSheets();
+        unawaited(widget.onRaid!(raid));
+      },
+    );
+  }
+
+  Widget _raidCallout(TwitchChatController controller) {
+    final raid = controller.raid;
+    if (raid == null || (raid.isEnded && !controller.isRaidJoined)) {
+      return const SizedBox.shrink();
+    }
+    final text =
+        "${controller.channel} is raiding ${raid.targetDisplayName} with ${raid.viewerCount} raiders."
+        "${controller.isUpdatingRaid
+            ? ' Updating participation…'
+            : raid.isGoing
+            ? ' Heading over…'
+            : controller.isRaidJoined
+            ? ' You joined the raid.'
+            : ''}";
+    final style = Theme.of(context).textTheme.bodySmall;
+    return Card.outlined(
+      key: const ValueKey("chat_raid"),
+      margin: EdgeInsets.zero,
+      color: Theme.of(context).scaffoldBackgroundColor,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final painter = TextPainter(
+                        text: TextSpan(text: text, style: style),
+                        textDirection: Directionality.of(context),
+                        textScaler: MediaQuery.textScalerOf(context),
+                      );
+                      var size = 0.0;
+                      while (true) {
+                        painter.layout(
+                          maxWidth: (constraints.maxWidth - size - 8).clamp(1, double.infinity),
+                        );
+                        final next = painter.height.clamp(0.0, constraints.maxWidth / 3);
+                        if (next <= size) {
+                          break;
+                        }
+                        size = next;
+                      }
+                      painter.dispose();
+                      return Row(
+                        children: [
+                          SizedBox.square(
+                            dimension: size,
+                            child: ClipOval(
+                              child: raid.targetProfileImageUrl?.isNotEmpty != true
+                                  ? const Icon(Icons.groups_rounded)
+                                  : Image.network(
+                                      raid.targetProfileImageUrl!,
+                                      fit: BoxFit.cover,
+                                      semanticLabel: "${raid.targetDisplayName}'s profile picture",
+                                      errorBuilder: (_, _, _) => const Icon(Icons.groups_rounded),
+                                    ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(text, style: style)),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+                if (!raid.isEnded)
+                  TextButton(
+                    onPressed: controller.isSignedIn && !controller.isUpdatingRaid
+                        ? () => unawaited(
+                            controller.setRaidParticipation(joined: !controller.isRaidJoined),
+                          )
+                        : null,
+                    child: Text(
+                      controller.isUpdatingRaid
+                          ? "Updating…"
+                          : controller.isRaidJoined
+                          ? "Leave"
+                          : "Join",
+                    ),
+                  ),
+              ],
+            ),
+            if (!controller.isSignedIn) const Text("Sign in to join this raid."),
+            if (controller.raidError case final error?)
+              Text(error, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _partnerAnniversaryCallout(TwitchChatController controller) {
+    final anniversary = controller.partnerAnniversary;
+    final key = (controller, anniversary?.id ?? "");
+    if (anniversary == null || _dismissedPartnerAnniversary == key) {
+      return const SizedBox.shrink();
+    }
+    final colors = Theme.of(context).colorScheme;
+    return Card(
+      key: const ValueKey("chat_partner_anniversary"),
+      color: colors.primaryContainer,
+      clipBehavior: Clip.antiAlias,
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(left: 12),
+            child: Row(
+              children: [
+                Image.network(
+                  "https://static-cdn.jtvnw.net/emoticons/v2/${TwitchPartnerAnniversary.emoteId}/default/dark/2.0",
+                  width: 28,
+                  height: 28,
+                  semanticLabel: "PartyHat",
+                  errorBuilder: (_, _, _) => const Icon(Icons.celebration_rounded, size: 24),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    "Celebrate ${controller.channel}'s Partner anniversary with the PartyHat emote",
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: colors.onPrimaryContainer),
+                  ),
+                ),
+                TextButton(
+                  onPressed: !_canCompose
+                      ? null
+                      : () {
+                          final text = _draft.text;
+                          const celebration = TwitchPartnerAnniversary.shareMessage;
+                          _draft.text = text.isEmpty ? celebration : "$text $celebration";
+                          _draft.selection = TextSelection.collapsed(offset: _draft.text.length);
+                          setState(() => _dismissedPartnerAnniversary = key);
+                          _draftFocus.requestFocus();
+                        },
+                  child: const Text("Share"),
+                ),
+                IconButton(
+                  tooltip: "Dismiss Partner anniversary",
+                  onPressed: () => setState(() => _dismissedPartnerAnniversary = key),
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                ),
+              ],
+            ),
+          ),
+          ExcludeSemantics(
+            child: TweenAnimationBuilder<double>(
+              key: ValueKey(key),
+              tween: Tween(begin: 1, end: 0),
+              duration: const Duration(seconds: 15),
+              onEnd: () {
+                if (mounted) {
+                  setState(() => _dismissedPartnerAnniversary = key);
+                }
+              },
+              builder: (_, value, _) => LinearProgressIndicator(value: value, minHeight: 2),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _chatChanged() {
+    _followRaid();
     _requestMentionNotifications();
     _updateKeepScreenOn();
     if (widget.controller?.isChatRestricted == true) {
@@ -601,7 +820,7 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
       }
       return switch (message.noticeType) {
         "moderation" => _settings.showModerationNotices,
-        "system" => true,
+        "system" || "modiversary" => true,
         "announcement" => _settings.showAnnouncements,
         "raid" => _settings.showRaidNotices,
         null => true,
@@ -2640,6 +2859,15 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                       TwitchPredictionCard(
                                         controller: controller,
                                         isVisible: widget.isVisible,
+                                        raid:
+                                            controller.raid == null ||
+                                                (controller.raid!.isEnded &&
+                                                    !controller.isRaidJoined)
+                                            ? null
+                                            : (
+                                                id: controller.raid!.id,
+                                                child: _raidCallout(controller),
+                                              ),
                                         showSheet: (builder) => _showSheet<void>(builder: builder),
                                         pinnedChat: visiblePin == null
                                             ? null
@@ -2832,6 +3060,8 @@ class _TwitchChatPanelState extends State<TwitchChatPanel> with WidgetsBindingOb
                                     ],
                                   ),
                                 ),
+                              if (controller != null && widget.isLive && controller.isSignedIn)
+                                _partnerAnniversaryCallout(controller),
                               if (controller != null && widget.isLive && controller.isSignedIn)
                                 _subscriptionAnniversaryCallout(controller),
                               if (controller != null &&
@@ -3548,6 +3778,7 @@ TwitchChatMessage _retainModeration(TwitchChatMessage? previous, TwitchChatMessa
     moderation: latest.moderation,
     timeoutSeconds: latest.timeoutSeconds,
     moderatedAt: latest.moderatedAt,
+    noticeText: incoming.noticeType == "moderation" ? latest.noticeText : incoming.noticeText,
   );
 }
 
@@ -3889,6 +4120,10 @@ class _ReplyConnectors extends CustomPainter {
       branchY != oldDelegate.branchY ||
       color != oldDelegate.color;
 }
+
+const _moderatorSwordSvg =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="'
+    'M15.504 2H22v6.496L10.35 17.35 12 19l-1.5 1.5-2.785-2.785L3.5 22 2 20.5l4.285-4.215L3.5 13.5 5 12l1.65 1.65L15.504 2Z"/></svg>';
 
 // Google Material Symbols, domino_mask (Apache-2.0).
 // https://github.com/google/material-design-icons/tree/master/symbols/web/domino_mask
@@ -4568,7 +4803,14 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
             TwitchChatModeration.ban => "${message.displayName} was permanently banned",
             _ => null,
           };
-    final hidden = message.isDeleted && !settings.showDeletedMessages;
+    final hidden =
+        message.isDeleted && !settings.showDeletedMessages && message.noticeType != "moderation";
+    if (message.noticeType == "moderation" &&
+        !widget.showModeration &&
+        (message.moderation == TwitchChatModeration.timeout ||
+            message.moderation == TwitchChatModeration.ban)) {
+      return const SizedBox.shrink();
+    }
     if (!_showMessage(message, settings, widget.blockedLogins) || (hidden && moderation == null)) {
       return const SizedBox.shrink();
     }
@@ -4681,22 +4923,24 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
             (settings.highlightMentions && widget.isMention) ||
             (notice != null && !system));
     final watchStreak = message.noticeType == "watch-streak";
+    final modiversary = message.noticeType == "modiversary";
     final subscription =
         !message.isPrivate &&
         switch (message.noticeType) {
-          null || "announcement" || "raid" || "moderation" || "system" => false,
+          null || "announcement" || "raid" || "moderation" || "modiversary" || "system" => false,
           _ => true,
         };
     final gift = subscription && message.noticeType!.contains("gift");
-    final anonymousGift = gift && message.noticeType!.startsWith("anon");
     final noticeImage = message.noticeType == "channel-points"
         ? (_featuredSeasonalAndGiftsSvg, "Channel points")
         : message.isPrimeSubscription
         ? (_crownSvg, "Prime subscription")
         : watchStreak
         ? (_modeHeatSvg, "Watch streak")
-        : anonymousGift
+        : message.isAnonymousGift
         ? (_dominoMaskSvg, "Anonymous gift")
+        : modiversary
+        ? (_moderatorSwordSvg, "Moderator anniversary")
         : null;
     final nameSeparator = widget.pinned
         ? ""
@@ -4953,9 +5197,16 @@ class _ChatMessageRowState extends State<_ChatMessageRow> {
             ? BoxDecoration(
                 color: _holding
                     ? theme.colorScheme.primary.withValues(alpha: 0.18)
+                    : modiversary
+                    ? const Color(0xFF00AD03).withValues(alpha: 0.10)
                     : theme.colorScheme.primaryContainer.withValues(alpha: 0.45),
                 border: highlighted
-                    ? Border(left: BorderSide(color: theme.colorScheme.primary, width: 3))
+                    ? Border(
+                        left: BorderSide(
+                          color: modiversary ? const Color(0xFF00AD03) : theme.colorScheme.primary,
+                          width: 3,
+                        ),
+                      )
                     : null,
               )
             : const BoxDecoration(),
